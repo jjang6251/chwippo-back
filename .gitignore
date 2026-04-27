@@ -1,4 +1,26 @@
+# 의존성
 node_modules
+
+# 빌드 결과물
 dist
+
+# 환경변수 — 절대 커밋 금지
 .env
-*.env.local
+.env.*
+!.env.example
+
+# 인증서 / 키 파일 — 절대 커밋 금지
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 로그
+logs
+*.log
+
+# 에디터
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
