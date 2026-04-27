@@ -6,7 +6,7 @@ export class ApplicationStep {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'application_id' })
+  @Column({ name: 'application_id', type: 'uuid' })
   applicationId: string;
 
   @ManyToOne(() => Application, (app) => app.steps, { onDelete: 'CASCADE' })
