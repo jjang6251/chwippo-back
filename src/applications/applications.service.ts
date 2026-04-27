@@ -45,6 +45,13 @@ export class ApplicationsService {
     return app;
   }
 
+  // relations 없이 엔티티만 로드 (update 내부용 — cascade 충돌 방지)
+  private async findEntity(userId: string, id: string) {
+    const app = await this.appRepo.findOne({ where: { id, userId } });
+    if (!app) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    return app;
+  }
+
   async create(userId: string, dto: CreateApplicationDto) {
     const status = dto.status ?? 'IN_PROGRESS';
 
@@ -59,7 +66,7 @@ export class ApplicationsService {
         jobUrl: dto.jobUrl ?? null,
         needsDetail: dto.needsDetail ?? (status === 'IN_PROGRESS' && !dto.jobTitle),
       });
-      const saved = await em.save(app);
+      const saved = await em.save(Application, app);
 
       if (status === 'IN_PROGRESS') {
         await this.createDefaultSteps(em, saved.id);
@@ -73,46 +80,50 @@ export class ApplicationsService {
   }
 
   async update(userId: string, id: string, dto: UpdateApplicationDto) {
-    const app = await this.findOne(userId, id);
+    // relations 없이 로드해야 cascade 충돌 방지
+    const app = await this.findEntity(userId, id);
 
-    // PLANNED -> IN_PROGRESS 전환 시 기본 스텝 생성
     const wasPlanned = app.status === 'PLANNED';
     const becomesInProgress = dto.status === 'IN_PROGRESS';
 
     Object.assign(app, dto);
+    await this.appRepo.save(app);
 
+    // 저장 완료 후 스텝 생성 (cascade 영향 없음)
     if (wasPlanned && becomesInProgress) {
       const existingSteps = await this.stepRepo.count({ where: { applicationId: id } });
       if (existingSteps === 0) {
-        await this.createDefaultSteps(this.dataSource.manager, id);
+        await this.createDefaultSteps(this.stepRepo.manager, id);
       }
     }
 
-    await this.appRepo.save(app);
     return this.findOne(userId, id);
   }
 
   async updateCurrentStep(userId: string, id: string, stepIndex: number) {
-    const app = await this.findOne(userId, id);
-    const steps = app.steps.sort((a, b) => a.orderIndex - b.orderIndex);
+    const steps = await this.stepRepo.find({
+      where: { applicationId: id },
+      order: { orderIndex: 'ASC' },
+    });
+
+    // 권한 확인
+    await this.findEntity(userId, id);
 
     if (stepIndex < 0 || stepIndex >= steps.length) {
       throw new ForbiddenException('유효하지 않은 스텝 인덱스입니다.');
     }
 
-    app.currentStepIndex = stepIndex;
-
-    // 마지막 스텝 완료 -> PASSED
+    const updateData: Partial<Application> = { currentStepIndex: stepIndex };
     if (stepIndex === steps.length - 1) {
-      app.status = 'PASSED';
+      updateData.status = 'PASSED';
     }
 
-    await this.appRepo.save(app);
-    return app;
+    await this.appRepo.update(id, updateData);
+    return this.findOne(userId, id);
   }
 
   async updateSteps(userId: string, id: string, dto: UpdateStepsDto) {
-    await this.findOne(userId, id); // 권한 확인
+    await this.findEntity(userId, id);
 
     return this.dataSource.transaction(async (em) => {
       await em.delete(ApplicationStep, { applicationId: id });
@@ -125,13 +136,13 @@ export class ApplicationsService {
           location: s.location ?? null,
         }),
       );
-      await em.save(steps);
+      await em.save(ApplicationStep, steps);
       return em.findOne(Application, { where: { id }, relations: ['steps'] });
     });
   }
 
   async remove(userId: string, id: string) {
-    const app = await this.findOne(userId, id);
+    const app = await this.findEntity(userId, id);
     await this.appRepo.softRemove(app);
   }
 
@@ -139,6 +150,6 @@ export class ApplicationsService {
     const steps = DEFAULT_STEPS.map((name, i) =>
       em.create(ApplicationStep, { applicationId, orderIndex: i, name }),
     );
-    await em.save(steps);
+    await em.save(ApplicationStep, steps);
   }
 }
