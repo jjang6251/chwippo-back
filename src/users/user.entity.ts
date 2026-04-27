@@ -5,21 +5,21 @@ export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ unique: true })
-  kakao_id: string;
+  @Column({ name: 'kakao_id', unique: true })
+  kakaoId: string;
 
   @Column()
   nickname: string;
 
-  @Column({ nullable: true })
-  email: string;
+  @Column({ nullable: true, type: 'varchar' })
+  email: string | null;
 
-  @Column({ nullable: true })
-  refresh_token: string;
+  @Column({ name: 'refresh_token', nullable: true, type: 'varchar' })
+  refreshToken: string | null;
 
   @Column({ default: 'user' })
   role: string;
 
-  @CreateDateColumn()
-  created_at: Date;
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
 }
