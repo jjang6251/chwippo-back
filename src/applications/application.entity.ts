@@ -1,46 +1,70 @@
-import { Column, CreateDateColumn, DeleteDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  DeleteDateColumn,
+  Entity,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+  JoinColumn,
+} from 'typeorm';
+import { User } from '../users/user.entity';
+import { ApplicationStep } from './application-step.entity';
+
+export type ApplicationStatus = 'PLANNED' | 'IN_PROGRESS' | 'PASSED' | 'FAILED';
 
 @Entity('applications')
 export class Application {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
-  user_id: string;
+  @Column({ name: 'user_id' })
+  userId: string;
 
-  @Column()
-  company_name: string;
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 
-  @Column({ nullable: true })
-  job_title: string;
+  @OneToMany(() => ApplicationStep, (step) => step.application, {
+    cascade: true,
+    eager: false,
+  })
+  steps: ApplicationStep[];
 
-  @Column({ nullable: true })
-  job_category: string;
+  @Column({ name: 'company_name' })
+  companyName: string;
+
+  @Column({ name: 'job_title', nullable: true, type: 'varchar' })
+  jobTitle: string | null;
+
+  @Column({ name: 'job_category', nullable: true, type: 'varchar' })
+  jobCategory: string | null;
 
   @Column({ default: 'IN_PROGRESS' })
-  status: string;
+  status: ApplicationStatus;
 
   @Column({ type: 'date', nullable: true })
-  deadline: string;
+  deadline: string | null;
 
-  @Column({ nullable: true })
-  job_url: string;
+  @Column({ name: 'job_url', nullable: true, type: 'varchar' })
+  jobUrl: string | null;
 
   @Column({ type: 'text', nullable: true })
-  memo: string;
+  memo: string | null;
 
-  @Column({ default: 0 })
-  current_step_index: number;
+  @Column({ name: 'current_step_index', default: 0 })
+  currentStepIndex: number;
 
-  @Column({ default: false })
-  needs_detail: boolean;
+  @Column({ name: 'needs_detail', default: false })
+  needsDetail: boolean;
 
-  @CreateDateColumn()
-  created_at: Date;
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
 
-  @UpdateDateColumn()
-  updated_at: Date;
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
 
-  @DeleteDateColumn()
-  deleted_at: Date;
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt: Date | null;
 }

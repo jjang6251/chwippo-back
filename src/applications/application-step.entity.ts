@@ -1,22 +1,27 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
+import { Application } from './application.entity';
 
 @Entity('application_steps')
 export class ApplicationStep {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
-  application_id: string;
+  @Column({ name: 'application_id' })
+  applicationId: string;
 
-  @Column()
-  order_index: number;
+  @ManyToOne(() => Application, (app) => app.steps, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'application_id' })
+  application: Application;
+
+  @Column({ name: 'order_index' })
+  orderIndex: number;
 
   @Column()
   name: string;
 
-  @Column({ type: 'timestamptz', nullable: true })
-  scheduled_date: Date;
+  @Column({ name: 'scheduled_date', type: 'timestamptz', nullable: true })
+  scheduledDate: Date | null;
 
-  @Column({ nullable: true })
-  location: string;
+  @Column({ nullable: true, type: 'varchar' })
+  location: string | null;
 }
