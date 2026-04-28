@@ -5,6 +5,8 @@ import { envValidationSchema } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { ApplicationsModule } from './applications/applications.module';
+import { TodosModule } from './todos/todos.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -17,6 +19,8 @@ import { HealthController } from './health/health.controller';
     DatabaseModule,
     AuthModule,
     ApplicationsModule,
+    TodosModule,
+    DashboardModule,
   ],
   controllers: [HealthController],
 })
