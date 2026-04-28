@@ -73,7 +73,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async refresh(@CurrentUser() user: AuthenticatedUser) {
     const accessToken = await this.authService.refreshAccessToken(user.id);
-    return { accessToken };
+    return { accessToken, user: { id: user.id, nickname: user.nickname, email: user.email, role: user.role } };
   }
 
   @UseGuards(JwtAuthGuard)
