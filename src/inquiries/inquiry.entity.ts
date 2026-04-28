@@ -7,8 +7,8 @@ export class Inquiry {
   @Column() category: string;
   @Column() title: string;
   @Column({ type: 'text' }) content: string;
-  @Column({ default: 'PENDING' }) status: string;
-  @Column({ type: 'text', nullable: true }) admin_reply: string;
-  @Column({ type: 'timestamptz', nullable: true }) replied_at: Date;
+  @Column({ default: 'OPEN' }) status: string; // OPEN | IN_PROGRESS | CLOSED
+  @Column({ default: 0 }) user_unread: number;
+  @Column({ default: 1 }) admin_unread: number; // 새 문의는 어드민 미읽음 1로 시작
   @CreateDateColumn() created_at: Date;
 }
