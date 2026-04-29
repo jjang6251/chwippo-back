@@ -64,72 +64,75 @@ export class InquiriesService {
 
   // ── 어드민: 전체 목록 (유저 정보 포함) ───────────────
   async findAll(opts?: { status?: string; category?: string; page?: number; limit?: number }) {
-    const params: unknown[] = [];
-    const conditions: string[] = [];
+    const qb = this.repo
+      .createQueryBuilder('i')
+      .orderBy(`CASE WHEN i.status = 'CLOSED' THEN 1 ELSE 0 END`, 'ASC')
+      .addOrderBy('i.created_at', 'DESC');
 
-    if (opts?.status) {
-      params.push(opts.status);
-      conditions.push(`i.status = $${params.length}`);
-    }
-    if (opts?.category) {
-      params.push(opts.category);
-      conditions.push(`i.category = $${params.length}`);
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const q = this.dataSource.query.bind(this.dataSource);
+    if (opts?.status) qb.andWhere('i.status = :status', { status: opts.status });
+    if (opts?.category) qb.andWhere('i.category = :category', { category: opts.category });
 
     const limit = opts?.limit ?? 30;
     const page = opts?.page ?? 1;
-    const offset = (page - 1) * limit;
+    qb.skip((page - 1) * limit).take(limit);
 
-    const [countRow, items] = await Promise.all([
-      q(`SELECT COUNT(*)::int AS total FROM inquiries i ${where}`, [...params]),
-      q(`
-        SELECT i.*,
-               u.nickname AS user_nickname,
-               u.email    AS user_email
-        FROM inquiries i
-        LEFT JOIN users u ON u.id::text = i.user_id
-        ${where}
-        ORDER BY CASE WHEN i.status = 'CLOSED' THEN 1 ELSE 0 END ASC,
-                 i.created_at DESC
-        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-      `, [...params, limit, offset]),
-    ]);
+    const [rows, total] = await qb.getManyAndCount();
 
-    return { items, total: countRow[0]?.total ?? 0, page, limit };
+    // 유저 정보 배치 조회
+    const userIds = [...new Set(rows.map((i) => i.user_id).filter(Boolean))] as string[];
+    let userMap = new Map<string, { nickname: string; email: string | null }>();
+    if (userIds.length > 0) {
+      const users: { id: string; nickname: string; email: string | null }[] =
+        await this.dataSource.query(
+          `SELECT id::text AS id, nickname, email FROM users WHERE id::text = ANY($1)`,
+          [userIds],
+        );
+      userMap = new Map(users.map((u) => [u.id, u]));
+    }
+
+    const items = rows.map((i) => ({
+      ...i,
+      user_nickname: i.user_id ? (userMap.get(i.user_id)?.nickname ?? null) : null,
+      user_email: i.user_id ? (userMap.get(i.user_id)?.email ?? null) : null,
+    }));
+
+    return { items, total, page, limit };
   }
 
   // ── 어드민: 상세 (유저 컨텍스트 + 읽음 처리) ─────────
   async findOneAdmin(id: string) {
-    const [row] = await this.dataSource.query(`
-      SELECT i.*,
-             u.nickname   AS user_nickname,
-             u.email      AS user_email,
-             u.created_at AS user_created_at,
-             (SELECT COUNT(*)::int FROM applications
-              WHERE user_id::text = i.user_id AND deleted_at IS NULL) AS user_card_count,
-             (SELECT COUNT(*)::int FROM inquiries
-              WHERE user_id = i.user_id)                               AS user_inquiry_count
-      FROM inquiries i
-      LEFT JOIN users u ON u.id::text = i.user_id
-      WHERE i.id = $1
-    `, [id]);
-
-    if (!row) throw new NotFoundException();
+    const inquiry = await this.repo.findOneBy({ id });
+    if (!inquiry) throw new NotFoundException();
 
     const comments = await this.commentRepo.find({
       where: { inquiry_id: id },
       order: { created_at: 'ASC' },
     });
 
-    if (row.admin_unread > 0) {
+    if (inquiry.admin_unread > 0) {
       await this.repo.update(id, { admin_unread: 0 });
-      row.admin_unread = 0;
+      inquiry.admin_unread = 0;
     }
 
-    return { ...row, comments };
+    // 유저 컨텍스트 (탈퇴 유저면 user_id가 null)
+    let userContext: Record<string, unknown> = {};
+    if (inquiry.user_id) {
+      const [ctx] = await this.dataSource.query(
+        `SELECT u.nickname        AS user_nickname,
+                u.email           AS user_email,
+                u.created_at      AS user_created_at,
+                (SELECT COUNT(*)::int FROM applications
+                 WHERE user_id::text = $1 AND deleted_at IS NULL) AS user_card_count,
+                (SELECT COUNT(*)::int FROM inquiries
+                 WHERE user_id = $1)                               AS user_inquiry_count
+         FROM users u
+         WHERE u.id::text = $1`,
+        [inquiry.user_id],
+      );
+      userContext = ctx ?? {};
+    }
+
+    return { ...inquiry, ...userContext, comments };
   }
 
   // ── 어드민: 댓글 작성 → 사용자 미읽음 + 1 ──────────
