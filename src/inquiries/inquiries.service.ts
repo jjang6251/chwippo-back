@@ -124,7 +124,7 @@ export class InquiriesService {
                 (SELECT COUNT(*)::int FROM applications
                  WHERE user_id::text = $1 AND deleted_at IS NULL) AS user_card_count,
                 (SELECT COUNT(*)::int FROM inquiries
-                 WHERE user_id = $1)                               AS user_inquiry_count
+                 WHERE user_id::text = $1)                         AS user_inquiry_count
          FROM users u
          WHERE u.id::text = $1`,
         [inquiry.user_id],
