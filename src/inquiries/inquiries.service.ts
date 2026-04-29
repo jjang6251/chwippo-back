@@ -107,8 +107,8 @@ export class InquiriesService {
     await this.commentRepo.save(comment);
     await this.repo.increment({ id }, 'user_unread', 1);
 
-    // 어드민이 댓글 달면 IN_PROGRESS로 자동 전환
-    if (inquiry.status === 'OPEN') {
+    // 어드민이 댓글 달면 IN_PROGRESS로 자동 전환 (OPEN이 아닌 예외 status도 포함)
+    if (inquiry.status !== 'IN_PROGRESS' && inquiry.status !== 'CLOSED') {
       await this.repo.update(id, { status: 'IN_PROGRESS' });
     }
 
