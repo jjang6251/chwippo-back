@@ -63,7 +63,14 @@ export class AuthController {
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
 
     const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:5173');
-    const params = new URLSearchParams({ access_token: accessToken, is_new: String(isNew) });
+    const params = new URLSearchParams({
+      access_token: accessToken,
+      is_new: String(isNew),
+      user_id: user.id,
+      user_nickname: user.nickname,
+      user_role: user.role,
+      ...(user.email ? { user_email: user.email } : {}),
+    });
     return res.redirect(`${frontendUrl}/login/callback?${params.toString()}`);
   }
 

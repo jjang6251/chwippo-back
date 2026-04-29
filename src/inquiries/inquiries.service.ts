@@ -94,6 +94,7 @@ export class InquiriesService {
       ...i,
       user_nickname: i.user_id ? (userMap.get(i.user_id)?.nickname ?? null) : null,
       user_email: i.user_id ? (userMap.get(i.user_id)?.email ?? null) : null,
+      user_short_id: i.user_id ? i.user_id.slice(0, 8) : null,
     }));
 
     return { items, total, page, limit };
@@ -118,9 +119,10 @@ export class InquiriesService {
     let userContext: Record<string, unknown> = {};
     if (inquiry.user_id) {
       const [ctx] = await this.dataSource.query(
-        `SELECT u.nickname        AS user_nickname,
-                u.email           AS user_email,
-                u.created_at      AS user_created_at,
+        `SELECT u.nickname                    AS user_nickname,
+                u.email                      AS user_email,
+                LEFT(u.id::text, 8)          AS user_short_id,
+                u.created_at                 AS user_created_at,
                 (SELECT COUNT(*)::int FROM applications
                  WHERE user_id::text = $1 AND deleted_at IS NULL) AS user_card_count,
                 (SELECT COUNT(*)::int FROM inquiries
