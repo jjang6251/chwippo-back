@@ -7,6 +7,10 @@ import { User } from './user.entity';
 export class UsersService {
   constructor(@InjectRepository(User) private repo: Repository<User>) {}
 
+  async agreeTerms(userId: string): Promise<void> {
+    await this.repo.update(userId, { termsAgreedAt: new Date() });
+  }
+
   async updateNickname(userId: string, nickname: string): Promise<User> {
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');

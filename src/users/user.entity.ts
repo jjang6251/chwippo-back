@@ -25,4 +25,7 @@ export class User {
 
   @Column({ name: 'last_active_at', type: 'timestamptz', nullable: true })
   lastActiveAt: Date | null;
+
+  @Column({ name: 'terms_agreed_at', type: 'timestamptz', nullable: true })
+  termsAgreedAt: Date | null;
 }
