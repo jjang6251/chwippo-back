@@ -29,6 +29,12 @@ export class AdminController {
     return this.adminService.getStats();
   }
 
+  @Get('analytics')
+  getAnalytics(@Query('days') days?: string) {
+    const d = Math.min(Math.max(parseInt(days ?? '30') || 30, 7), 90);
+    return this.adminService.getAnalytics(d);
+  }
+
   @Get('inquiries')
   getInquiries(
     @Query('status') status?: string,

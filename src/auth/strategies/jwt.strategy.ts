@@ -28,6 +28,14 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   async validate(payload: JwtPayload) {
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
     if (!user) throw new UnauthorizedException();
+
+    // 하루 1번만 갱신 (요청마다 쓰지 않도록)
+    const todayKST = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
+    const lastKST = user.lastActiveAt?.toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
+    if (lastKST !== todayKST) {
+      this.userRepo.update(user.id, { lastActiveAt: new Date() }).catch(() => {});
+    }
+
     return { id: user.id, nickname: user.nickname, email: user.email, role: user.role };
   }
 }

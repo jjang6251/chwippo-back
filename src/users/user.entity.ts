@@ -22,4 +22,7 @@ export class User {
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
+
+  @Column({ name: 'last_active_at', type: 'timestamptz', nullable: true })
+  lastActiveAt: Date | null;
 }
