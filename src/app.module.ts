@@ -12,6 +12,7 @@ import { FilesModule } from './files/files.module';
 import { UsersModule } from './users/users.module';
 import { InquiriesModule } from './inquiries/inquiries.module';
 import { AdminModule } from './admin/admin.module';
+import { CalendarModule } from './calendar/calendar.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -31,6 +32,7 @@ import { HealthController } from './health/health.controller';
     UsersModule,
     InquiriesModule,
     AdminModule,
+    CalendarModule,
   ],
   controllers: [HealthController],
 })
