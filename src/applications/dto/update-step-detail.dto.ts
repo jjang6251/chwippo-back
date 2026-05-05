@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateStepDetailDto {
   @IsOptional()
@@ -8,4 +8,14 @@ export class UpdateStepDetailDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100_000)
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2_000)
+  pinnedContent?: string;
 }

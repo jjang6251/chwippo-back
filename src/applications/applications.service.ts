@@ -131,16 +131,30 @@ export class ApplicationsService {
     await this.findEntity(userId, id);
 
     return this.dataSource.transaction(async (em) => {
+      // 기존 스텝의 notes/pinnedContent 보존: id가 전달된 경우 매핑
+      const notesMap = new Map<string, { notes: string | null; pinnedContent: string | null }>();
+      if (dto.steps.some((s) => s.id)) {
+        const existing = await em.find(ApplicationStep, { where: { applicationId: id } });
+        for (const step of existing) {
+          notesMap.set(step.id, { notes: step.notes, pinnedContent: step.pinnedContent });
+        }
+      }
+
       await em.delete(ApplicationStep, { applicationId: id });
-      const steps = dto.steps.map((s) =>
-        em.create(ApplicationStep, {
+
+      const steps = dto.steps.map((s) => {
+        const preserved = s.id ? notesMap.get(s.id) : undefined;
+        return em.create(ApplicationStep, {
           applicationId: id,
           orderIndex: s.orderIndex,
           name: s.name,
           scheduledDate: s.scheduledDate ? new Date(s.scheduledDate) : null,
           location: s.location ?? null,
-        }),
-      );
+          notes: preserved?.notes ?? null,
+          pinnedContent: preserved?.pinnedContent ?? null,
+        });
+      });
+
       await em.save(ApplicationStep, steps);
       return em.findOne(Application, { where: { id }, relations: ['steps'] });
     });
@@ -170,6 +184,12 @@ export class ApplicationsService {
     }
     if (dto.location !== undefined) {
       step.location = dto.location || null;
+    }
+    if (dto.notes !== undefined) {
+      step.notes = dto.notes || null;
+    }
+    if (dto.pinnedContent !== undefined) {
+      step.pinnedContent = dto.pinnedContent || null;
     }
     return this.stepRepo.save(step);
   }

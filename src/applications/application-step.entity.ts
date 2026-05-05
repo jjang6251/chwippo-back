@@ -24,4 +24,10 @@ export class ApplicationStep {
 
   @Column({ nullable: true, type: 'varchar' })
   location: string | null;
+
+  @Column({ nullable: true, type: 'text' })
+  notes: string | null;
+
+  @Column({ name: 'pinned_content', nullable: true, type: 'text' })
+  pinnedContent: string | null;
 }
