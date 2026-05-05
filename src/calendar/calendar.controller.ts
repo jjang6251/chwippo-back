@@ -1,6 +1,7 @@
-import { Controller, Get, Query, ParseIntPipe } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, ParseIntPipe } from '@nestjs/common';
 import { CalendarService } from './calendar.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { CreateDailyNoteDto, UpdateDailyNoteDto } from './dto/daily-note.dto';
 
 interface AuthUser { id: string }
 
@@ -15,5 +16,38 @@ export class CalendarController {
     @Query('month', ParseIntPipe) month: number,
   ) {
     return this.calendarService.getMonthEvents(user.id, year, month);
+  }
+
+  @Get('daily-notes')
+  async getDailyNotes(
+    @CurrentUser() user: AuthUser,
+    @Query('date') date: string,
+  ) {
+    return this.calendarService.getDailyNotes(user.id, date);
+  }
+
+  @Post('daily-notes')
+  async createDailyNote(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateDailyNoteDto,
+  ) {
+    return this.calendarService.createDailyNote(user.id, dto);
+  }
+
+  @Patch('daily-notes/:id')
+  async updateDailyNote(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateDailyNoteDto,
+  ) {
+    return this.calendarService.updateDailyNote(user.id, id, dto);
+  }
+
+  @Delete('daily-notes/:id')
+  async deleteDailyNote(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.calendarService.deleteDailyNote(user.id, id);
   }
 }
