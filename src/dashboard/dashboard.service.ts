@@ -38,7 +38,10 @@ export class DashboardService {
   }
 
   async getDdayList(userId: string) {
-    const today = new Date().toISOString().split('T')[0];
+    // KST(UTC+9) 기준 오늘 날짜 — 프론트엔드 dayjs().startOf('day')와 동일 기준
+    const KST = 9 * 60 * 60 * 1000;
+    const kstNow = new Date(Date.now() + KST);
+    const today = kstNow.toISOString().split('T')[0];
 
     // 서류 마감 목록
     const apps = await this.appRepo
@@ -51,7 +54,7 @@ export class DashboardService {
       .select(['app.id', 'app.companyName', 'app.deadline'])
       .getMany();
 
-    // 면접 일정 목록
+    // 면접 일정 목록 — scheduledDate(UTC)를 KST로 변환 후 날짜 비교
     const steps = await this.stepRepo
       .createQueryBuilder('step')
       .innerJoin('step.application', 'app')
@@ -59,8 +62,11 @@ export class DashboardService {
       .andWhere('app.status = :status', { status: 'IN_PROGRESS' })
       .andWhere('app.deleted_at IS NULL')
       .andWhere('step.scheduledDate IS NOT NULL')
-      .andWhere('CAST(step.scheduledDate AS DATE) >= :today', { today })
-      .select(['step.id', 'step.name', 'step.scheduledDate', 'step.applicationId'])
+      .andWhere(
+        "(step.scheduledDate AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE >= :today",
+        { today },
+      )
+      .select(['step.id', 'step.name', 'step.scheduledDate', 'step.applicationId', 'step.pinnedContent'])
       .addSelect(['app.id', 'app.companyName'])
       .getMany();
 
@@ -69,10 +75,13 @@ export class DashboardService {
     const items: {
       type: 'deadline' | 'interview';
       applicationId: string;
+      stepId?: string;
       companyName: string;
       stepName?: string;
       date: string;
+      scheduledTime?: string;
       dday: number;
+      pinnedContent?: string | null;
     }[] = [];
 
     for (const app of apps) {
@@ -82,16 +91,24 @@ export class DashboardService {
     }
 
     for (const step of steps) {
-      const dateStr = new Date(step.scheduledDate!).toISOString().split('T')[0];
+      const scheduledDate = new Date(step.scheduledDate!);
+      // UTC → KST 변환 후 날짜/시간 추출
+      const kstDate = new Date(scheduledDate.getTime() + KST);
+      const dateStr = kstDate.toISOString().split('T')[0];
       const dateMs = new Date(dateStr).getTime();
       const dday = Math.round((dateMs - todayMs) / 86400000);
+      const hours = kstDate.getUTCHours().toString().padStart(2, '0');
+      const minutes = kstDate.getUTCMinutes().toString().padStart(2, '0');
       items.push({
         type: 'interview',
         applicationId: step.applicationId,
+        stepId: step.id,
         companyName: (step as any).app_company_name ?? step.application?.companyName ?? '',
         stepName: step.name,
         date: dateStr,
+        scheduledTime: `${hours}:${minutes}`,
         dday,
+        pinnedContent: step.pinnedContent ?? null,
       });
     }
 
