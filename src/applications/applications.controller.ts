@@ -16,6 +16,8 @@ import { ApplicationsService } from './applications.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateStepsDto } from './dto/update-steps.dto';
+import { UpdateStepDetailDto } from './dto/update-step-detail.dto';
+import { CreateChecklistItemDto, UpdateChecklistItemDto } from './dto/checklist-item.dto';
 
 interface AuthUser {
   id: string;
@@ -73,5 +75,60 @@ export class ApplicationsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.service.remove(user.id, id);
+  }
+
+  // --- Step detail ---
+
+  @Patch(':id/steps/:stepId')
+  updateStep(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('stepId', ParseUUIDPipe) stepId: string,
+    @Body() dto: UpdateStepDetailDto,
+  ) {
+    return this.service.updateStep(user.id, id, stepId, dto);
+  }
+
+  // --- Checklist ---
+
+  @Get(':id/steps/:stepId/checklist')
+  getChecklist(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('stepId', ParseUUIDPipe) stepId: string,
+  ) {
+    return this.service.getChecklist(user.id, id, stepId);
+  }
+
+  @Post(':id/steps/:stepId/checklist')
+  createChecklistItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('stepId', ParseUUIDPipe) stepId: string,
+    @Body() dto: CreateChecklistItemDto,
+  ) {
+    return this.service.createChecklistItem(user.id, id, stepId, dto);
+  }
+
+  @Patch(':id/steps/:stepId/checklist/:itemId')
+  updateChecklistItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('stepId', ParseUUIDPipe) stepId: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: UpdateChecklistItemDto,
+  ) {
+    return this.service.updateChecklistItem(user.id, id, stepId, itemId, dto);
+  }
+
+  @Delete(':id/steps/:stepId/checklist/:itemId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteChecklistItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('stepId', ParseUUIDPipe) stepId: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+  ) {
+    return this.service.deleteChecklistItem(user.id, id, stepId, itemId);
   }
 }

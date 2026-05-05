@@ -3,9 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
+import { StepChecklistItem } from './step-checklist-item.entity';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateStepsDto } from './dto/update-steps.dto';
+import { UpdateStepDetailDto } from './dto/update-step-detail.dto';
+import { CreateChecklistItemDto, UpdateChecklistItemDto } from './dto/checklist-item.dto';
 
 const DEFAULT_STEPS = [
   '서류 제출',
@@ -24,6 +27,8 @@ export class ApplicationsService {
     private readonly appRepo: Repository<Application>,
     @InjectRepository(ApplicationStep)
     private readonly stepRepo: Repository<ApplicationStep>,
+    @InjectRepository(StepChecklistItem)
+    private readonly checklistRepo: Repository<StepChecklistItem>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -151,5 +156,75 @@ export class ApplicationsService {
       em.create(ApplicationStep, { applicationId, orderIndex: i, name }),
     );
     await em.save(ApplicationStep, steps);
+  }
+
+  // --- Step detail (date/location) ---
+
+  async updateStep(userId: string, appId: string, stepId: string, dto: UpdateStepDetailDto) {
+    await this.findEntity(userId, appId);
+    const step = await this.stepRepo.findOne({ where: { id: stepId, applicationId: appId } });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+
+    if (dto.scheduledDate !== undefined) {
+      step.scheduledDate = dto.scheduledDate ? new Date(dto.scheduledDate) : null;
+    }
+    if (dto.location !== undefined) {
+      step.location = dto.location || null;
+    }
+    return this.stepRepo.save(step);
+  }
+
+  // --- Checklist CRUD ---
+
+  async getChecklist(userId: string, appId: string, stepId: string) {
+    await this.findEntity(userId, appId);
+    const step = await this.stepRepo.findOne({ where: { id: stepId, applicationId: appId } });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+
+    return this.checklistRepo.find({
+      where: { stepId },
+      order: { orderIndex: 'ASC', createdAt: 'ASC' },
+    });
+  }
+
+  async createChecklistItem(userId: string, appId: string, stepId: string, dto: CreateChecklistItemDto) {
+    await this.findEntity(userId, appId);
+    const step = await this.stepRepo.findOne({ where: { id: stepId, applicationId: appId } });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+
+    const maxOrder = await this.checklistRepo
+      .createQueryBuilder('item')
+      .select('MAX(item.orderIndex)', 'max')
+      .where('item.stepId = :stepId', { stepId })
+      .getRawOne();
+
+    const item = this.checklistRepo.create({
+      stepId,
+      content: dto.content,
+      orderIndex: dto.orderIndex ?? ((maxOrder?.max ?? -1) + 1),
+    });
+    return this.checklistRepo.save(item);
+  }
+
+  async updateChecklistItem(
+    userId: string,
+    appId: string,
+    stepId: string,
+    itemId: string,
+    dto: UpdateChecklistItemDto,
+  ) {
+    await this.findEntity(userId, appId);
+    const item = await this.checklistRepo.findOne({ where: { id: itemId, stepId } });
+    if (!item) throw new NotFoundException('항목을 찾을 수 없습니다.');
+
+    Object.assign(item, dto);
+    return this.checklistRepo.save(item);
+  }
+
+  async deleteChecklistItem(userId: string, appId: string, stepId: string, itemId: string) {
+    await this.findEntity(userId, appId);
+    const item = await this.checklistRepo.findOne({ where: { id: itemId, stepId } });
+    if (!item) throw new NotFoundException('항목을 찾을 수 없습니다.');
+    await this.checklistRepo.remove(item);
   }
 }
