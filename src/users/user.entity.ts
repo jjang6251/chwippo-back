@@ -28,4 +28,7 @@ export class User {
 
   @Column({ name: 'terms_agreed_at', type: 'timestamptz', nullable: true })
   termsAgreedAt: Date | null;
+
+  @Column({ name: 'dashboard_config', type: 'jsonb', nullable: true })
+  dashboardConfig: { sections: { id: string; visible: boolean }[] } | null;
 }
