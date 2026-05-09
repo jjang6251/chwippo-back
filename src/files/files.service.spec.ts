@@ -133,6 +133,12 @@ describe('FilesService', () => {
         { expiresIn: 300 },
       );
     });
+
+    it('fileSize = 0 (경계값) → 통과', async () => {
+      await expect(
+        service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'image/jpeg', 0),
+      ).resolves.toBeDefined();
+    });
   });
 
   // ── deleteFile ─────────────────────────────────────────
@@ -158,6 +164,14 @@ describe('FilesService', () => {
       const callArg = (DeleteObjectCommand as jest.Mock).mock.calls[0][0];
       expect(callArg.Key).toBe('some/path/file.jpg');
       expect(callArg.Key).not.toMatch(/^\//);
+    });
+
+    it('S3 send 실패 시 에러가 호출자로 전파됨', async () => {
+      mockS3Send.mockRejectedValue(new Error('S3 NoSuchBucket'));
+
+      await expect(
+        service.deleteFile('https://chwippo.s3.ap-northeast-2.amazonaws.com/users/u1/file.pdf'),
+      ).rejects.toThrow('S3 NoSuchBucket');
     });
   });
 });

@@ -1,3 +1,4 @@
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -5,11 +6,13 @@ import { Repository, SelectQueryBuilder } from 'typeorm';
 import { CalendarService } from './calendar.service';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { DailyNote } from './daily-note.entity';
 
 describe('CalendarService', () => {
   let service: CalendarService;
   let appRepo: jest.Mocked<Repository<Application>>;
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
+  let noteRepo: jest.Mocked<Repository<DailyNote>>;
 
   function makeQb(rawResult: any[] = []) {
     const qb = {
@@ -23,21 +26,36 @@ describe('CalendarService', () => {
     return qb;
   }
 
+  const makeNote = (overrides: Partial<DailyNote> = {}): DailyNote =>
+    ({
+      id: 'note-uuid-1',
+      userId: 'user-1',
+      date: '2026-05-10',
+      hourSlot: 0,
+      content: '06:00 할 일',
+      isDone: false,
+      createdAt: new Date(),
+      ...overrides,
+    }) as DailyNote;
+
   beforeEach(async () => {
     const mockAppRepo = mock<Repository<Application>>();
     const mockStepRepo = mock<Repository<ApplicationStep>>();
+    const mockNoteRepo = mock<Repository<DailyNote>>();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CalendarService,
         { provide: getRepositoryToken(Application), useValue: mockAppRepo },
         { provide: getRepositoryToken(ApplicationStep), useValue: mockStepRepo },
+        { provide: getRepositoryToken(DailyNote), useValue: mockNoteRepo },
       ],
     }).compile();
 
     service = module.get<CalendarService>(CalendarService);
     appRepo = module.get(getRepositoryToken(Application));
     stepRepo = module.get(getRepositoryToken(ApplicationStep));
+    noteRepo = module.get(getRepositoryToken(DailyNote));
   });
 
   describe('getMonthEvents', () => {
@@ -136,6 +154,141 @@ describe('CalendarService', () => {
         expect.any(String),
         expect.objectContaining({ end: '2027-01-01' }),
       );
+    });
+
+    it('면접 이벤트의 location이 null이면 null로 반환', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      stepRepo.createQueryBuilder.mockReturnValue(
+        makeQb([
+          {
+            application_id: 'app-1',
+            company_name: '토스',
+            step_name: '1차 면접',
+            location: null,
+            date: '2026-05-15',
+          },
+        ]) as any,
+      );
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result[0].location).toBeNull();
+    });
+
+    it('같은 날짜에 서류 마감과 면접이 있으면 둘 다 반환 (날짜 동일 → 원래 순서 유지)', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(
+        makeQb([{ id: 'app-1', company_name: '네이버', deadline: '2026-05-15' }]) as any,
+      );
+      stepRepo.createQueryBuilder.mockReturnValue(
+        makeQb([
+          { application_id: 'app-2', company_name: '카카오', step_name: '서류 발표', location: null, date: '2026-05-15' },
+        ]) as any,
+      );
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result).toHaveLength(2);
+      expect(result.every((e) => e.date === '2026-05-15')).toBe(true);
+    });
+  });
+
+  // ── getDailyNotes ──────────────────────────────────────
+  describe('getDailyNotes', () => {
+    it('userId·date 조건으로 hourSlot ASC, createdAt ASC 정렬 조회', async () => {
+      const notes = [makeNote()];
+      noteRepo.find.mockResolvedValue(notes);
+
+      const result = await service.getDailyNotes('user-1', '2026-05-10');
+
+      expect(noteRepo.find).toHaveBeenCalledWith({
+        where: { userId: 'user-1', date: '2026-05-10' },
+        order: { hourSlot: 'ASC', createdAt: 'ASC' },
+      });
+      expect(result).toEqual(notes);
+    });
+
+    it('해당 날짜 노트 없으면 빈 배열 반환', async () => {
+      noteRepo.find.mockResolvedValue([]);
+      const result = await service.getDailyNotes('user-1', '2026-05-10');
+      expect(result).toEqual([]);
+    });
+  });
+
+  // ── createDailyNote ────────────────────────────────────
+  describe('createDailyNote', () => {
+    it('userId + dto로 create 후 save, 저장된 노트 반환', async () => {
+      const dto = { date: '2026-05-10', hourSlot: 3, content: '08:30 커피챗', isDone: false };
+      const note = makeNote({ ...dto });
+      noteRepo.create.mockReturnValue(note);
+      noteRepo.save.mockResolvedValue(note);
+
+      const result = await service.createDailyNote('user-1', dto);
+
+      expect(noteRepo.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-1', ...dto }));
+      expect(noteRepo.save).toHaveBeenCalledWith(note);
+      expect(result).toEqual(note);
+    });
+  });
+
+  // ── updateDailyNote ────────────────────────────────────
+  describe('updateDailyNote', () => {
+    it('본인 노트 → Object.assign 후 save, 수정된 노트 반환', async () => {
+      const note = makeNote({ isDone: false });
+      noteRepo.findOne.mockResolvedValue(note);
+      noteRepo.save.mockImplementation(async (n) => n as DailyNote);
+
+      const result = await service.updateDailyNote('user-1', 'note-uuid-1', { isDone: true });
+
+      expect(noteRepo.findOne).toHaveBeenCalledWith({ where: { id: 'note-uuid-1' } });
+      expect(result.isDone).toBe(true);
+      expect(noteRepo.save).toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 노트 → NotFoundException', async () => {
+      noteRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.updateDailyNote('user-1', 'nonexistent', { isDone: true }),
+      ).rejects.toThrow(NotFoundException);
+      expect(noteRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('다른 userId의 노트 → ForbiddenException (IDOR)', async () => {
+      const note = makeNote({ userId: 'other-user' });
+      noteRepo.findOne.mockResolvedValue(note);
+
+      await expect(
+        service.updateDailyNote('user-1', 'note-uuid-1', { isDone: true }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(noteRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── deleteDailyNote ────────────────────────────────────
+  describe('deleteDailyNote', () => {
+    it('본인 노트 → noteRepo.remove 호출', async () => {
+      const note = makeNote();
+      noteRepo.findOne.mockResolvedValue(note);
+      noteRepo.remove.mockResolvedValue(note);
+
+      await service.deleteDailyNote('user-1', 'note-uuid-1');
+
+      expect(noteRepo.remove).toHaveBeenCalledWith(note);
+    });
+
+    it('존재하지 않는 노트 → NotFoundException', async () => {
+      noteRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.deleteDailyNote('user-1', 'nonexistent')).rejects.toThrow(NotFoundException);
+      expect(noteRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('다른 userId의 노트 → ForbiddenException (IDOR)', async () => {
+      const note = makeNote({ userId: 'other-user' });
+      noteRepo.findOne.mockResolvedValue(note);
+
+      await expect(service.deleteDailyNote('user-1', 'note-uuid-1')).rejects.toThrow(ForbiddenException);
+      expect(noteRepo.remove).not.toHaveBeenCalled();
     });
   });
 });
