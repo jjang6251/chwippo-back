@@ -230,4 +230,66 @@ describe('DashboardService', () => {
       expect(result.map((r) => r.dday)).toEqual([0, 1, 2, 3, 4]);
     });
   });
+
+  // ── getYesterdayInterviews ────────────────────────────
+  describe('getYesterdayInterviews', () => {
+    const makeYesterdayStep = (id: string, name: string, appId: string): ApplicationStep => {
+      const kst = 9 * 60 * 60 * 1000;
+      const todayKst = new Date(Date.now() + kst);
+      const todayStr = todayKst.toISOString().split('T')[0];
+      const yesterday = new Date(new Date(todayStr).getTime() - 86400000);
+      return {
+        id,
+        name,
+        applicationId: appId,
+        scheduledDate: yesterday,
+        application: { id: appId, companyName: '카카오' } as Application,
+      } as ApplicationStep;
+    };
+
+    it('어제 면접 일정이 있으면 stepId·stepName·applicationId·companyName 반환', async () => {
+      const steps = [makeYesterdayStep('step-1', '1차 면접', 'app-1')];
+      const qb = makeQb(steps);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      const result = await service.getYesterdayInterviews(USER_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].stepId).toBe('step-1');
+      expect(result[0].stepName).toBe('1차 면접');
+      expect(result[0].applicationId).toBe('app-1');
+    });
+
+    it('어제 면접이 없으면 빈 배열 반환', async () => {
+      const qb = makeQb([]);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      const result = await service.getYesterdayInterviews(USER_ID);
+
+      expect(result).toEqual([]);
+    });
+
+    it('쿼리에 userId 필터 포함 — 다른 유저 데이터 혼입 방지', async () => {
+      const qb = makeQb([]);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      await service.getYesterdayInterviews(USER_ID);
+
+      const whereCall = qb.where.mock.calls[0];
+      expect(whereCall[1]).toMatchObject({ userId: USER_ID });
+    });
+
+    it('여러 면접이 있으면 모두 반환', async () => {
+      const steps = [
+        makeYesterdayStep('step-1', '1차 면접', 'app-1'),
+        makeYesterdayStep('step-2', '임원 면접', 'app-2'),
+      ];
+      const qb = makeQb(steps);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      const result = await service.getYesterdayInterviews(USER_ID);
+
+      expect(result).toHaveLength(2);
+    });
+  });
 });

@@ -114,4 +114,34 @@ export class DashboardService {
 
     return items.sort((a, b) => a.dday - b.dday).slice(0, 5);
   }
+
+  async getYesterdayInterviews(userId: string) {
+    const KST = 9 * 60 * 60 * 1000;
+    const kstNow = new Date(Date.now() + KST);
+    const today = kstNow.toISOString().split('T')[0];
+    const yesterday = new Date(new Date(today).getTime() - 86400000).toISOString().split('T')[0];
+
+    const steps = await this.stepRepo
+      .createQueryBuilder('step')
+      .innerJoin('step.application', 'app')
+      .where('app.user_id = :userId', { userId })
+      .andWhere('app.status = :status', { status: 'IN_PROGRESS' })
+      .andWhere('app.deleted_at IS NULL')
+      .andWhere('step.scheduledDate IS NOT NULL')
+      .andWhere(
+        "(step.scheduledDate AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE = :yesterday",
+        { yesterday },
+      )
+      .andWhere("step.name LIKE '%면접%'")
+      .select(['step.id', 'step.name', 'step.applicationId'])
+      .addSelect(['app.companyName'])
+      .getMany();
+
+    return steps.map((step) => ({
+      stepId: step.id,
+      stepName: step.name,
+      applicationId: step.applicationId,
+      companyName: (step as any).app_company_name ?? step.application?.companyName ?? '',
+    }));
+  }
 }
