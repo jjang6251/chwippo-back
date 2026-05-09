@@ -21,9 +21,11 @@ export class CalendarController {
   @Get('daily-notes')
   async getDailyNotes(
     @CurrentUser() user: AuthUser,
-    @Query('date') date: string,
+    @Query('date') date?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
-    return this.calendarService.getDailyNotes(user.id, date);
+    return this.calendarService.getDailyNotes(user.id, { date, startDate, endDate });
   }
 
   @Post('daily-notes')
@@ -32,6 +34,14 @@ export class CalendarController {
     @Body() dto: CreateDailyNoteDto,
   ) {
     return this.calendarService.createDailyNote(user.id, dto);
+  }
+
+  @Patch('daily-notes/:id/carry-over')
+  async carryOverDailyNote(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.calendarService.carryOverDailyNote(user.id, id);
   }
 
   @Patch('daily-notes/:id')

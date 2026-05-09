@@ -193,23 +193,42 @@ describe('CalendarService', () => {
   });
 
   // ── getDailyNotes ──────────────────────────────────────
+  function makeNoteQb(results: DailyNote[]) {
+    const qb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(results),
+    };
+    noteRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+    return qb;
+  }
+
   describe('getDailyNotes', () => {
-    it('userId·date 조건으로 hourSlot ASC, createdAt ASC 정렬 조회', async () => {
+    it('date 파라미터로 해당 날짜 노트 반환', async () => {
       const notes = [makeNote()];
-      noteRepo.find.mockResolvedValue(notes);
+      const qb = makeNoteQb(notes);
 
-      const result = await service.getDailyNotes('user-1', '2026-05-10');
+      const result = await service.getDailyNotes('user-1', { date: '2026-05-10' });
 
-      expect(noteRepo.find).toHaveBeenCalledWith({
-        where: { userId: 'user-1', date: '2026-05-10' },
-        order: { hourSlot: 'ASC', createdAt: 'ASC' },
-      });
+      expect(noteRepo.createQueryBuilder).toHaveBeenCalledWith('n');
+      expect(qb.andWhere).toHaveBeenCalledWith('n.date = :date', { date: '2026-05-10' });
+      expect(result).toEqual(notes);
+    });
+
+    it('startDate/endDate 범위로 노트 반환', async () => {
+      const notes = [makeNote(), makeNote({ date: '2026-05-09' })];
+      makeNoteQb(notes);
+
+      const result = await service.getDailyNotes('user-1', { startDate: '2026-05-09', endDate: '2026-05-10' });
+
       expect(result).toEqual(notes);
     });
 
     it('해당 날짜 노트 없으면 빈 배열 반환', async () => {
-      noteRepo.find.mockResolvedValue([]);
-      const result = await service.getDailyNotes('user-1', '2026-05-10');
+      makeNoteQb([]);
+      const result = await service.getDailyNotes('user-1', { date: '2026-05-10' });
       expect(result).toEqual([]);
     });
   });

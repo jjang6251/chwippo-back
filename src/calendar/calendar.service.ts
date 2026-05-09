@@ -11,6 +11,7 @@ export interface CalendarEvent {
   time: string | null;
   type: 'deadline' | 'interview';
   applicationId: string;
+  stepId: string | null;
   companyName: string;
   stepName: string | null;
   location: string | null;
@@ -47,6 +48,7 @@ export class CalendarService {
       .innerJoin('applications', 'a', 'a.id = s.application_id AND a.user_id = :userId AND a.deleted_at IS NULL', { userId })
       .select([
         'a.id AS application_id',
+        's.id AS step_id',
         'a.company_name AS company_name',
         's.name AS step_name',
         's.location AS location',
@@ -56,13 +58,14 @@ export class CalendarService {
       .where('s.scheduled_date IS NOT NULL')
       .andWhere('s.scheduled_date >= :start', { start: new Date(`${year}-${monthStr}-01T00:00:00+09:00`) })
       .andWhere('s.scheduled_date < :end', { end: new Date(nextMonth + 'T00:00:00+09:00') })
-      .getRawMany<{ application_id: string; company_name: string; step_name: string; location: string | null; date: string; time: string }>();
+      .getRawMany<{ application_id: string; step_id: string; company_name: string; step_name: string; location: string | null; date: string; time: string }>();
 
     const deadlineEvents: CalendarEvent[] = deadlines.map((d) => ({
       date: typeof d.deadline === 'string' ? d.deadline : (d.deadline as Date).toISOString().slice(0, 10),
       time: null,
       type: 'deadline',
       applicationId: d.id,
+      stepId: null,
       companyName: d.company_name,
       stepName: null,
       location: null,
@@ -73,6 +76,7 @@ export class CalendarService {
       time: i.time,
       type: 'interview',
       applicationId: i.application_id,
+      stepId: i.step_id,
       companyName: i.company_name,
       stepName: i.step_name,
       location: i.location,
@@ -81,11 +85,35 @@ export class CalendarService {
     return [...deadlineEvents, ...interviewEvents].sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  async getDailyNotes(userId: string, date: string): Promise<DailyNote[]> {
-    return this.noteRepo.find({
-      where: { userId, date },
-      order: { hourSlot: 'ASC', createdAt: 'ASC' },
-    });
+  async getDailyNotes(
+    userId: string,
+    params: { date?: string; startDate?: string; endDate?: string },
+  ): Promise<DailyNote[]> {
+    const qb = this.noteRepo
+      .createQueryBuilder('n')
+      .where('n.user_id = :userId', { userId });
+
+    if (params.date) {
+      qb.andWhere('n.date = :date', { date: params.date });
+    } else if (params.startDate && params.endDate) {
+      qb.andWhere('n.date >= :startDate AND n.date <= :endDate', {
+        startDate: params.startDate,
+        endDate: params.endDate,
+      });
+    }
+
+    return qb
+      .orderBy('n.hour_slot', 'ASC', 'NULLS FIRST')
+      .addOrderBy('n.created_at', 'ASC')
+      .getMany();
+  }
+
+  async carryOverDailyNote(userId: string, id: string): Promise<DailyNote> {
+    const note = await this.noteRepo.findOne({ where: { id } });
+    if (!note) throw new NotFoundException();
+    if (note.userId !== userId) throw new ForbiddenException();
+    note.date = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
+    return this.noteRepo.save(note);
   }
 
   async createDailyNote(userId: string, dto: CreateDailyNoteDto): Promise<DailyNote> {

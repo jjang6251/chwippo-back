@@ -11,9 +11,10 @@ export class DailyNote {
   @Column({ type: 'date' })
   date: string;
 
-  // 0 = 06:00, 1 = 06:30, ..., 35 = 23:30
-  @Column({ name: 'hour_slot' })
-  hourSlot: number;
+  // null = 시간 없는 할 일 (대시보드 오늘 할 일)
+  // -12 = 00:00, 0 = 06:00, ..., 35 = 23:30
+  @Column({ name: 'hour_slot', nullable: true, type: 'int' })
+  hourSlot: number | null;
 
   @Column({ type: 'varchar', length: 200 })
   content: string;
