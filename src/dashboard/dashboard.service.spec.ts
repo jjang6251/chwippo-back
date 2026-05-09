@@ -180,5 +180,54 @@ describe('DashboardService', () => {
 
       expect(result).toEqual([]);
     });
+
+    it('dday=0 (오늘 마감) 항목 포함, dday 값이 0', async () => {
+      const apps = [makeDeadlineApp('app-today', '오늘마감회사', 0)];
+
+      const appQb = makeQb(apps);
+      const stepQb = makeQb([]);
+      appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
+
+      const result = await service.getDdayList(USER_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].dday).toBe(0);
+      expect(result[0].type).toBe('deadline');
+    });
+
+    it('서류 마감과 면접 일정이 섞여 있으면 dday 기준으로 함께 정렬', async () => {
+      const apps = [makeDeadlineApp('app-1', '서류회사', 4)];
+      const steps = [makeStepWithDate('step-1', '1차 면접', 'app-2', 2)];
+
+      const appQb = makeQb(apps);
+      const stepQb = makeQb(steps);
+      appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
+
+      const result = await service.getDdayList(USER_ID);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].type).toBe('interview');  // dday=2가 먼저
+      expect(result[0].dday).toBe(2);
+      expect(result[1].type).toBe('deadline');   // dday=4가 나중
+      expect(result[1].dday).toBe(4);
+    });
+
+    it('6개 항목 중 dday 오름차순 상위 5개만 반환 (deadline+interview 혼합)', async () => {
+      const apps = [0, 2, 4].map((d) => makeDeadlineApp(`app-${d}`, `서류${d}`, d));
+      const steps = [1, 3, 5].map((d) => makeStepWithDate(`step-${d}`, '면접', `app-s${d}`, d));
+
+      const appQb = makeQb(apps);
+      const stepQb = makeQb(steps);
+      appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
+
+      const result = await service.getDdayList(USER_ID);
+
+      expect(result).toHaveLength(5);
+      // 상위 5개: dday 0,1,2,3,4 (dday=5인 면접 제외)
+      expect(result.map((r) => r.dday)).toEqual([0, 1, 2, 3, 4]);
+    });
   });
 });

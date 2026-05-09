@@ -5,6 +5,7 @@ import { DataSource, EntityManager, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
+import { StepChecklistItem } from './step-checklist-item.entity';
 import { ApplicationsService } from './applications.service';
 
 const DEFAULT_STEP_NAMES = [
@@ -95,6 +96,7 @@ describe('ApplicationsService', () => {
         ApplicationsService,
         { provide: getRepositoryToken(Application), useValue: mockAppRepo },
         { provide: getRepositoryToken(ApplicationStep), useValue: mockStepRepo },
+        { provide: getRepositoryToken(StepChecklistItem), useValue: mock<Repository<StepChecklistItem>>() },
         { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
