@@ -10,11 +10,8 @@ import { ApplicationsService } from './applications.service';
 
 const DEFAULT_STEP_NAMES = [
   '서류 제출',
-  '서류 발표',
   '1차 면접',
-  '1차 결과 대기',
   '2차 면접',
-  '2차 결과 대기',
   '최종 합격',
 ];
 
@@ -179,20 +176,42 @@ describe('ApplicationsService', () => {
       );
     });
 
-    it('status=IN_PROGRESS → 기본 7스텝 생성 (이름, orderIndex 0~6)', async () => {
+    it('status=IN_PROGRESS → 기본 4스텝 생성 (이름, orderIndex 0~3)', async () => {
       const app = makeApp({ status: 'IN_PROGRESS' });
       const { em, savedSteps } = makeEntityManager(app);
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
       await service.create('user-uuid-1', { companyName: '카카오', status: 'IN_PROGRESS' });
 
-      expect(savedSteps).toHaveLength(7);
+      expect(savedSteps).toHaveLength(4);
       expect(savedSteps[0]).toMatchObject({ name: '서류 제출', orderIndex: 0 });
-      expect(savedSteps[6]).toMatchObject({ name: '최종 합격', orderIndex: 6 });
+      expect(savedSteps[3]).toMatchObject({ name: '최종 합격', orderIndex: 3 });
 
       DEFAULT_STEP_NAMES.forEach((name, i) => {
         expect(savedSteps[i]).toMatchObject({ name, orderIndex: i });
       });
+    });
+
+    it('deadline 전달 시 첫 스텝(서류 제출) scheduledDate에 자동 설정', async () => {
+      const app = makeApp({ status: 'IN_PROGRESS', deadline: '2025-12-31' });
+      const { em, savedSteps } = makeEntityManager(app);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.create('user-uuid-1', { companyName: '네카라', status: 'IN_PROGRESS', deadline: '2025-12-31' });
+
+      expect(savedSteps[0]).toMatchObject({ name: '서류 제출', orderIndex: 0 });
+      expect(savedSteps[0].scheduledDate).toEqual(new Date('2025-12-31'));
+      expect(savedSteps[1].scheduledDate).toBeNull();
+    });
+
+    it('deadline 미전달 시 모든 스텝 scheduledDate null', async () => {
+      const app = makeApp({ status: 'IN_PROGRESS' });
+      const { em, savedSteps } = makeEntityManager(app);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.create('user-uuid-1', { companyName: '쿠팡', status: 'IN_PROGRESS' });
+
+      savedSteps.forEach((step) => expect(step.scheduledDate).toBeNull());
     });
 
     it('status=PLANNED → 스텝 미생성 (em.save 1번만 호출)', async () => {
@@ -306,17 +325,17 @@ describe('ApplicationsService', () => {
   // ── updateCurrentStep ──────────────────────────────────
   describe('updateCurrentStep', () => {
     it('마지막 스텝 클릭 → appRepo.update에 status: PASSED 포함', async () => {
-      const steps = makeDefaultSteps();  // 7개, 마지막 index=6
+      const steps = makeDefaultSteps();  // 4개, 마지막 index=3
       stepRepo.find.mockResolvedValue(steps);
       appRepo.findOne.mockResolvedValue(makeApp());  // findEntity
       appRepo.update.mockResolvedValue({} as any);
-      appRepo.findOne.mockResolvedValue(makeApp({ currentStepIndex: 6, status: 'PASSED', steps }));
+      appRepo.findOne.mockResolvedValue(makeApp({ currentStepIndex: 3, status: 'PASSED', steps }));
 
-      await service.updateCurrentStep('user-uuid-1', 'app-uuid-1', 6);
+      await service.updateCurrentStep('user-uuid-1', 'app-uuid-1', 3);
 
       expect(appRepo.update).toHaveBeenCalledWith(
         'app-uuid-1',
-        expect.objectContaining({ currentStepIndex: 6, status: 'PASSED' }),
+        expect.objectContaining({ currentStepIndex: 3, status: 'PASSED' }),
       );
     });
 
@@ -345,11 +364,11 @@ describe('ApplicationsService', () => {
     });
 
     it('stepIndex >= steps.length → ForbiddenException', async () => {
-      stepRepo.find.mockResolvedValue(makeDefaultSteps());  // 7개
+      stepRepo.find.mockResolvedValue(makeDefaultSteps());  // 4개
       appRepo.findOne.mockResolvedValue(makeApp());
 
       await expect(
-        service.updateCurrentStep('user-uuid-1', 'app-uuid-1', 7),
+        service.updateCurrentStep('user-uuid-1', 'app-uuid-1', 4),
       ).rejects.toThrow(ForbiddenException);
     });
   });
