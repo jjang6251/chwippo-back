@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { DashboardService } from './dashboard.service';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 
 /** QueryBuilder mock 생성 헬퍼 */
 const makeQb = (returnValue: any) => ({
@@ -25,11 +26,16 @@ describe('DashboardService', () => {
   const USER_ID = 'user-uuid-1';
 
   beforeEach(async () => {
+    const mockExamRepo = mock<Repository<ExamSchedule>>();
+    // 시험 일정 조회는 기본으로 빈 배열 — 기존 테스트가 dday 결과에 시험을 가정하지 않으므로 디폴트 처리
+    (mockExamRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb([]));
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DashboardService,
         { provide: getRepositoryToken(Application), useValue: mock<Repository<Application>>() },
         { provide: getRepositoryToken(ApplicationStep), useValue: mock<Repository<ApplicationStep>>() },
+        { provide: getRepositoryToken(ExamSchedule), useValue: mockExamRepo },
       ],
     }).compile();
 
@@ -228,6 +234,68 @@ describe('DashboardService', () => {
       expect(result).toHaveLength(5);
       // 상위 5개: dday 0,1,2,3,4 (dday=5인 면접 제외)
       expect(result.map((r) => r.dday)).toEqual([0, 1, 2, 3, 4]);
+    });
+  });
+
+  // ── getYesterdayInterviews ────────────────────────────
+  describe('getYesterdayInterviews', () => {
+    const makeYesterdayStep = (id: string, name: string, appId: string): ApplicationStep => {
+      const kst = 9 * 60 * 60 * 1000;
+      const todayKst = new Date(Date.now() + kst);
+      const todayStr = todayKst.toISOString().split('T')[0];
+      const yesterday = new Date(new Date(todayStr).getTime() - 86400000);
+      return {
+        id,
+        name,
+        applicationId: appId,
+        scheduledDate: yesterday,
+        application: { id: appId, companyName: '카카오' } as Application,
+      } as ApplicationStep;
+    };
+
+    it('어제 면접 일정이 있으면 stepId·stepName·applicationId·companyName 반환', async () => {
+      const steps = [makeYesterdayStep('step-1', '1차 면접', 'app-1')];
+      const qb = makeQb(steps);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      const result = await service.getYesterdayInterviews(USER_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].stepId).toBe('step-1');
+      expect(result[0].stepName).toBe('1차 면접');
+      expect(result[0].applicationId).toBe('app-1');
+    });
+
+    it('어제 면접이 없으면 빈 배열 반환', async () => {
+      const qb = makeQb([]);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      const result = await service.getYesterdayInterviews(USER_ID);
+
+      expect(result).toEqual([]);
+    });
+
+    it('쿼리에 userId 필터 포함 — 다른 유저 데이터 혼입 방지', async () => {
+      const qb = makeQb([]);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      await service.getYesterdayInterviews(USER_ID);
+
+      const whereCall = qb.where.mock.calls[0];
+      expect(whereCall[1]).toMatchObject({ userId: USER_ID });
+    });
+
+    it('여러 면접이 있으면 모두 반환', async () => {
+      const steps = [
+        makeYesterdayStep('step-1', '1차 면접', 'app-1'),
+        makeYesterdayStep('step-2', '임원 면접', 'app-2'),
+      ];
+      const qb = makeQb(steps);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+
+      const result = await service.getYesterdayInterviews(USER_ID);
+
+      expect(result).toHaveLength(2);
     });
   });
 });

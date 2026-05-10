@@ -41,4 +41,8 @@ export class UpdateApplicationDto {
   @IsOptional()
   @IsBoolean()
   needsDetail?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isStarred?: boolean;
 }

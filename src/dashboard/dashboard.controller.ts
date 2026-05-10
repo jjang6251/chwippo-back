@@ -17,4 +17,9 @@ export class DashboardController {
   getDdayList(@CurrentUser() user: AuthUser) {
     return this.dashboardService.getDdayList(user.id);
   }
+
+  @Get('interview-review')
+  getInterviewReview(@CurrentUser() user: AuthUser) {
+    return this.dashboardService.getYesterdayInterviews(user.id);
+  }
 }
