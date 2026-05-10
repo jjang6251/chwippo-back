@@ -12,11 +12,8 @@ import { CreateChecklistItemDto, UpdateChecklistItemDto } from './dto/checklist-
 
 const DEFAULT_STEPS = [
   '서류 제출',
-  '서류 발표',
   '1차 면접',
-  '1차 결과 대기',
   '2차 면접',
-  '2차 결과 대기',
   '최종 합격',
 ];
 
@@ -74,7 +71,7 @@ export class ApplicationsService {
       const saved = await em.save(Application, app);
 
       if (status === 'IN_PROGRESS') {
-        await this.createDefaultSteps(em, saved.id);
+        await this.createDefaultSteps(em, saved.id, dto.deadline);
       }
 
       return em.findOne(Application, {
@@ -98,7 +95,7 @@ export class ApplicationsService {
     if (wasPlanned && becomesInProgress) {
       const existingSteps = await this.stepRepo.count({ where: { applicationId: id } });
       if (existingSteps === 0) {
-        await this.createDefaultSteps(this.stepRepo.manager, id);
+        await this.createDefaultSteps(this.stepRepo.manager, id, app.deadline ?? null);
       }
     }
 
@@ -165,9 +162,14 @@ export class ApplicationsService {
     await this.appRepo.softRemove(app);
   }
 
-  private async createDefaultSteps(em: any, applicationId: string) {
+  private async createDefaultSteps(em: any, applicationId: string, deadline?: string | null) {
     const steps = DEFAULT_STEPS.map((name, i) =>
-      em.create(ApplicationStep, { applicationId, orderIndex: i, name }),
+      em.create(ApplicationStep, {
+        applicationId,
+        orderIndex: i,
+        name,
+        scheduledDate: i === 0 && deadline ? new Date(deadline) : null,
+      }),
     );
     await em.save(ApplicationStep, steps);
   }
