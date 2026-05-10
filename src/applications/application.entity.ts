@@ -59,6 +59,9 @@ export class Application {
   @Column({ name: 'needs_detail', default: false })
   needsDetail: boolean;
 
+  @Column({ name: 'is_starred', default: false })
+  isStarred: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
