@@ -8,5 +8,6 @@ export class Cert {
   @Column({ nullable: true }) issuer: string;
   @Column({ nullable: true }) cert_number: string;
   @Column({ type: 'date', nullable: true }) acquired_at: string;
+  @Column({ type: 'date', nullable: true }) expires_at: string;
   @Column({ nullable: true }) file_url: string;
 }

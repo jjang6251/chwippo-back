@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 
 @Injectable()
 export class DashboardService {
@@ -11,6 +12,8 @@ export class DashboardService {
     private readonly appRepo: Repository<Application>,
     @InjectRepository(ApplicationStep)
     private readonly stepRepo: Repository<ApplicationStep>,
+    @InjectRepository(ExamSchedule)
+    private readonly examRepo: Repository<ExamSchedule>,
   ) {}
 
   async getStats(userId: string) {
@@ -70,12 +73,23 @@ export class DashboardService {
       .addSelect(['app.id', 'app.companyName'])
       .getMany();
 
+    // 시험 일정 — 오늘 이후만
+    const exams = await this.examRepo
+      .createQueryBuilder('e')
+      .where('e.user_id = :userId', { userId })
+      .andWhere(
+        "(e.exam_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE >= :today",
+        { today },
+      )
+      .getMany();
+
     const todayMs = new Date(today).getTime();
 
     const items: {
-      type: 'deadline' | 'interview';
-      applicationId: string;
+      type: 'deadline' | 'interview' | 'exam';
+      applicationId?: string;
       stepId?: string;
+      examId?: string;
       companyName: string;
       stepName?: string;
       date: string;
@@ -109,6 +123,23 @@ export class DashboardService {
         scheduledTime: `${hours}:${minutes}`,
         dday,
         pinnedContent: step.pinnedContent ?? null,
+      });
+    }
+
+    for (const exam of exams) {
+      const kstDate = new Date(exam.exam_date.getTime() + KST);
+      const dateStr = kstDate.toISOString().split('T')[0];
+      const dateMs = new Date(dateStr).getTime();
+      const dday = Math.round((dateMs - todayMs) / 86400000);
+      const hours = kstDate.getUTCHours().toString().padStart(2, '0');
+      const minutes = kstDate.getUTCMinutes().toString().padStart(2, '0');
+      items.push({
+        type: 'exam',
+        examId: exam.id,
+        companyName: exam.name,
+        date: dateStr,
+        scheduledTime: `${hours}:${minutes}`,
+        dday,
       });
     }
 

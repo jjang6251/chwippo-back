@@ -3,15 +3,17 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { DailyNote } from './daily-note.entity';
 import { CreateDailyNoteDto, UpdateDailyNoteDto } from './dto/daily-note.dto';
 
 export interface CalendarEvent {
   date: string;
   time: string | null;
-  type: 'deadline' | 'interview';
-  applicationId: string;
+  type: 'deadline' | 'interview' | 'exam';
+  applicationId: string | null;
   stepId: string | null;
+  examId: string | null;
   companyName: string;
   stepName: string | null;
   location: string | null;
@@ -26,6 +28,8 @@ export class CalendarService {
     private readonly stepRepo: Repository<ApplicationStep>,
     @InjectRepository(DailyNote)
     private readonly noteRepo: Repository<DailyNote>,
+    @InjectRepository(ExamSchedule)
+    private readonly examRepo: Repository<ExamSchedule>,
   ) {}
 
   async getMonthEvents(userId: string, year: number, month: number): Promise<CalendarEvent[]> {
@@ -60,12 +64,27 @@ export class CalendarService {
       .andWhere('s.scheduled_date < :end', { end: new Date(nextMonth + 'T00:00:00+09:00') })
       .getRawMany<{ application_id: string; step_id: string; company_name: string; step_name: string; location: string | null; date: string; time: string }>();
 
+    const exams = await this.examRepo
+      .createQueryBuilder('e')
+      .select([
+        'e.id AS id',
+        'e.name AS name',
+        'e.location AS location',
+        "TO_CHAR(e.exam_date AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS date",
+        "TO_CHAR(e.exam_date AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS time",
+      ])
+      .where('e.user_id = :userId', { userId })
+      .andWhere('e.exam_date >= :start', { start: new Date(`${year}-${monthStr}-01T00:00:00+09:00`) })
+      .andWhere('e.exam_date < :end', { end: new Date(nextMonth + 'T00:00:00+09:00') })
+      .getRawMany<{ id: string; name: string; location: string | null; date: string; time: string }>();
+
     const deadlineEvents: CalendarEvent[] = deadlines.map((d) => ({
       date: typeof d.deadline === 'string' ? d.deadline : (d.deadline as Date).toISOString().slice(0, 10),
       time: null,
       type: 'deadline',
       applicationId: d.id,
       stepId: null,
+      examId: null,
       companyName: d.company_name,
       stepName: null,
       location: null,
@@ -77,12 +96,25 @@ export class CalendarService {
       type: 'interview',
       applicationId: i.application_id,
       stepId: i.step_id,
+      examId: null,
       companyName: i.company_name,
       stepName: i.step_name,
       location: i.location,
     }));
 
-    return [...deadlineEvents, ...interviewEvents].sort((a, b) => a.date.localeCompare(b.date));
+    const examEvents: CalendarEvent[] = exams.map((e) => ({
+      date: e.date,
+      time: e.time,
+      type: 'exam',
+      applicationId: null,
+      stepId: null,
+      examId: e.id,
+      companyName: e.name,
+      stepName: null,
+      location: e.location,
+    }));
+
+    return [...deadlineEvents, ...interviewEvents, ...examEvents].sort((a, b) => a.date.localeCompare(b.date));
   }
 
   async getDailyNotes(

@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { DashboardService } from './dashboard.service';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 
 /** QueryBuilder mock 생성 헬퍼 */
 const makeQb = (returnValue: any) => ({
@@ -25,11 +26,16 @@ describe('DashboardService', () => {
   const USER_ID = 'user-uuid-1';
 
   beforeEach(async () => {
+    const mockExamRepo = mock<Repository<ExamSchedule>>();
+    // 시험 일정 조회는 기본으로 빈 배열 — 기존 테스트가 dday 결과에 시험을 가정하지 않으므로 디폴트 처리
+    (mockExamRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb([]));
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DashboardService,
         { provide: getRepositoryToken(Application), useValue: mock<Repository<Application>>() },
         { provide: getRepositoryToken(ApplicationStep), useValue: mock<Repository<ApplicationStep>>() },
+        { provide: getRepositoryToken(ExamSchedule), useValue: mockExamRepo },
       ],
     }).compile();
 
