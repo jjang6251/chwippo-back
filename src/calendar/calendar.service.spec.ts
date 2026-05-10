@@ -6,6 +6,7 @@ import { Repository, SelectQueryBuilder } from 'typeorm';
 import { CalendarService } from './calendar.service';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { DailyNote } from './daily-note.entity';
 
 describe('CalendarService', () => {
@@ -42,6 +43,9 @@ describe('CalendarService', () => {
     const mockAppRepo = mock<Repository<Application>>();
     const mockStepRepo = mock<Repository<ApplicationStep>>();
     const mockNoteRepo = mock<Repository<DailyNote>>();
+    const mockExamRepo = mock<Repository<ExamSchedule>>();
+    // exam query builder는 항상 빈 배열 반환 (시험 일정 없음)
+    (mockExamRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb([]));
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -49,6 +53,7 @@ describe('CalendarService', () => {
         { provide: getRepositoryToken(Application), useValue: mockAppRepo },
         { provide: getRepositoryToken(ApplicationStep), useValue: mockStepRepo },
         { provide: getRepositoryToken(DailyNote), useValue: mockNoteRepo },
+        { provide: getRepositoryToken(ExamSchedule), useValue: mockExamRepo },
       ],
     }).compile();
 
