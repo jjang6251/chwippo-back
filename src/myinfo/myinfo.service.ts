@@ -9,6 +9,7 @@ import { Experience } from './entities/experience.entity';
 import { Coverletter } from './entities/coverletter.entity';
 import { CoverletterCustom } from './entities/coverletter-custom.entity';
 import { Document } from './entities/document.entity';
+import { Education } from './entities/education.entity';
 
 @Injectable()
 export class MyinfoService {
@@ -21,7 +22,23 @@ export class MyinfoService {
     @InjectRepository(Coverletter) private coverRepo: Repository<Coverletter>,
     @InjectRepository(Document) private documentRepo: Repository<Document>,
     @InjectRepository(CoverletterCustom) private coverCustomRepo: Repository<CoverletterCustom>,
+    @InjectRepository(Education) private educationRepo: Repository<Education>,
   ) {}
+
+  // ── Educations ────────────────────────────────────────────
+  async getEducations(userId: string) {
+    return this.educationRepo.find({ where: { user_id: userId }, order: { start_at: 'DESC' } });
+  }
+  async createEducation(userId: string, dto: Partial<Education>) {
+    return this.educationRepo.save(this.educationRepo.create({ ...dto, user_id: userId }));
+  }
+  async updateEducation(userId: string, id: string, dto: Partial<Education>) {
+    await this.educationRepo.update({ id, user_id: userId }, dto);
+    return this.educationRepo.findOne({ where: { id, user_id: userId } });
+  }
+  async deleteEducation(userId: string, id: string) {
+    await this.educationRepo.delete({ id, user_id: userId });
+  }
 
   // ── Profile ──────────────────────────────────────────────
   async getProfile(userId: string): Promise<UserProfile> {

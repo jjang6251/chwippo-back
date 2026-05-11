@@ -14,6 +14,7 @@ import { Coverletter } from './entities/coverletter.entity';
 import { CoverletterCustom } from './entities/coverletter-custom.entity';
 import { Document } from './entities/document.entity';
 import { ExamSchedule } from './entities/exam-schedule.entity';
+import { Education } from './entities/education.entity';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ExamSchedule } from './entities/exam-schedule.entity';
       CoverletterCustom,
       Document,
       ExamSchedule,
+      Education,
     ]),
   ],
   controllers: [MyinfoController, MyinfoItemsController, ExamSchedulesController],
