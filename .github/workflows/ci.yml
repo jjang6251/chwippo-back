@@ -25,7 +25,15 @@ jobs:
       - name: Build (type-check + compile)
         run: npm run build
 
-      - name: Test
-        run: npm test
+      - name: Test (with coverage threshold)
+        run: npm run test:cov
         env:
           NODE_ENV: test
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage/
+          retention-days: 7

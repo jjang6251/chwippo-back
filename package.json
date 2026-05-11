@@ -92,9 +92,27 @@
       "node_modules/(?!(@nodable/entities|uuid)/)"
     ],
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)s",
+      "!**/*.module.ts",
+      "!**/*.entity.ts",
+      "!**/*.dto.ts",
+      "!**/*.spec.ts",
+      "!**/main.ts",
+      "!**/database/data-source.ts",
+      "!**/database/migrations/**",
+      "!**/common/**",
+      "!**/*.controller.ts",
+      "!**/app.service.ts"
     ],
     "coverageDirectory": "../coverage",
+    "coverageThreshold": {
+      "global": {
+        "statements": 70,
+        "branches": 55,
+        "functions": 70,
+        "lines": 70
+      }
+    },
     "testEnvironment": "node"
   }
 }
