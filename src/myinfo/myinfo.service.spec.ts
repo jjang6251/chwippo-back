@@ -355,7 +355,7 @@ describe('MyinfoService', () => {
       coverRepo.findOne.mockResolvedValue(cl);
 
       const result = await service.updateCoverletter(USER_ID, {
-        personality_strength: '성실함',
+        personality: '성실하고 꼼꼼함',
       });
 
       expect(coverRepo.upsert).toHaveBeenCalledWith(
