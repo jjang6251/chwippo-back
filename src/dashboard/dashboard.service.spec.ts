@@ -22,12 +22,13 @@ describe('DashboardService', () => {
   let service: DashboardService;
   let appRepo: jest.Mocked<Repository<Application>>;
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
+  let examRepo: jest.Mocked<Repository<ExamSchedule>>;
 
   const USER_ID = 'user-uuid-1';
 
   beforeEach(async () => {
     const mockExamRepo = mock<Repository<ExamSchedule>>();
-    // 시험 일정 조회는 기본으로 빈 배열 — 기존 테스트가 dday 결과에 시험을 가정하지 않으므로 디폴트 처리
+    // 시험 일정 조회는 기본으로 빈 배열 — 개별 테스트에서 override 가능
     (mockExamRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb([]));
 
     const module: TestingModule = await Test.createTestingModule({
@@ -42,6 +43,7 @@ describe('DashboardService', () => {
     service = module.get<DashboardService>(DashboardService);
     appRepo = module.get(getRepositoryToken(Application));
     stepRepo = module.get(getRepositoryToken(ApplicationStep));
+    examRepo = module.get(getRepositoryToken(ExamSchedule));
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -234,6 +236,48 @@ describe('DashboardService', () => {
       expect(result).toHaveLength(5);
       // 상위 5개: dday 0,1,2,3,4 (dday=5인 면접 제외)
       expect(result.map((r) => r.dday)).toEqual([0, 1, 2, 3, 4]);
+    });
+
+    it('시험 일정 항목은 type="exam"으로 반환되며 examId 매핑', async () => {
+      const date = new Date(todayMs + 7 * 86400000);
+      const exams = [{
+        id: 'exam-1',
+        user_id: USER_ID,
+        exam_type: 'language',
+        cert_type: 'TOEIC',
+        name: 'TOEIC',
+        exam_date: date,
+      } as any];
+
+      appRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([]));
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([]));
+      examRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(exams));
+
+      const result = await service.getDdayList(USER_ID);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe('exam');
+      expect(result[0].examId).toBe('exam-1');
+      expect(result[0].companyName).toBe('TOEIC');
+      expect(result[0].applicationId).toBeUndefined();
+    });
+
+    it('deadline·interview·exam 혼합 시 dday 오름차순 + 5개 제한', async () => {
+      const apps = [makeDeadlineApp('a1', '회사A', 1)];
+      const steps = [makeStepWithDate('s1', '1차 면접', 'app-1', 2)];
+      const exam = {
+        id: 'exam-1', user_id: USER_ID, exam_type: 'cert', name: '정보처리기사',
+        exam_date: new Date(todayMs + 3 * 86400000),
+      } as any;
+
+      appRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(apps));
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(steps));
+      examRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([exam]));
+
+      const result = await service.getDdayList(USER_ID);
+
+      expect(result.map((r) => r.type)).toEqual(['deadline', 'interview', 'exam']);
+      expect(result.map((r) => r.dday)).toEqual([1, 2, 3]);
     });
   });
 
