@@ -14,6 +14,7 @@ describe('CalendarService', () => {
   let appRepo: jest.Mocked<Repository<Application>>;
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
   let noteRepo: jest.Mocked<Repository<DailyNote>>;
+  let examRepo: jest.Mocked<Repository<ExamSchedule>>;
 
   function makeQb(rawResult: any[] = []) {
     const qb = {
@@ -61,6 +62,7 @@ describe('CalendarService', () => {
     appRepo = module.get(getRepositoryToken(Application));
     stepRepo = module.get(getRepositoryToken(ApplicationStep));
     noteRepo = module.get(getRepositoryToken(DailyNote));
+    examRepo = module.get(getRepositoryToken(ExamSchedule));
   });
 
   describe('getMonthEvents', () => {
@@ -194,6 +196,45 @@ describe('CalendarService', () => {
 
       expect(result).toHaveLength(2);
       expect(result.every((e) => e.date === '2026-05-15')).toBe(true);
+    });
+
+    it('시험 일정 이벤트를 type="exam" + examId 매핑으로 변환', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      stepRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      examRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([
+        { id: 'exam-1', name: 'TOEIC', location: '한양대', date: '2026-05-20', time: '09:00' },
+      ]) as any);
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        type: 'exam',
+        examId: 'exam-1',
+        applicationId: null,
+        stepId: null,
+        companyName: 'TOEIC',
+        location: '한양대',
+        date: '2026-05-20',
+        time: '09:00',
+      });
+    });
+
+    it('deadline·interview·exam 혼합 시 날짜 ASC 정렬', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(
+        makeQb([{ id: 'app-1', company_name: '네이버', deadline: '2026-05-10' }]) as any,
+      );
+      stepRepo.createQueryBuilder.mockReturnValue(
+        makeQb([{ application_id: 'app-2', company_name: '카카오', step_name: '1차', location: null, date: '2026-05-20' }]) as any,
+      );
+      examRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        makeQb([{ id: 'exam-1', name: 'TOEIC', location: null, date: '2026-05-15', time: '09:00' }]) as any,
+      );
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result).toHaveLength(3);
+      expect(result.map((r) => r.type)).toEqual(['deadline', 'exam', 'interview']);
     });
   });
 

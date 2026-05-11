@@ -11,6 +11,7 @@ import { Experience } from './entities/experience.entity';
 import { Coverletter } from './entities/coverletter.entity';
 import { CoverletterCustom } from './entities/coverletter-custom.entity';
 import { Document } from './entities/document.entity';
+import { Education } from './entities/education.entity';
 
 describe('MyinfoService', () => {
   let service: MyinfoService;
@@ -22,6 +23,7 @@ describe('MyinfoService', () => {
   let coverRepo: jest.Mocked<Repository<Coverletter>>;
   let documentRepo: jest.Mocked<Repository<Document>>;
   let coverCustomRepo: jest.Mocked<Repository<CoverletterCustom>>;
+  let educationRepo: jest.Mocked<Repository<Education>>;
 
   const USER_ID = 'user-uuid-1';
 
@@ -37,6 +39,7 @@ describe('MyinfoService', () => {
         { provide: getRepositoryToken(Coverletter), useValue: mock<Repository<Coverletter>>() },
         { provide: getRepositoryToken(Document), useValue: mock<Repository<Document>>() },
         { provide: getRepositoryToken(CoverletterCustom), useValue: mock<Repository<CoverletterCustom>>() },
+        { provide: getRepositoryToken(Education), useValue: mock<Repository<Education>>() },
       ],
     }).compile();
 
@@ -49,6 +52,7 @@ describe('MyinfoService', () => {
     coverRepo = module.get(getRepositoryToken(Coverletter));
     documentRepo = module.get(getRepositoryToken(Document));
     coverCustomRepo = module.get(getRepositoryToken(CoverletterCustom));
+    educationRepo = module.get(getRepositoryToken(Education));
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -208,6 +212,63 @@ describe('MyinfoService', () => {
         where: { user_id: USER_ID },
         order: { start_at: 'DESC' },
       });
+    });
+  });
+
+  // ── Education CRUD ────────────────────────────────────
+  describe('Education CRUD', () => {
+    it('getEducations → userId 필터 + start_at DESC 정렬', async () => {
+      educationRepo.find.mockResolvedValue([]);
+      await service.getEducations(USER_ID);
+      expect(educationRepo.find).toHaveBeenCalledWith({
+        where: { user_id: USER_ID },
+        order: { start_at: 'DESC' },
+      });
+    });
+
+    it('createEducation → dto에 user_id 자동 주입', async () => {
+      const dto = { school_name: '서울대학교', degree: '대학교 (학사)' };
+      const created = { id: 'edu-1', ...dto, user_id: USER_ID } as Education;
+      educationRepo.create.mockReturnValue(created);
+      educationRepo.save.mockResolvedValue(created);
+
+      await service.createEducation(USER_ID, dto);
+
+      expect(educationRepo.create).toHaveBeenCalledWith({ ...dto, user_id: USER_ID });
+      expect(educationRepo.save).toHaveBeenCalledWith(created);
+    });
+
+    it('updateEducation → id + user_id 조건으로 update (IDOR 방어)', async () => {
+      const dto = { major: '컴퓨터공학' };
+      await service.updateEducation(USER_ID, 'edu-1', dto);
+      expect(educationRepo.update).toHaveBeenCalledWith(
+        { id: 'edu-1', user_id: USER_ID },
+        dto,
+      );
+    });
+
+    it('updateEducation → 갱신 후 본인 row만 조회해 반환', async () => {
+      const updated = { id: 'edu-1', school_name: '서울대', user_id: USER_ID } as Education;
+      educationRepo.findOne.mockResolvedValue(updated);
+      const result = await service.updateEducation(USER_ID, 'edu-1', {});
+      expect(educationRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'edu-1', user_id: USER_ID },
+      });
+      expect(result).toEqual(updated);
+    });
+
+    it('deleteEducation → id + user_id 조건으로 delete (IDOR 방어)', async () => {
+      await service.deleteEducation(USER_ID, 'edu-1');
+      expect(educationRepo.delete).toHaveBeenCalledWith({ id: 'edu-1', user_id: USER_ID });
+    });
+
+    it('타인 학력 update 시도 → user_id 조건으로 막힘 (where 조건 검증)', async () => {
+      await service.updateEducation('attacker-uid', 'edu-1', { school_name: 'hack' });
+      // 공격자 userId가 들어가지만 where 조건에 user_id 포함되어 row 매칭 안 됨
+      expect(educationRepo.update).toHaveBeenCalledWith(
+        { id: 'edu-1', user_id: 'attacker-uid' },
+        { school_name: 'hack' },
+      );
     });
   });
 
