@@ -4,11 +4,8 @@ import {
   IsDateString,
   IsUrl,
   IsArray,
-  IsNumber,
   ValidateNested,
   MaxLength,
-  Min,
-  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 

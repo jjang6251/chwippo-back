@@ -1,6 +1,10 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -29,12 +33,14 @@ export class FilesService {
 
   async createPresignedUrl(
     userId: string,
-    scope: string,  // e.g. 'myinfo/language-cert', 'myinfo/cert'
+    scope: string, // e.g. 'myinfo/language-cert', 'myinfo/cert'
     contentType: string,
     fileSize: number,
   ): Promise<{ uploadUrl: string; fileUrl: string }> {
     if (!ALLOWED_TYPES[contentType]) {
-      throw new BadRequestException('허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.');
+      throw new BadRequestException(
+        '허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.',
+      );
     }
     if (fileSize > MAX_BYTES) {
       throw new BadRequestException('파일 크기는 10MB 이하여야 합니다.');
@@ -59,6 +65,8 @@ export class FilesService {
   async deleteFile(fileUrl: string): Promise<void> {
     const url = new URL(fileUrl);
     const key = url.pathname.slice(1); // remove leading slash
-    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+    await this.s3.send(
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
   }
 }

@@ -17,7 +17,10 @@ import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateStepsDto } from './dto/update-steps.dto';
 import { UpdateStepDetailDto } from './dto/update-step-detail.dto';
-import { CreateChecklistItemDto, UpdateChecklistItemDto } from './dto/checklist-item.dto';
+import {
+  CreateChecklistItemDto,
+  UpdateChecklistItemDto,
+} from './dto/checklist-item.dto';
 
 interface AuthUser {
   id: string;
@@ -34,7 +37,10 @@ export class ApplicationsController {
   }
 
   @Get(':id')
-  findOne(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+  findOne(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.service.findOne(user.id, id);
   }
 
@@ -73,7 +79,10 @@ export class ApplicationsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.service.remove(user.id, id);
   }
 

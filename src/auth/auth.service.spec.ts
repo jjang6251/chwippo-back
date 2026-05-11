@@ -11,7 +11,6 @@ describe('AuthService', () => {
   let service: AuthService;
   let userRepo: jest.Mocked<Repository<User>>;
   let jwtService: jest.Mocked<JwtService>;
-  let config: jest.Mocked<ConfigService>;
 
   const makeUser = (overrides: Partial<User> = {}): User =>
     ({
@@ -54,8 +53,7 @@ describe('AuthService', () => {
 
     service = module.get<AuthService>(AuthService);
     userRepo = module.get(getRepositoryToken(User));
-    jwtService = module.get(JwtService) as jest.Mocked<JwtService>;
-    config = module.get(ConfigService) as jest.Mocked<ConfigService>;
+    jwtService = module.get(JwtService);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -126,7 +124,9 @@ describe('AuthService', () => {
   describe('issueTokens', () => {
     it('jwtService.sign 2회 호출 (accessToken, refreshToken)', async () => {
       const user = makeUser();
-      jwtService.sign.mockReturnValueOnce('access-token').mockReturnValueOnce('refresh-token');
+      jwtService.sign
+        .mockReturnValueOnce('access-token')
+        .mockReturnValueOnce('refresh-token');
       userRepo.update.mockResolvedValue({} as any);
 
       await service.issueTokens(user);
@@ -136,7 +136,9 @@ describe('AuthService', () => {
 
     it('accessToken: JWT_SECRET, expiresIn: 1h 로 sign', async () => {
       const user = makeUser();
-      jwtService.sign.mockReturnValueOnce('access-token').mockReturnValueOnce('refresh-token');
+      jwtService.sign
+        .mockReturnValueOnce('access-token')
+        .mockReturnValueOnce('refresh-token');
       userRepo.update.mockResolvedValue({} as any);
 
       await service.issueTokens(user);
@@ -150,7 +152,9 @@ describe('AuthService', () => {
 
     it('refreshToken: JWT_REFRESH_SECRET, expiresIn: 30d 로 sign', async () => {
       const user = makeUser();
-      jwtService.sign.mockReturnValueOnce('access-token').mockReturnValueOnce('refresh-token');
+      jwtService.sign
+        .mockReturnValueOnce('access-token')
+        .mockReturnValueOnce('refresh-token');
       userRepo.update.mockResolvedValue({} as any);
 
       await service.issueTokens(user);
@@ -164,20 +168,23 @@ describe('AuthService', () => {
 
     it('userRepo.update로 refreshToken을 DB에 저장', async () => {
       const user = makeUser();
-      jwtService.sign.mockReturnValueOnce('access-token').mockReturnValueOnce('refresh-token');
+      jwtService.sign
+        .mockReturnValueOnce('access-token')
+        .mockReturnValueOnce('refresh-token');
       userRepo.update.mockResolvedValue({} as any);
 
       await service.issueTokens(user);
 
-      expect(userRepo.update).toHaveBeenCalledWith(
-        user.id,
-        { refreshToken: 'refresh-token' },
-      );
+      expect(userRepo.update).toHaveBeenCalledWith(user.id, {
+        refreshToken: 'refresh-token',
+      });
     });
 
     it('{ accessToken, refreshToken } 형태로 반환', async () => {
       const user = makeUser();
-      jwtService.sign.mockReturnValueOnce('at-123').mockReturnValueOnce('rt-456');
+      jwtService.sign
+        .mockReturnValueOnce('at-123')
+        .mockReturnValueOnce('rt-456');
       userRepo.update.mockResolvedValue({} as any);
 
       const result = await service.issueTokens(user);
@@ -195,7 +202,9 @@ describe('AuthService', () => {
 
       const result = await service.refreshAccessToken('user-uuid-1');
 
-      expect(userRepo.findOneOrFail).toHaveBeenCalledWith({ where: { id: 'user-uuid-1' } });
+      expect(userRepo.findOneOrFail).toHaveBeenCalledWith({
+        where: { id: 'user-uuid-1' },
+      });
       expect(jwtService.sign).toHaveBeenCalledWith(
         { sub: user.id, role: user.role },
         { secret: 'test-jwt-secret', expiresIn: '1h' },
@@ -204,7 +213,9 @@ describe('AuthService', () => {
     });
 
     it('존재하지 않는 userId → findOneOrFail에서 EntityNotFoundError 전파', async () => {
-      userRepo.findOneOrFail.mockRejectedValue(new EntityNotFoundError(User, {}));
+      userRepo.findOneOrFail.mockRejectedValue(
+        new EntityNotFoundError(User, {}),
+      );
 
       await expect(service.refreshAccessToken('nonexistent')).rejects.toThrow(
         EntityNotFoundError,
@@ -219,7 +230,9 @@ describe('AuthService', () => {
 
       await service.logout('user-uuid-1');
 
-      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', { refreshToken: null });
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        refreshToken: null,
+      });
     });
   });
 });

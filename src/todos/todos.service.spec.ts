@@ -10,16 +10,15 @@ describe('TodosService', () => {
   let service: TodosService;
   let todoRepo: jest.Mocked<Repository<Todo>>;
 
-  const makeTodo = (overrides: Partial<Todo> = {}): Todo =>
-    ({
-      id: 'todo-uuid-1',
-      user_id: 'user-uuid-1',
-      content: '이력서 작성',
-      date: new Date().toISOString().split('T')[0],
-      is_done: false,
-      created_at: new Date(),
-      ...overrides,
-    }) as Todo;
+  const makeTodo = (overrides: Partial<Todo> = {}): Todo => ({
+    id: 'todo-uuid-1',
+    user_id: 'user-uuid-1',
+    content: '이력서 작성',
+    date: new Date().toISOString().split('T')[0],
+    is_done: false,
+    created_at: new Date(),
+    ...overrides,
+  });
 
   beforeEach(async () => {
     const mockRepo = mock<Repository<Todo>>();
@@ -51,10 +50,14 @@ describe('TodosService', () => {
 
       const result = await service.findAll('user-uuid-1');
 
-      expect(mockQb.where).toHaveBeenCalledWith('todo.user_id = :userId', { userId: 'user-uuid-1' });
+      expect(mockQb.where).toHaveBeenCalledWith('todo.user_id = :userId', {
+        userId: 'user-uuid-1',
+      });
       expect(mockQb.andWhere).toHaveBeenCalledWith(
         'todo.date >= :yesterday',
-        expect.objectContaining({ yesterday: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }),
+        expect.objectContaining({
+          yesterday: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        }),
       );
       expect(result).toHaveLength(1);
     });
@@ -89,7 +92,10 @@ describe('TodosService', () => {
       });
 
       expect(todoRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ content: '이력서 작성', user_id: 'user-uuid-1' }),
+        expect.objectContaining({
+          content: '이력서 작성',
+          user_id: 'user-uuid-1',
+        }),
       );
       expect(todoRepo.save).toHaveBeenCalledWith(todo);
       expect(result).toEqual(todo);
@@ -103,7 +109,9 @@ describe('TodosService', () => {
       todoRepo.findOne.mockResolvedValue(todo);
       todoRepo.save.mockImplementation(async (t) => t as Todo);
 
-      const result = await service.update('user-uuid-1', 'todo-uuid-1', { is_done: true });
+      const result = await service.update('user-uuid-1', 'todo-uuid-1', {
+        is_done: true,
+      });
 
       expect(todoRepo.findOne).toHaveBeenCalledWith({
         where: { id: 'todo-uuid-1', user_id: 'user-uuid-1' },
@@ -152,9 +160,9 @@ describe('TodosService', () => {
 
     it('다른 userId의 todo → NotFoundException', async () => {
       todoRepo.findOne.mockResolvedValue(null);
-      await expect(service.remove('other-user-id', 'todo-uuid-1')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.remove('other-user-id', 'todo-uuid-1'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -186,9 +194,9 @@ describe('TodosService', () => {
 
     it('다른 userId의 todo → NotFoundException', async () => {
       todoRepo.findOne.mockResolvedValue(null);
-      await expect(service.carryOver('other-user-id', 'todo-uuid-1')).rejects.toThrow(
-        new NotFoundException('할 일을 찾을 수 없습니다.'),
-      );
+      await expect(
+        service.carryOver('other-user-id', 'todo-uuid-1'),
+      ).rejects.toThrow(new NotFoundException('할 일을 찾을 수 없습니다.'));
     });
   });
 });

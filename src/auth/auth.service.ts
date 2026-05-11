@@ -24,8 +24,12 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {}
 
-  async findOrCreateKakaoUser(kakaoUser: KakaoUser): Promise<{ user: User; isNew: boolean }> {
-    let user = await this.userRepo.findOne({ where: { kakaoId: kakaoUser.kakaoId } });
+  async findOrCreateKakaoUser(
+    kakaoUser: KakaoUser,
+  ): Promise<{ user: User; isNew: boolean }> {
+    let user = await this.userRepo.findOne({
+      where: { kakaoId: kakaoUser.kakaoId },
+    });
     const isNew = !user;
 
     if (!user) {

@@ -20,9 +20,18 @@ describe('ExamSchedulesService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExamSchedulesService,
-        { provide: getRepositoryToken(ExamSchedule), useValue: mock<Repository<ExamSchedule>>() },
-        { provide: getRepositoryToken(Cert), useValue: mock<Repository<Cert>>() },
-        { provide: getRepositoryToken(LanguageCert), useValue: mock<Repository<LanguageCert>>() },
+        {
+          provide: getRepositoryToken(ExamSchedule),
+          useValue: mock<Repository<ExamSchedule>>(),
+        },
+        {
+          provide: getRepositoryToken(Cert),
+          useValue: mock<Repository<Cert>>(),
+        },
+        {
+          provide: getRepositoryToken(LanguageCert),
+          useValue: mock<Repository<LanguageCert>>(),
+        },
       ],
     }).compile();
 
@@ -60,14 +69,16 @@ describe('ExamSchedulesService', () => {
 
       await service.create(USER_ID, dto);
 
-      expect(examRepo.create).toHaveBeenCalledWith(expect.objectContaining({
-        user_id: USER_ID,
-        exam_type: 'cert',
-        cert_type: null,
-        name: '정보처리기사 필기',
-        location: null,
-        memo: null,
-      }));
+      expect(examRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: USER_ID,
+          exam_type: 'cert',
+          cert_type: null,
+          name: '정보처리기사 필기',
+          location: null,
+          memo: null,
+        }),
+      );
     });
 
     it('어학(language) 시험 — cert_type 함께 저장', async () => {
@@ -84,13 +95,15 @@ describe('ExamSchedulesService', () => {
 
       await service.create(USER_ID, dto);
 
-      expect(examRepo.create).toHaveBeenCalledWith(expect.objectContaining({
-        user_id: USER_ID,
-        exam_type: 'language',
-        cert_type: 'TOEIC',
-        location: '한양대',
-        memo: '준비 필수',
-      }));
+      expect(examRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: USER_ID,
+          exam_type: 'language',
+          cert_type: 'TOEIC',
+          location: '한양대',
+          memo: '준비 필수',
+        }),
+      );
     });
   });
 
@@ -103,22 +116,31 @@ describe('ExamSchedulesService', () => {
 
       await service.update(USER_ID, 'x1', { name: 'TOEIC Speaking' });
 
-      expect(examRepo.findOne).toHaveBeenCalledWith({ where: { id: 'x1', user_id: USER_ID } });
+      expect(examRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'x1', user_id: USER_ID },
+      });
       expect(examRepo.save).toHaveBeenCalled();
     });
 
     it('타인의 시험 일정 update 시도 → NotFoundException', async () => {
       examRepo.findOne.mockResolvedValue(null);
-      await expect(service.update('attacker-uid', 'x1', { name: 'hack' }))
-        .rejects.toThrow(NotFoundException);
+      await expect(
+        service.update('attacker-uid', 'x1', { name: 'hack' }),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('exam_date 갱신 시 Date 객체로 변환', async () => {
-      const existing = { id: 'x1', user_id: USER_ID, exam_date: new Date() } as any;
+      const existing = {
+        id: 'x1',
+        user_id: USER_ID,
+        exam_date: new Date(),
+      } as any;
       examRepo.findOne.mockResolvedValue(existing);
       examRepo.save.mockResolvedValue(existing);
 
-      await service.update(USER_ID, 'x1', { exam_date: '2026-07-01T10:00:00+09:00' });
+      await service.update(USER_ID, 'x1', {
+        exam_date: '2026-07-01T10:00:00+09:00',
+      });
 
       expect(existing.exam_date).toBeInstanceOf(Date);
     });
@@ -129,13 +151,17 @@ describe('ExamSchedulesService', () => {
     it('id+user_id 조건으로 delete (IDOR 방어)', async () => {
       examRepo.delete.mockResolvedValue({ affected: 1 } as any);
       await service.remove(USER_ID, 'x1');
-      expect(examRepo.delete).toHaveBeenCalledWith({ id: 'x1', user_id: USER_ID });
+      expect(examRepo.delete).toHaveBeenCalledWith({
+        id: 'x1',
+        user_id: USER_ID,
+      });
     });
 
     it('타인 시험 일정 삭제 시도 → affected=0 → NotFoundException', async () => {
       examRepo.delete.mockResolvedValue({ affected: 0 } as any);
-      await expect(service.remove('attacker-uid', 'x1'))
-        .rejects.toThrow(NotFoundException);
+      await expect(service.remove('attacker-uid', 'x1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -157,14 +183,19 @@ describe('ExamSchedulesService', () => {
 
       await service.convertToCert(USER_ID, 'x1', { score_grade: '850' });
 
-      expect(langCertRepo.create).toHaveBeenCalledWith(expect.objectContaining({
-        user_id: USER_ID,
-        cert_type: 'TOEIC',
-        score_grade: '850',
-      }));
+      expect(langCertRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: USER_ID,
+          cert_type: 'TOEIC',
+          score_grade: '850',
+        }),
+      );
       expect(langCertRepo.save).toHaveBeenCalled();
       expect(certRepo.create).not.toHaveBeenCalled();
-      expect(examRepo.delete).toHaveBeenCalledWith({ id: 'x1', user_id: USER_ID });
+      expect(examRepo.delete).toHaveBeenCalledWith({
+        id: 'x1',
+        user_id: USER_ID,
+      });
     });
 
     it('cert 타입 → myinfo_certs로 이관 (name) + 원본 삭제', async () => {
@@ -183,13 +214,18 @@ describe('ExamSchedulesService', () => {
 
       await service.convertToCert(USER_ID, 'x2', {});
 
-      expect(certRepo.create).toHaveBeenCalledWith(expect.objectContaining({
-        user_id: USER_ID,
-        name: '정보처리기사 필기',
-      }));
+      expect(certRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: USER_ID,
+          name: '정보처리기사 필기',
+        }),
+      );
       expect(certRepo.save).toHaveBeenCalled();
       expect(langCertRepo.create).not.toHaveBeenCalled();
-      expect(examRepo.delete).toHaveBeenCalledWith({ id: 'x2', user_id: USER_ID });
+      expect(examRepo.delete).toHaveBeenCalledWith({
+        id: 'x2',
+        user_id: USER_ID,
+      });
     });
 
     it('language 타입에서 cert_type이 null이면 name을 cert_type으로 사용', async () => {
@@ -207,15 +243,18 @@ describe('ExamSchedulesService', () => {
 
       await service.convertToCert(USER_ID, 'x3', { score_grade: 'B' });
 
-      expect(langCertRepo.create).toHaveBeenCalledWith(expect.objectContaining({
-        cert_type: '기타 어학 시험',
-      }));
+      expect(langCertRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cert_type: '기타 어학 시험',
+        }),
+      );
     });
 
     it('타인 시험 일정 이관 시도 → NotFoundException', async () => {
       examRepo.findOne.mockResolvedValue(null);
-      await expect(service.convertToCert('attacker-uid', 'x1', { score_grade: '900' }))
-        .rejects.toThrow(NotFoundException);
+      await expect(
+        service.convertToCert('attacker-uid', 'x1', { score_grade: '900' }),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('cert 타입에서 score_grade 없어도 정상 이관 (자격증은 점수 선택)', async () => {

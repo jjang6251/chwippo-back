@@ -31,7 +31,11 @@ import { Education } from './entities/education.entity';
       Education,
     ]),
   ],
-  controllers: [MyinfoController, MyinfoItemsController, ExamSchedulesController],
+  controllers: [
+    MyinfoController,
+    MyinfoItemsController,
+    ExamSchedulesController,
+  ],
   providers: [MyinfoService, ExamSchedulesService],
 })
 export class MyinfoModule {}

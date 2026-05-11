@@ -1,7 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { FilesService } from './files.service';
 
@@ -19,9 +23,17 @@ describe('FilesService', () => {
 
     mockS3Send = jest.fn().mockResolvedValue({});
     (S3Client as jest.Mock).mockImplementation(() => ({ send: mockS3Send }));
-    (PutObjectCommand as jest.Mock).mockImplementation((args) => ({ ...args, _type: 'PutObjectCommand' }));
-    (DeleteObjectCommand as jest.Mock).mockImplementation((args) => ({ ...args, _type: 'DeleteObjectCommand' }));
-    (getSignedUrl as jest.Mock).mockResolvedValue('https://presigned.example.com/key?sig=abc');
+    (PutObjectCommand as jest.Mock).mockImplementation((args) => ({
+      ...args,
+      _type: 'PutObjectCommand',
+    }));
+    (DeleteObjectCommand as jest.Mock).mockImplementation((args) => ({
+      ...args,
+      _type: 'DeleteObjectCommand',
+    }));
+    (getSignedUrl as jest.Mock).mockResolvedValue(
+      'https://presigned.example.com/key?sig=abc',
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -29,15 +41,17 @@ describe('FilesService', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: jest.fn().mockImplementation((key: string, defaultVal?: string) => {
-              const map: Record<string, string> = {
-                AWS_REGION: 'ap-northeast-2',
-                AWS_S3_BUCKET: 'chwippo',
-                AWS_ACCESS_KEY_ID: 'test-key-id',
-                AWS_SECRET_ACCESS_KEY: 'test-secret',
-              };
-              return map[key] ?? defaultVal ?? '';
-            }),
+            get: jest
+              .fn()
+              .mockImplementation((key: string, defaultVal?: string) => {
+                const map: Record<string, string> = {
+                  AWS_REGION: 'ap-northeast-2',
+                  AWS_S3_BUCKET: 'chwippo',
+                  AWS_ACCESS_KEY_ID: 'test-key-id',
+                  AWS_SECRET_ACCESS_KEY: 'test-secret',
+                };
+                return map[key] ?? defaultVal ?? '';
+              }),
             getOrThrow: jest.fn().mockReturnValue(''),
           },
         },
@@ -58,37 +72,66 @@ describe('FilesService', () => {
       );
 
       expect(result.uploadUrl).toBeDefined();
-      expect(result.fileUrl).toContain('users/user-uuid-1/myinfo/language-cert/');
+      expect(result.fileUrl).toContain(
+        'users/user-uuid-1/myinfo/language-cert/',
+      );
       expect(result.fileUrl).toContain('.jpg');
     });
 
     it('image/png → .png 확장자로 S3 key 생성', async () => {
-      const result = await service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'image/png', 512);
+      const result = await service.createPresignedUrl(
+        'user-uuid-1',
+        'myinfo/cert',
+        'image/png',
+        512,
+      );
       expect(result.fileUrl).toContain('.png');
     });
 
     it('application/pdf → .pdf 확장자로 S3 key 생성', async () => {
-      const result = await service.createPresignedUrl('user-uuid-1', 'myinfo/award', 'application/pdf', 2048);
+      const result = await service.createPresignedUrl(
+        'user-uuid-1',
+        'myinfo/award',
+        'application/pdf',
+        2048,
+      );
       expect(result.fileUrl).toContain('.pdf');
     });
 
     it('허용되지 않는 contentType(text/plain) → BadRequestException', async () => {
       await expect(
-        service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'text/plain', 1024),
+        service.createPresignedUrl(
+          'user-uuid-1',
+          'myinfo/cert',
+          'text/plain',
+          1024,
+        ),
       ).rejects.toThrow(
-        new BadRequestException('허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.'),
+        new BadRequestException(
+          '허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.',
+        ),
       );
     });
 
     it('허용되지 않는 contentType(video/mp4) → BadRequestException', async () => {
       await expect(
-        service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'video/mp4', 1024),
+        service.createPresignedUrl(
+          'user-uuid-1',
+          'myinfo/cert',
+          'video/mp4',
+          1024,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('fileSize = 10MB + 1 → BadRequestException', async () => {
       await expect(
-        service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'image/jpeg', 10 * 1024 * 1024 + 1),
+        service.createPresignedUrl(
+          'user-uuid-1',
+          'myinfo/cert',
+          'image/jpeg',
+          10 * 1024 * 1024 + 1,
+        ),
       ).rejects.toThrow(
         new BadRequestException('파일 크기는 10MB 이하여야 합니다.'),
       );
@@ -96,7 +139,12 @@ describe('FilesService', () => {
 
     it('fileSize = 10MB (경계값) → 통과', async () => {
       await expect(
-        service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'image/jpeg', 10 * 1024 * 1024),
+        service.createPresignedUrl(
+          'user-uuid-1',
+          'myinfo/cert',
+          'image/jpeg',
+          10 * 1024 * 1024,
+        ),
       ).resolves.toBeDefined();
     });
 
@@ -113,7 +161,12 @@ describe('FilesService', () => {
     });
 
     it('PutObjectCommand에 올바른 파라미터 전달', async () => {
-      await service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'image/jpeg', 1024);
+      await service.createPresignedUrl(
+        'user-uuid-1',
+        'myinfo/cert',
+        'image/jpeg',
+        1024,
+      );
 
       expect(PutObjectCommand).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -125,7 +178,12 @@ describe('FilesService', () => {
     });
 
     it('getSignedUrl에 expiresIn: 300 전달', async () => {
-      await service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'image/jpeg', 1024);
+      await service.createPresignedUrl(
+        'user-uuid-1',
+        'myinfo/cert',
+        'image/jpeg',
+        1024,
+      );
 
       expect(getSignedUrl).toHaveBeenCalledWith(
         expect.anything(),
@@ -136,7 +194,12 @@ describe('FilesService', () => {
 
     it('fileSize = 0 (경계값) → 통과', async () => {
       await expect(
-        service.createPresignedUrl('user-uuid-1', 'myinfo/cert', 'image/jpeg', 0),
+        service.createPresignedUrl(
+          'user-uuid-1',
+          'myinfo/cert',
+          'image/jpeg',
+          0,
+        ),
       ).resolves.toBeDefined();
     });
   });
@@ -157,7 +220,8 @@ describe('FilesService', () => {
     });
 
     it('URL에서 leading slash가 제거된 key로 호출', async () => {
-      const fileUrl = 'https://chwippo.s3.ap-northeast-2.amazonaws.com/some/path/file.jpg';
+      const fileUrl =
+        'https://chwippo.s3.ap-northeast-2.amazonaws.com/some/path/file.jpg';
 
       await service.deleteFile(fileUrl);
 
@@ -170,7 +234,9 @@ describe('FilesService', () => {
       mockS3Send.mockRejectedValue(new Error('S3 NoSuchBucket'));
 
       await expect(
-        service.deleteFile('https://chwippo.s3.ap-northeast-2.amazonaws.com/users/u1/file.pdf'),
+        service.deleteFile(
+          'https://chwippo.s3.ap-northeast-2.amazonaws.com/users/u1/file.pdf',
+        ),
       ).rejects.toThrow('S3 NoSuchBucket');
     });
   });

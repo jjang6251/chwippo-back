@@ -50,7 +50,9 @@ export class TodosService {
   }
 
   private async findOwned(userId: string, id: string): Promise<Todo> {
-    const todo = await this.todoRepo.findOne({ where: { id, user_id: userId } });
+    const todo = await this.todoRepo.findOne({
+      where: { id, user_id: userId },
+    });
     if (!todo) throw new NotFoundException('할 일을 찾을 수 없습니다.');
     return todo;
   }

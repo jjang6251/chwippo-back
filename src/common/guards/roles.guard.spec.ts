@@ -28,7 +28,9 @@ describe('RolesGuard', () => {
 
   it('@Roles([]) 빈 배열 → ForbiddenException ([].includes(role) = false)', () => {
     reflector.getAllAndOverride.mockReturnValue([]);
-    expect(() => guard.canActivate(createContext('user'))).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(createContext('user'))).toThrow(
+      ForbiddenException,
+    );
   });
 
   it("requiredRoles=['admin'], user.role='admin' → true 반환", () => {
@@ -45,7 +47,9 @@ describe('RolesGuard', () => {
 
   it('requiredRoles=[admin], user가 undefined → ForbiddenException', () => {
     reflector.getAllAndOverride.mockReturnValue(['admin']);
-    expect(() => guard.canActivate(createContext())).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(createContext())).toThrow(
+      ForbiddenException,
+    );
   });
 
   it('reflector.getAllAndOverride가 ROLES_KEY를 사용해 호출됨', () => {

@@ -8,12 +8,7 @@ import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
 import { ApplicationsService } from './applications.service';
 
-const DEFAULT_STEP_NAMES = [
-  '서류 제출',
-  '1차 면접',
-  '2차 면접',
-  '최종 합격',
-];
+const DEFAULT_STEP_NAMES = ['서류 제출', '1차 면접', '2차 면접', '최종 합격'];
 
 describe('ApplicationsService', () => {
   let service: ApplicationsService;
@@ -55,12 +50,13 @@ describe('ApplicationsService', () => {
     DEFAULT_STEP_NAMES.map((name, i) => makeStep(i, name));
 
   /** EntityManager mock 생성 — transaction 콜백에서 사용 */
-  const makeEntityManager = (app: Application, steps: ApplicationStep[] = []) => {
+  const makeEntityManager = (app: Application) => {
     const savedSteps: ApplicationStep[] = [];
 
     const em: Partial<EntityManager> = {
       create: jest.fn().mockImplementation((_entity, data) => ({ ...data })),
-      save: jest.fn()
+      save: jest
+        .fn()
         .mockImplementationOnce(async (_entity: any, data: any) => {
           // Application save
           return { ...app, ...data, id: app.id };
@@ -92,8 +88,14 @@ describe('ApplicationsService', () => {
       providers: [
         ApplicationsService,
         { provide: getRepositoryToken(Application), useValue: mockAppRepo },
-        { provide: getRepositoryToken(ApplicationStep), useValue: mockStepRepo },
-        { provide: getRepositoryToken(StepChecklistItem), useValue: mock<Repository<StepChecklistItem>>() },
+        {
+          provide: getRepositoryToken(ApplicationStep),
+          useValue: mockStepRepo,
+        },
+        {
+          provide: getRepositoryToken(StepChecklistItem),
+          useValue: mock<Repository<StepChecklistItem>>(),
+        },
         { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
@@ -101,7 +103,7 @@ describe('ApplicationsService', () => {
     service = module.get<ApplicationsService>(ApplicationsService);
     appRepo = module.get(getRepositoryToken(Application));
     stepRepo = module.get(getRepositoryToken(ApplicationStep));
-    dataSource = module.get(DataSource) as any;
+    dataSource = module.get(DataSource);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -126,7 +128,9 @@ describe('ApplicationsService', () => {
       await service.findAll('user-uuid-1');
       // deletedAt 조건이 where에 명시되지 않아도 TypeORM이 자동 처리
       expect(appRepo.find).toHaveBeenCalledWith(
-        expect.not.objectContaining({ where: expect.objectContaining({ deletedAt: expect.anything() }) }),
+        expect.not.objectContaining({
+          where: expect.objectContaining({ deletedAt: expect.anything() }),
+        }),
       );
     });
   });
@@ -134,7 +138,11 @@ describe('ApplicationsService', () => {
   // ── findOne ────────────────────────────────────────────
   describe('findOne', () => {
     it('(userId, id) 조합 성공 → steps가 orderIndex ASC로 정렬된 카드 반환', async () => {
-      const steps = [makeStep(2, '1차 면접'), makeStep(0, '서류 제출'), makeStep(1, '서류 발표')];
+      const steps = [
+        makeStep(2, '1차 면접'),
+        makeStep(0, '서류 제출'),
+        makeStep(1, '서류 발표'),
+      ];
       const app = makeApp({ steps });
       appRepo.findOne.mockResolvedValue(app);
 
@@ -149,15 +157,19 @@ describe('ApplicationsService', () => {
 
     it('findOne이 null 반환 → NotFoundException', async () => {
       appRepo.findOne.mockResolvedValue(null);
-      await expect(service.findOne('user-uuid-1', 'app-uuid-1')).rejects.toThrow(
-        new NotFoundException('카드를 찾을 수 없습니다.'),
-      );
+      await expect(
+        service.findOne('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow(new NotFoundException('카드를 찾을 수 없습니다.'));
     });
 
     it('다른 userId의 카드 → findOne이 null 반환 → NotFoundException (ForbiddenException 아님)', async () => {
-      appRepo.findOne.mockResolvedValue(null);  // userId가 where 조건에 포함되어 not found
-      await expect(service.findOne('user-B', 'app-uuid-1')).rejects.toThrow(NotFoundException);
-      await expect(service.findOne('user-B', 'app-uuid-1')).rejects.not.toThrow(ForbiddenException);
+      appRepo.findOne.mockResolvedValue(null); // userId가 where 조건에 포함되어 not found
+      await expect(service.findOne('user-B', 'app-uuid-1')).rejects.toThrow(
+        NotFoundException,
+      );
+      await expect(service.findOne('user-B', 'app-uuid-1')).rejects.not.toThrow(
+        ForbiddenException,
+      );
     });
   });
 
@@ -181,7 +193,10 @@ describe('ApplicationsService', () => {
       const { em, savedSteps } = makeEntityManager(app);
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
-      await service.create('user-uuid-1', { companyName: '카카오', status: 'IN_PROGRESS' });
+      await service.create('user-uuid-1', {
+        companyName: '카카오',
+        status: 'IN_PROGRESS',
+      });
 
       expect(savedSteps).toHaveLength(4);
       expect(savedSteps[0]).toMatchObject({ name: '서류 제출', orderIndex: 0 });
@@ -197,7 +212,11 @@ describe('ApplicationsService', () => {
       const { em, savedSteps } = makeEntityManager(app);
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
-      await service.create('user-uuid-1', { companyName: '네카라', status: 'IN_PROGRESS', deadline: '2025-12-31' });
+      await service.create('user-uuid-1', {
+        companyName: '네카라',
+        status: 'IN_PROGRESS',
+        deadline: '2025-12-31',
+      });
 
       expect(savedSteps[0]).toMatchObject({ name: '서류 제출', orderIndex: 0 });
       expect(savedSteps[0].scheduledDate).toEqual(new Date('2025-12-31'));
@@ -209,7 +228,10 @@ describe('ApplicationsService', () => {
       const { em, savedSteps } = makeEntityManager(app);
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
-      await service.create('user-uuid-1', { companyName: '쿠팡', status: 'IN_PROGRESS' });
+      await service.create('user-uuid-1', {
+        companyName: '쿠팡',
+        status: 'IN_PROGRESS',
+      });
 
       savedSteps.forEach((step) => expect(step.scheduledDate).toBeNull());
     });
@@ -224,7 +246,10 @@ describe('ApplicationsService', () => {
       } as unknown as EntityManager;
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
-      await service.create('user-uuid-1', { companyName: '라인', status: 'PLANNED' });
+      await service.create('user-uuid-1', {
+        companyName: '라인',
+        status: 'PLANNED',
+      });
 
       // Application save 1번 + Steps save 없음
       expect(em.save).toHaveBeenCalledTimes(1);
@@ -235,7 +260,10 @@ describe('ApplicationsService', () => {
       const { em } = makeEntityManager(app);
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
-      await service.create('user-uuid-1', { companyName: '토스', status: 'IN_PROGRESS' });
+      await service.create('user-uuid-1', {
+        companyName: '토스',
+        status: 'IN_PROGRESS',
+      });
 
       expect(em.create).toHaveBeenCalledWith(
         Application,
@@ -278,9 +306,9 @@ describe('ApplicationsService', () => {
   describe('update', () => {
     it('PLANNED→IN_PROGRESS + 기존 스텝 없음 → createDefaultSteps 호출', async () => {
       const app = makeApp({ status: 'PLANNED' });
-      appRepo.findOne.mockResolvedValue(app);  // findEntity용
+      appRepo.findOne.mockResolvedValue(app); // findEntity용
       appRepo.save.mockImplementation(async (a) => a as Application);
-      stepRepo.count.mockResolvedValue(0);  // 기존 스텝 없음
+      stepRepo.count.mockResolvedValue(0); // 기존 스텝 없음
 
       // createDefaultSteps는 stepRepo.manager 사용
       const mockManager = {
@@ -291,24 +319,36 @@ describe('ApplicationsService', () => {
 
       // findOne(userId, id) for return — relations 포함
       appRepo.findOne
-        .mockResolvedValueOnce(app)  // findEntity (relations 없음)
-        .mockResolvedValue({ ...app, status: 'IN_PROGRESS', steps: makeDefaultSteps() });  // findOne (relations 포함)
+        .mockResolvedValueOnce(app) // findEntity (relations 없음)
+        .mockResolvedValue({
+          ...app,
+          status: 'IN_PROGRESS',
+          steps: makeDefaultSteps(),
+        }); // findOne (relations 포함)
 
-      await service.update('user-uuid-1', 'app-uuid-1', { status: 'IN_PROGRESS' });
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        status: 'IN_PROGRESS',
+      });
 
-      expect(stepRepo.count).toHaveBeenCalledWith({ where: { applicationId: 'app-uuid-1' } });
+      expect(stepRepo.count).toHaveBeenCalledWith({
+        where: { applicationId: 'app-uuid-1' },
+      });
       expect(mockManager.save).toHaveBeenCalled();
     });
 
     it('PLANNED→IN_PROGRESS + 기존 스텝 있음 → createDefaultSteps 미호출', async () => {
       const app = makeApp({ status: 'PLANNED' });
-      appRepo.findOne
-        .mockResolvedValueOnce(app)
-        .mockResolvedValue({ ...app, status: 'IN_PROGRESS', steps: makeDefaultSteps() });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue({
+        ...app,
+        status: 'IN_PROGRESS',
+        steps: makeDefaultSteps(),
+      });
       appRepo.save.mockImplementation(async (a) => a as Application);
-      stepRepo.count.mockResolvedValue(7);  // 이미 스텝 있음
+      stepRepo.count.mockResolvedValue(7); // 이미 스텝 있음
 
-      await service.update('user-uuid-1', 'app-uuid-1', { status: 'IN_PROGRESS' });
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        status: 'IN_PROGRESS',
+      });
 
       expect(stepRepo.count).toHaveBeenCalled();
       // manager.save는 호출되지 않아야 함 (createDefaultSteps 미호출)
@@ -325,11 +365,13 @@ describe('ApplicationsService', () => {
   // ── updateCurrentStep ──────────────────────────────────
   describe('updateCurrentStep', () => {
     it('마지막 스텝 클릭 → appRepo.update에 status: PASSED 포함', async () => {
-      const steps = makeDefaultSteps();  // 4개, 마지막 index=3
+      const steps = makeDefaultSteps(); // 4개, 마지막 index=3
       stepRepo.find.mockResolvedValue(steps);
-      appRepo.findOne.mockResolvedValue(makeApp());  // findEntity
+      appRepo.findOne.mockResolvedValue(makeApp()); // findEntity
       appRepo.update.mockResolvedValue({} as any);
-      appRepo.findOne.mockResolvedValue(makeApp({ currentStepIndex: 3, status: 'PASSED', steps }));
+      appRepo.findOne.mockResolvedValue(
+        makeApp({ currentStepIndex: 3, status: 'PASSED', steps }),
+      );
 
       await service.updateCurrentStep('user-uuid-1', 'app-uuid-1', 3);
 
@@ -344,14 +386,15 @@ describe('ApplicationsService', () => {
       stepRepo.find.mockResolvedValue(steps);
       appRepo.findOne.mockResolvedValue(makeApp());
       appRepo.update.mockResolvedValue({} as any);
-      appRepo.findOne.mockResolvedValue(makeApp({ currentStepIndex: 2, steps }));
+      appRepo.findOne.mockResolvedValue(
+        makeApp({ currentStepIndex: 2, steps }),
+      );
 
       await service.updateCurrentStep('user-uuid-1', 'app-uuid-1', 2);
 
-      expect(appRepo.update).toHaveBeenCalledWith(
-        'app-uuid-1',
-        { currentStepIndex: 2 },
-      );
+      expect(appRepo.update).toHaveBeenCalledWith('app-uuid-1', {
+        currentStepIndex: 2,
+      });
     });
 
     it('stepIndex < 0 → ForbiddenException', async () => {
@@ -364,7 +407,7 @@ describe('ApplicationsService', () => {
     });
 
     it('stepIndex >= steps.length → ForbiddenException', async () => {
-      stepRepo.find.mockResolvedValue(makeDefaultSteps());  // 4개
+      stepRepo.find.mockResolvedValue(makeDefaultSteps()); // 4개
       appRepo.findOne.mockResolvedValue(makeApp());
 
       await expect(
@@ -393,14 +436,26 @@ describe('ApplicationsService', () => {
 
       const newSteps = [
         { orderIndex: 0, name: '서류', scheduledDate: null, location: null },
-        { orderIndex: 1, name: '면접', scheduledDate: '2025-09-01T10:00:00Z', location: '서울' },
+        {
+          orderIndex: 1,
+          name: '면접',
+          scheduledDate: '2025-09-01T10:00:00Z',
+          location: '서울',
+        },
       ];
 
-      await service.updateSteps('user-uuid-1', 'app-uuid-1', { steps: newSteps });
+      await service.updateSteps('user-uuid-1', 'app-uuid-1', {
+        steps: newSteps,
+      });
 
-      expect(em.delete).toHaveBeenCalledWith(ApplicationStep, { applicationId: 'app-uuid-1' });
+      expect(em.delete).toHaveBeenCalledWith(ApplicationStep, {
+        applicationId: 'app-uuid-1',
+      });
       expect(savedSteps).toHaveLength(2);
-      expect(savedSteps[1]).toMatchObject({ name: '면접', scheduledDate: expect.any(Date) });
+      expect(savedSteps[1]).toMatchObject({
+        name: '면접',
+        scheduledDate: expect.any(Date),
+      });
     });
 
     it('scheduledDate가 null이면 null로 저장', async () => {
@@ -420,7 +475,9 @@ describe('ApplicationsService', () => {
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
       await service.updateSteps('user-uuid-1', 'app-uuid-1', {
-        steps: [{ orderIndex: 0, name: '서류', scheduledDate: null, location: null }],
+        steps: [
+          { orderIndex: 0, name: '서류', scheduledDate: null, location: null },
+        ],
       });
 
       expect(savedSteps[0].scheduledDate).toBeNull();
@@ -449,12 +506,16 @@ describe('ApplicationsService', () => {
 
     it('존재하지 않는 카드 → NotFoundException', async () => {
       appRepo.findOne.mockResolvedValue(null);
-      await expect(service.remove('user-uuid-1', 'nonexistent')).rejects.toThrow(NotFoundException);
+      await expect(
+        service.remove('user-uuid-1', 'nonexistent'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('다른 userId의 카드 → NotFoundException (403 아님)', async () => {
-      appRepo.findOne.mockResolvedValue(null);  // userId 조건에서 걸림
-      await expect(service.remove('user-B', 'app-uuid-1')).rejects.toThrow(NotFoundException);
+      appRepo.findOne.mockResolvedValue(null); // userId 조건에서 걸림
+      await expect(service.remove('user-B', 'app-uuid-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

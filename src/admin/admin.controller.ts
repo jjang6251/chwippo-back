@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -6,7 +15,9 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { IsString, MinLength, MaxLength } from 'class-validator';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 class AdminCommentDto {
   @IsString()

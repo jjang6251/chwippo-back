@@ -12,32 +12,31 @@ describe('InquiriesService', () => {
   let service: InquiriesService;
   let repo: jest.Mocked<Repository<Inquiry>>;
   let commentRepo: jest.Mocked<Repository<InquiryComment>>;
-  let dataSource: { query: jest.Mock };
 
-  const makeInquiry = (overrides: Partial<Inquiry> = {}): Inquiry =>
-    ({
-      id: 'inq-uuid-1',
-      user_id: 'user-uuid-1',
-      category: '버그신고',
-      title: '버그 있어요',
-      content: '상세 내용입니다.',
-      status: 'OPEN',
-      user_unread: 0,
-      admin_unread: 1,
-      created_at: new Date(),
-      ...overrides,
-    }) as Inquiry;
+  const makeInquiry = (overrides: Partial<Inquiry> = {}): Inquiry => ({
+    id: 'inq-uuid-1',
+    user_id: 'user-uuid-1',
+    category: '버그신고',
+    title: '버그 있어요',
+    content: '상세 내용입니다.',
+    status: 'OPEN',
+    user_unread: 0,
+    admin_unread: 1,
+    created_at: new Date(),
+    ...overrides,
+  });
 
-  const makeComment = (overrides: Partial<InquiryComment> = {}): InquiryComment =>
-    ({
-      id: 'comment-uuid-1',
-      inquiry_id: 'inq-uuid-1',
-      author_role: 'user',
-      author_id: 'user-uuid-1',
-      content: '추가 질문입니다.',
-      created_at: new Date(),
-      ...overrides,
-    }) as InquiryComment;
+  const makeComment = (
+    overrides: Partial<InquiryComment> = {},
+  ): InquiryComment => ({
+    id: 'comment-uuid-1',
+    inquiry_id: 'inq-uuid-1',
+    author_role: 'user',
+    author_id: 'user-uuid-1',
+    content: '추가 질문입니다.',
+    created_at: new Date(),
+    ...overrides,
+  });
 
   beforeEach(async () => {
     const mockRepo = mock<Repository<Inquiry>>();
@@ -48,7 +47,10 @@ describe('InquiriesService', () => {
       providers: [
         InquiriesService,
         { provide: getRepositoryToken(Inquiry), useValue: mockRepo },
-        { provide: getRepositoryToken(InquiryComment), useValue: mockCommentRepo },
+        {
+          provide: getRepositoryToken(InquiryComment),
+          useValue: mockCommentRepo,
+        },
         { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
@@ -56,7 +58,6 @@ describe('InquiriesService', () => {
     service = module.get<InquiriesService>(InquiriesService);
     repo = module.get(getRepositoryToken(Inquiry));
     commentRepo = module.get(getRepositoryToken(InquiryComment));
-    dataSource = module.get(DataSource) as any;
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -99,10 +100,9 @@ describe('InquiriesService', () => {
 
       await service.findByUser('user-uuid-1');
 
-      expect(mockQb.where).toHaveBeenCalledWith(
-        'i.user_id = :userId',
-        { userId: 'user-uuid-1' },
-      );
+      expect(mockQb.where).toHaveBeenCalledWith('i.user_id = :userId', {
+        userId: 'user-uuid-1',
+      });
     });
 
     it('CLOSED 문의는 CASE WHEN으로 하단 정렬 (orderBy에 CASE 포함)', async () => {
@@ -116,7 +116,7 @@ describe('InquiriesService', () => {
 
       await service.findByUser('user-uuid-1');
 
-      const orderByCall = (mockQb.orderBy as jest.Mock).mock.calls[0];
+      const orderByCall = mockQb.orderBy.mock.calls[0];
       expect(orderByCall[0]).toContain('CLOSED');
     });
   });
@@ -140,16 +140,16 @@ describe('InquiriesService', () => {
 
     it('존재하지 않는 id → NotFoundException', async () => {
       repo.findOneBy.mockResolvedValue(null);
-      await expect(service.findOneByUser('nonexistent', 'user-uuid-1')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.findOneByUser('nonexistent', 'user-uuid-1'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('user_id !== userId → ForbiddenException', async () => {
       repo.findOneBy.mockResolvedValue(makeInquiry({ user_id: 'user-A' }));
-      await expect(service.findOneByUser('inq-uuid-1', 'user-B')).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(
+        service.findOneByUser('inq-uuid-1', 'user-B'),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('user_unread > 0 → repo.update(id, { user_unread: 0 }) 호출', async () => {
@@ -159,7 +159,9 @@ describe('InquiriesService', () => {
 
       await service.findOneByUser('inq-uuid-1', 'user-uuid-1');
 
-      expect(repo.update).toHaveBeenCalledWith('inq-uuid-1', { user_unread: 0 });
+      expect(repo.update).toHaveBeenCalledWith('inq-uuid-1', {
+        user_unread: 0,
+      });
     });
 
     it('user_unread === 0 → repo.update 미호출', async () => {
@@ -192,14 +194,20 @@ describe('InquiriesService', () => {
           content: '추가 질문',
         }),
       );
-      expect(repo.increment).toHaveBeenCalledWith({ id: 'inq-uuid-1' }, 'admin_unread', 1);
+      expect(repo.increment).toHaveBeenCalledWith(
+        { id: 'inq-uuid-1' },
+        'admin_unread',
+        1,
+      );
     });
 
     it('CLOSED 문의 → ForbiddenException', async () => {
       repo.findOneBy.mockResolvedValue(makeInquiry({ status: 'CLOSED' }));
       await expect(
         service.addUserComment('inq-uuid-1', 'user-uuid-1', '닫힌 문의에 댓글'),
-      ).rejects.toThrow(new ForbiddenException('닫힌 문의에는 댓글을 작성할 수 없어요.'));
+      ).rejects.toThrow(
+        new ForbiddenException('닫힌 문의에는 댓글을 작성할 수 없어요.'),
+      );
     });
 
     it('다른 userId → ForbiddenException', async () => {
@@ -211,9 +219,9 @@ describe('InquiriesService', () => {
 
     it('존재하지 않는 id → NotFoundException', async () => {
       repo.findOneBy.mockResolvedValue(null);
-      await expect(service.addUserComment('nonexistent', 'user-uuid-1', '내용')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.addUserComment('nonexistent', 'user-uuid-1', '내용'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -235,15 +243,24 @@ describe('InquiriesService', () => {
       await service.addAdminComment('inq-uuid-1', 'admin-uuid', '어드민 답변');
 
       expect(commentRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ author_role: 'admin', author_id: 'admin-uuid' }),
+        expect.objectContaining({
+          author_role: 'admin',
+          author_id: 'admin-uuid',
+        }),
       );
-      expect(repo.increment).toHaveBeenCalledWith({ id: 'inq-uuid-1' }, 'user_unread', 1);
+      expect(repo.increment).toHaveBeenCalledWith(
+        { id: 'inq-uuid-1' },
+        'user_unread',
+        1,
+      );
     });
 
     it('status=OPEN → repo.update(id, { status: IN_PROGRESS }) 호출', async () => {
       setupAdmin('OPEN');
       await service.addAdminComment('inq-uuid-1', 'admin-uuid', '답변');
-      expect(repo.update).toHaveBeenCalledWith('inq-uuid-1', { status: 'IN_PROGRESS' });
+      expect(repo.update).toHaveBeenCalledWith('inq-uuid-1', {
+        status: 'IN_PROGRESS',
+      });
     });
 
     it('status=IN_PROGRESS → repo.update 미호출 (상태 변경 없음)', async () => {
@@ -260,9 +277,9 @@ describe('InquiriesService', () => {
 
     it('존재하지 않는 id → NotFoundException', async () => {
       repo.findOneBy.mockResolvedValue(null);
-      await expect(service.addAdminComment('nonexistent', 'admin-uuid', '답변')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.addAdminComment('nonexistent', 'admin-uuid', '답변'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -275,13 +292,17 @@ describe('InquiriesService', () => {
 
       const result = await service.closeInquiry('inq-uuid-1');
 
-      expect(repo.update).toHaveBeenCalledWith('inq-uuid-1', { status: 'CLOSED' });
+      expect(repo.update).toHaveBeenCalledWith('inq-uuid-1', {
+        status: 'CLOSED',
+      });
       expect(result.status).toBe('CLOSED');
     });
 
     it('존재하지 않는 id → NotFoundException', async () => {
       repo.findOneBy.mockResolvedValue(null);
-      await expect(service.closeInquiry('nonexistent')).rejects.toThrow(NotFoundException);
+      await expect(service.closeInquiry('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
