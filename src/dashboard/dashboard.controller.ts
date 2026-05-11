@@ -2,7 +2,9 @@ import { Controller, Get } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 @Controller('dashboard')
 export class DashboardController {

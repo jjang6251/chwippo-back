@@ -16,8 +16,12 @@ export class AddExamSchedules1778400000000 implements MigrationInterface {
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
       );
     `);
-    await qr.query(`CREATE INDEX IF NOT EXISTS idx_exam_schedules_user ON myinfo_exam_schedules(user_id);`);
-    await qr.query(`CREATE INDEX IF NOT EXISTS idx_exam_schedules_date ON myinfo_exam_schedules(exam_date);`);
+    await qr.query(
+      `CREATE INDEX IF NOT EXISTS idx_exam_schedules_user ON myinfo_exam_schedules(user_id);`,
+    );
+    await qr.query(
+      `CREATE INDEX IF NOT EXISTS idx_exam_schedules_date ON myinfo_exam_schedules(exam_date);`,
+    );
   }
 
   async down(qr: QueryRunner) {

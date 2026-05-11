@@ -19,7 +19,9 @@ export class AddMyinfoEducation1778600000000 implements MigrationInterface {
         file_url     VARCHAR NULL
       );
     `);
-    await qr.query(`CREATE INDEX IF NOT EXISTS idx_educations_user ON myinfo_educations(user_id);`);
+    await qr.query(
+      `CREATE INDEX IF NOT EXISTS idx_educations_user ON myinfo_educations(user_id);`,
+    );
   }
 
   async down(qr: QueryRunner) {

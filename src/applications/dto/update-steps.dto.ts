@@ -1,5 +1,15 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsISO8601, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 export class StepItemDto {
   @IsOptional()

@@ -1,8 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { MyinfoService } from './myinfo.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 @Controller('myinfo')
 export class MyinfoController {
@@ -15,7 +25,10 @@ export class MyinfoController {
   }
 
   @Patch('profile')
-  updateProfile(@CurrentUser() user: AuthUser, @Body() dto: Record<string, any>) {
+  updateProfile(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: Record<string, any>,
+  ) {
     return this.myinfoService.updateProfile(user.id, dto);
   }
 
@@ -26,13 +39,23 @@ export class MyinfoController {
   }
 
   @Patch('coverletter')
-  updateCoverletter(@CurrentUser() user: AuthUser, @Body() dto: Record<string, any>) {
+  updateCoverletter(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: Record<string, any>,
+  ) {
     return this.myinfoService.updateCoverletter(user.id, dto);
   }
 
   @Post('coverletter/custom')
-  createCustom(@CurrentUser() user: AuthUser, @Body() body: { label: string; order_index: number }) {
-    return this.myinfoService.createCustomItem(user.id, body.label, body.order_index ?? 0);
+  createCustom(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { label: string; order_index: number },
+  ) {
+    return this.myinfoService.createCustomItem(
+      user.id,
+      body.label,
+      body.order_index ?? 0,
+    );
   }
 
   @Patch('coverletter/custom/:id')

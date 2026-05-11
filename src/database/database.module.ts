@@ -16,7 +16,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
         entities: [__dirname + '/../**/*.entity{.ts,.js}'],
         migrations: [__dirname + '/migrations/*{.ts,.js}'],
         synchronize: false,
-        ssl: config.get('DB_SSL') === 'true' ? { rejectUnauthorized: true } : false,
+        ssl:
+          config.get('DB_SSL') === 'true'
+            ? { rejectUnauthorized: true }
+            : false,
       }),
     }),
   ],

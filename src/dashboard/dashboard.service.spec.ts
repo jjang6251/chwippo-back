@@ -34,8 +34,14 @@ describe('DashboardService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DashboardService,
-        { provide: getRepositoryToken(Application), useValue: mock<Repository<Application>>() },
-        { provide: getRepositoryToken(ApplicationStep), useValue: mock<Repository<ApplicationStep>>() },
+        {
+          provide: getRepositoryToken(Application),
+          useValue: mock<Repository<Application>>(),
+        },
+        {
+          provide: getRepositoryToken(ApplicationStep),
+          useValue: mock<Repository<ApplicationStep>>(),
+        },
         { provide: getRepositoryToken(ExamSchedule), useValue: mockExamRepo },
       ],
     }).compile();
@@ -52,9 +58,9 @@ describe('DashboardService', () => {
   describe('getStats', () => {
     it('IN_PROGRESS / PASSED / FAILED 상태 각각 count 호출', async () => {
       appRepo.count
-        .mockResolvedValueOnce(5)   // IN_PROGRESS
-        .mockResolvedValueOnce(2)   // PASSED
-        .mockResolvedValueOnce(1);  // FAILED
+        .mockResolvedValueOnce(5) // IN_PROGRESS
+        .mockResolvedValueOnce(2) // PASSED
+        .mockResolvedValueOnce(1); // FAILED
 
       const qb = makeQb(3);
       appRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
@@ -99,13 +105,22 @@ describe('DashboardService', () => {
     const today = new Date().toISOString().split('T')[0];
     const todayMs = new Date(today).getTime();
 
-    const makeDeadlineApp = (id: string, companyName: string, daysFromNow: number): Application => {
+    const makeDeadlineApp = (
+      id: string,
+      companyName: string,
+      daysFromNow: number,
+    ): Application => {
       const date = new Date(todayMs + daysFromNow * 86400000);
       const deadline = date.toISOString().split('T')[0];
       return { id, companyName, deadline } as Application;
     };
 
-    const makeStepWithDate = (id: string, name: string, appId: string, daysFromNow: number): ApplicationStep => {
+    const makeStepWithDate = (
+      id: string,
+      name: string,
+      appId: string,
+      daysFromNow: number,
+    ): ApplicationStep => {
       const date = new Date(todayMs + daysFromNow * 86400000);
       return {
         id,
@@ -117,7 +132,9 @@ describe('DashboardService', () => {
     };
 
     it('최대 5개로 제한 (6개 항목 있어도 5개만 반환)', async () => {
-      const apps = [0, 1, 2, 3, 4, 5].map((d) => makeDeadlineApp(`app-${d}`, `회사${d}`, d));
+      const apps = [0, 1, 2, 3, 4, 5].map((d) =>
+        makeDeadlineApp(`app-${d}`, `회사${d}`, d),
+      );
 
       const appQb = makeQb(apps);
       const stepQb = makeQb([]);
@@ -216,15 +233,19 @@ describe('DashboardService', () => {
       const result = await service.getDdayList(USER_ID);
 
       expect(result).toHaveLength(2);
-      expect(result[0].type).toBe('interview');  // dday=2가 먼저
+      expect(result[0].type).toBe('interview'); // dday=2가 먼저
       expect(result[0].dday).toBe(2);
-      expect(result[1].type).toBe('deadline');   // dday=4가 나중
+      expect(result[1].type).toBe('deadline'); // dday=4가 나중
       expect(result[1].dday).toBe(4);
     });
 
     it('6개 항목 중 dday 오름차순 상위 5개만 반환 (deadline+interview 혼합)', async () => {
-      const apps = [0, 2, 4].map((d) => makeDeadlineApp(`app-${d}`, `서류${d}`, d));
-      const steps = [1, 3, 5].map((d) => makeStepWithDate(`step-${d}`, '면접', `app-s${d}`, d));
+      const apps = [0, 2, 4].map((d) =>
+        makeDeadlineApp(`app-${d}`, `서류${d}`, d),
+      );
+      const steps = [1, 3, 5].map((d) =>
+        makeStepWithDate(`step-${d}`, '면접', `app-s${d}`, d),
+      );
 
       const appQb = makeQb(apps);
       const stepQb = makeQb(steps);
@@ -240,14 +261,16 @@ describe('DashboardService', () => {
 
     it('시험 일정 항목은 type="exam"으로 반환되며 examId 매핑', async () => {
       const date = new Date(todayMs + 7 * 86400000);
-      const exams = [{
-        id: 'exam-1',
-        user_id: USER_ID,
-        exam_type: 'language',
-        cert_type: 'TOEIC',
-        name: 'TOEIC',
-        exam_date: date,
-      } as any];
+      const exams = [
+        {
+          id: 'exam-1',
+          user_id: USER_ID,
+          exam_type: 'language',
+          cert_type: 'TOEIC',
+          name: 'TOEIC',
+          exam_date: date,
+        } as any,
+      ];
 
       appRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([]));
       stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([]));
@@ -266,7 +289,10 @@ describe('DashboardService', () => {
       const apps = [makeDeadlineApp('a1', '회사A', 1)];
       const steps = [makeStepWithDate('s1', '1차 면접', 'app-1', 2)];
       const exam = {
-        id: 'exam-1', user_id: USER_ID, exam_type: 'cert', name: '정보처리기사',
+        id: 'exam-1',
+        user_id: USER_ID,
+        exam_type: 'cert',
+        name: '정보처리기사',
         exam_date: new Date(todayMs + 3 * 86400000),
       } as any;
 
@@ -276,14 +302,22 @@ describe('DashboardService', () => {
 
       const result = await service.getDdayList(USER_ID);
 
-      expect(result.map((r) => r.type)).toEqual(['deadline', 'interview', 'exam']);
+      expect(result.map((r) => r.type)).toEqual([
+        'deadline',
+        'interview',
+        'exam',
+      ]);
       expect(result.map((r) => r.dday)).toEqual([1, 2, 3]);
     });
   });
 
   // ── getYesterdayInterviews ────────────────────────────
   describe('getYesterdayInterviews', () => {
-    const makeYesterdayStep = (id: string, name: string, appId: string): ApplicationStep => {
+    const makeYesterdayStep = (
+      id: string,
+      name: string,
+      appId: string,
+    ): ApplicationStep => {
       const kst = 9 * 60 * 60 * 1000;
       const todayKst = new Date(Date.now() + kst);
       const todayStr = todayKst.toISOString().split('T')[0];

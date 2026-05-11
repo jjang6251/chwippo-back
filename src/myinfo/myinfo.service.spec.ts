@@ -31,15 +31,42 @@ describe('MyinfoService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MyinfoService,
-        { provide: getRepositoryToken(UserProfile), useValue: mock<Repository<UserProfile>>() },
-        { provide: getRepositoryToken(LanguageCert), useValue: mock<Repository<LanguageCert>>() },
-        { provide: getRepositoryToken(Cert), useValue: mock<Repository<Cert>>() },
-        { provide: getRepositoryToken(Award), useValue: mock<Repository<Award>>() },
-        { provide: getRepositoryToken(Experience), useValue: mock<Repository<Experience>>() },
-        { provide: getRepositoryToken(Coverletter), useValue: mock<Repository<Coverletter>>() },
-        { provide: getRepositoryToken(Document), useValue: mock<Repository<Document>>() },
-        { provide: getRepositoryToken(CoverletterCustom), useValue: mock<Repository<CoverletterCustom>>() },
-        { provide: getRepositoryToken(Education), useValue: mock<Repository<Education>>() },
+        {
+          provide: getRepositoryToken(UserProfile),
+          useValue: mock<Repository<UserProfile>>(),
+        },
+        {
+          provide: getRepositoryToken(LanguageCert),
+          useValue: mock<Repository<LanguageCert>>(),
+        },
+        {
+          provide: getRepositoryToken(Cert),
+          useValue: mock<Repository<Cert>>(),
+        },
+        {
+          provide: getRepositoryToken(Award),
+          useValue: mock<Repository<Award>>(),
+        },
+        {
+          provide: getRepositoryToken(Experience),
+          useValue: mock<Repository<Experience>>(),
+        },
+        {
+          provide: getRepositoryToken(Coverletter),
+          useValue: mock<Repository<Coverletter>>(),
+        },
+        {
+          provide: getRepositoryToken(Document),
+          useValue: mock<Repository<Document>>(),
+        },
+        {
+          provide: getRepositoryToken(CoverletterCustom),
+          useValue: mock<Repository<CoverletterCustom>>(),
+        },
+        {
+          provide: getRepositoryToken(Education),
+          useValue: mock<Repository<Education>>(),
+        },
       ],
     }).compile();
 
@@ -72,8 +99,8 @@ describe('MyinfoService', () => {
     it('프로필 없음 → create + save로 새 프로필 생성 반환', async () => {
       const fresh = { user_id: USER_ID } as UserProfile;
       profileRepo.findOne
-        .mockResolvedValueOnce(null)  // 최초 조회
-        .mockResolvedValue(fresh);    // save 후 getProfile 재조회
+        .mockResolvedValueOnce(null) // 최초 조회
+        .mockResolvedValue(fresh); // save 후 getProfile 재조회
       profileRepo.create.mockReturnValue(fresh);
       profileRepo.save.mockResolvedValue(fresh);
 
@@ -109,7 +136,9 @@ describe('MyinfoService', () => {
 
       const result = await service.updateProfile(USER_ID, {});
 
-      expect(profileRepo.findOne).toHaveBeenCalledWith({ where: { user_id: USER_ID } });
+      expect(profileRepo.findOne).toHaveBeenCalledWith({
+        where: { user_id: USER_ID },
+      });
       expect(result).toBeDefined();
     });
   });
@@ -127,7 +156,11 @@ describe('MyinfoService', () => {
     });
 
     it('createLangCert → create + save, user_id 포함', async () => {
-      const cert = { id: 'lc-1', user_id: USER_ID, cert_type: 'TOEIC' } as LanguageCert;
+      const cert = {
+        id: 'lc-1',
+        user_id: USER_ID,
+        cert_type: 'TOEIC',
+      } as LanguageCert;
       langCertRepo.create.mockReturnValue(cert);
       langCertRepo.save.mockResolvedValue(cert);
 
@@ -157,7 +190,10 @@ describe('MyinfoService', () => {
 
       await service.deleteLangCert('other-user', 'lc-1');
 
-      expect(langCertRepo.delete).toHaveBeenCalledWith({ id: 'lc-1', user_id: 'other-user' });
+      expect(langCertRepo.delete).toHaveBeenCalledWith({
+        id: 'lc-1',
+        user_id: 'other-user',
+      });
     });
   });
 
@@ -199,7 +235,10 @@ describe('MyinfoService', () => {
     it('deleteAward → { id, user_id } 조건', async () => {
       awardRepo.delete.mockResolvedValue({} as any);
       await service.deleteAward(USER_ID, 'award-1');
-      expect(awardRepo.delete).toHaveBeenCalledWith({ id: 'award-1', user_id: USER_ID });
+      expect(awardRepo.delete).toHaveBeenCalledWith({
+        id: 'award-1',
+        user_id: USER_ID,
+      });
     });
   });
 
@@ -234,7 +273,10 @@ describe('MyinfoService', () => {
 
       await service.createEducation(USER_ID, dto);
 
-      expect(educationRepo.create).toHaveBeenCalledWith({ ...dto, user_id: USER_ID });
+      expect(educationRepo.create).toHaveBeenCalledWith({
+        ...dto,
+        user_id: USER_ID,
+      });
       expect(educationRepo.save).toHaveBeenCalledWith(created);
     });
 
@@ -248,7 +290,11 @@ describe('MyinfoService', () => {
     });
 
     it('updateEducation → 갱신 후 본인 row만 조회해 반환', async () => {
-      const updated = { id: 'edu-1', school_name: '서울대', user_id: USER_ID } as Education;
+      const updated = {
+        id: 'edu-1',
+        school_name: '서울대',
+        user_id: USER_ID,
+      } as Education;
       educationRepo.findOne.mockResolvedValue(updated);
       const result = await service.updateEducation(USER_ID, 'edu-1', {});
       expect(educationRepo.findOne).toHaveBeenCalledWith({
@@ -259,11 +305,16 @@ describe('MyinfoService', () => {
 
     it('deleteEducation → id + user_id 조건으로 delete (IDOR 방어)', async () => {
       await service.deleteEducation(USER_ID, 'edu-1');
-      expect(educationRepo.delete).toHaveBeenCalledWith({ id: 'edu-1', user_id: USER_ID });
+      expect(educationRepo.delete).toHaveBeenCalledWith({
+        id: 'edu-1',
+        user_id: USER_ID,
+      });
     });
 
     it('타인 학력 update 시도 → user_id 조건으로 막힘 (where 조건 검증)', async () => {
-      await service.updateEducation('attacker-uid', 'edu-1', { school_name: 'hack' });
+      await service.updateEducation('attacker-uid', 'edu-1', {
+        school_name: 'hack',
+      });
       // 공격자 userId가 들어가지만 where 조건에 user_id 포함되어 row 매칭 안 됨
       expect(educationRepo.update).toHaveBeenCalledWith(
         { id: 'edu-1', user_id: 'attacker-uid' },
@@ -303,7 +354,9 @@ describe('MyinfoService', () => {
       coverRepo.upsert.mockResolvedValue({} as any);
       coverRepo.findOne.mockResolvedValue(cl);
 
-      const result = await service.updateCoverletter(USER_ID, { personality_strength: '성실함' });
+      const result = await service.updateCoverletter(USER_ID, {
+        personality_strength: '성실함',
+      });
 
       expect(coverRepo.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ user_id: USER_ID }),
@@ -316,14 +369,25 @@ describe('MyinfoService', () => {
   // ── CoverletterCustom ──────────────────────────────────
   describe('CoverletterCustom CRUD', () => {
     it('createCustomItem → label, order_index, content 빈 문자열로 생성', async () => {
-      const item = { id: 'cc-1', user_id: USER_ID, label: '해외 경험', order_index: 0, content: '' } as CoverletterCustom;
+      const item = {
+        id: 'cc-1',
+        user_id: USER_ID,
+        label: '해외 경험',
+        order_index: 0,
+        content: '',
+      };
       coverCustomRepo.create.mockReturnValue(item);
       coverCustomRepo.save.mockResolvedValue(item);
 
       await service.createCustomItem(USER_ID, '해외 경험', 0);
 
       expect(coverCustomRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ user_id: USER_ID, label: '해외 경험', order_index: 0, content: '' }),
+        expect.objectContaining({
+          user_id: USER_ID,
+          label: '해외 경험',
+          order_index: 0,
+          content: '',
+        }),
       );
     });
 
@@ -342,7 +406,10 @@ describe('MyinfoService', () => {
     it('deleteCustomItem → { id, user_id } 조건', async () => {
       coverCustomRepo.delete.mockResolvedValue({} as any);
       await service.deleteCustomItem(USER_ID, 'cc-1');
-      expect(coverCustomRepo.delete).toHaveBeenCalledWith({ id: 'cc-1', user_id: USER_ID });
+      expect(coverCustomRepo.delete).toHaveBeenCalledWith({
+        id: 'cc-1',
+        user_id: USER_ID,
+      });
     });
   });
 
@@ -380,7 +447,10 @@ describe('MyinfoService', () => {
     it('deleteDocument → { id, user_id } 조건 (IDOR silently no-op)', async () => {
       documentRepo.delete.mockResolvedValue({} as any);
       await service.deleteDocument('other-user', 'doc-1');
-      expect(documentRepo.delete).toHaveBeenCalledWith({ id: 'doc-1', user_id: 'other-user' });
+      expect(documentRepo.delete).toHaveBeenCalledWith({
+        id: 'doc-1',
+        user_id: 'other-user',
+      });
     });
   });
 });

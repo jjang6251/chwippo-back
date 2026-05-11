@@ -4,7 +4,9 @@ import { CreateInquiryDto } from './dto/create-inquiry.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { IsString, MinLength, MaxLength } from 'class-validator';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 class AddCommentDto {
   @IsString()

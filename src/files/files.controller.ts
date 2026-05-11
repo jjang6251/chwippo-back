@@ -9,7 +9,9 @@ class PresignedUrlDto {
   @IsNumber() @Min(1) @Max(10 * 1024 * 1024) fileSize: number;
 }
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 @Controller('files')
 export class FilesController {
@@ -20,6 +22,11 @@ export class FilesController {
     @CurrentUser() user: AuthUser,
     @Body() dto: PresignedUrlDto,
   ) {
-    return this.filesService.createPresignedUrl(user.id, dto.scope, dto.contentType, dto.fileSize);
+    return this.filesService.createPresignedUrl(
+      user.id,
+      dto.scope,
+      dto.contentType,
+      dto.fileSize,
+    );
   }
 }

@@ -49,15 +49,17 @@ describe('UsersService', () => {
       const result = await service.updateNickname('user-uuid-1', '새닉네임');
 
       expect(userRepo.findOneBy).toHaveBeenCalledWith({ id: 'user-uuid-1' });
-      expect(userRepo.save).toHaveBeenCalledWith(expect.objectContaining({ nickname: '새닉네임' }));
+      expect(userRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ nickname: '새닉네임' }),
+      );
       expect(result.nickname).toBe('새닉네임');
     });
 
     it('존재하지 않는 userId → NotFoundException', async () => {
       userRepo.findOneBy.mockResolvedValue(null);
-      await expect(service.updateNickname('nonexistent', '닉네임')).rejects.toThrow(
-        new NotFoundException('사용자를 찾을 수 없습니다.'),
-      );
+      await expect(
+        service.updateNickname('nonexistent', '닉네임'),
+      ).rejects.toThrow(new NotFoundException('사용자를 찾을 수 없습니다.'));
       expect(userRepo.save).not.toHaveBeenCalled();
     });
   });
@@ -118,7 +120,9 @@ describe('UsersService', () => {
       const result = await service.countByDate(from);
 
       expect(result).toBe(7);
-      expect(mockQb.where).toHaveBeenCalledWith('u.created_at >= :from', { from });
+      expect(mockQb.where).toHaveBeenCalledWith('u.created_at >= :from', {
+        from,
+      });
     });
   });
 });

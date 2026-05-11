@@ -1,9 +1,23 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { ExamSchedulesService } from './exam-schedules.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { CreateExamScheduleDto, UpdateExamScheduleDto, ConvertExamToCertDto } from './dto/exam-schedule.dto';
+import {
+  CreateExamScheduleDto,
+  UpdateExamScheduleDto,
+  ConvertExamToCertDto,
+} from './dto/exam-schedule.dto';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 @Controller('myinfo/exam-schedules')
 export class ExamSchedulesController {
@@ -20,7 +34,11 @@ export class ExamSchedulesController {
   }
 
   @Patch(':id')
-  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateExamScheduleDto) {
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateExamScheduleDto,
+  ) {
     return this.service.update(user.id, id, dto);
   }
 
@@ -30,7 +48,11 @@ export class ExamSchedulesController {
   }
 
   @Post(':id/convert-to-cert')
-  convertToCert(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ConvertExamToCertDto) {
+  convertToCert(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ConvertExamToCertDto,
+  ) {
     return this.service.convertToCert(user.id, id, dto);
   }
 }

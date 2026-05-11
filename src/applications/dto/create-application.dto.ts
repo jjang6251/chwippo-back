@@ -1,4 +1,12 @@
-import { IsString, IsOptional, IsIn, IsDateString, IsUrl, MaxLength, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsIn,
+  IsDateString,
+  IsUrl,
+  MaxLength,
+  IsBoolean,
+} from 'class-validator';
 
 export class CreateApplicationDto {
   @IsString()

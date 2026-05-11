@@ -1,4 +1,14 @@
-import { IsString, IsOptional, IsIn, IsDateString, IsUrl, MaxLength, IsInt, Min, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsIn,
+  IsDateString,
+  IsUrl,
+  MaxLength,
+  IsInt,
+  Min,
+  IsBoolean,
+} from 'class-validator';
 import type { ApplicationStatus } from '../application.entity';
 
 export class UpdateApplicationDto {

@@ -1,9 +1,22 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, ParseIntPipe } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  ParseIntPipe,
+} from '@nestjs/common';
 import { CalendarService } from './calendar.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateDailyNoteDto, UpdateDailyNoteDto } from './dto/daily-note.dto';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 @Controller('calendar')
 export class CalendarController {
@@ -25,7 +38,11 @@ export class CalendarController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.calendarService.getDailyNotes(user.id, { date, startDate, endDate });
+    return this.calendarService.getDailyNotes(user.id, {
+      date,
+      startDate,
+      endDate,
+    });
   }
 
   @Post('daily-notes')

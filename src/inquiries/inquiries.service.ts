@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Inquiry } from './inquiry.entity';
@@ -9,13 +13,20 @@ import { CreateInquiryDto } from './dto/create-inquiry.dto';
 export class InquiriesService {
   constructor(
     @InjectRepository(Inquiry) private repo: Repository<Inquiry>,
-    @InjectRepository(InquiryComment) private commentRepo: Repository<InquiryComment>,
+    @InjectRepository(InquiryComment)
+    private commentRepo: Repository<InquiryComment>,
     private dataSource: DataSource,
   ) {}
 
   // ── 사용자: 문의 생성 ──────────────────────────────────
   async create(userId: string, dto: CreateInquiryDto): Promise<Inquiry> {
-    const inquiry = this.repo.create({ ...dto, user_id: userId, status: 'OPEN', user_unread: 0, admin_unread: 1 });
+    const inquiry = this.repo.create({
+      ...dto,
+      user_id: userId,
+      status: 'OPEN',
+      user_unread: 0,
+      admin_unread: 1,
+    });
     return this.repo.save(inquiry);
   }
 
@@ -54,23 +65,36 @@ export class InquiriesService {
     const inquiry = await this.repo.findOneBy({ id });
     if (!inquiry) throw new NotFoundException();
     if (inquiry.user_id !== userId) throw new ForbiddenException();
-    if (inquiry.status === 'CLOSED') throw new ForbiddenException('닫힌 문의에는 댓글을 작성할 수 없어요.');
+    if (inquiry.status === 'CLOSED')
+      throw new ForbiddenException('닫힌 문의에는 댓글을 작성할 수 없어요.');
 
-    const comment = this.commentRepo.create({ inquiry_id: id, author_role: 'user', author_id: userId, content });
+    const comment = this.commentRepo.create({
+      inquiry_id: id,
+      author_role: 'user',
+      author_id: userId,
+      content,
+    });
     await this.commentRepo.save(comment);
     await this.repo.increment({ id }, 'admin_unread', 1);
     return comment;
   }
 
   // ── 어드민: 전체 목록 (유저 정보 포함) ───────────────
-  async findAll(opts?: { status?: string; category?: string; page?: number; limit?: number }) {
+  async findAll(opts?: {
+    status?: string;
+    category?: string;
+    page?: number;
+    limit?: number;
+  }) {
     const qb = this.repo
       .createQueryBuilder('i')
       .orderBy(`CASE WHEN i.status = 'CLOSED' THEN 1 ELSE 0 END`, 'ASC')
       .addOrderBy('i.created_at', 'DESC');
 
-    if (opts?.status) qb.andWhere('i.status = :status', { status: opts.status });
-    if (opts?.category) qb.andWhere('i.category = :category', { category: opts.category });
+    if (opts?.status)
+      qb.andWhere('i.status = :status', { status: opts.status });
+    if (opts?.category)
+      qb.andWhere('i.category = :category', { category: opts.category });
 
     const limit = opts?.limit ?? 30;
     const page = opts?.page ?? 1;
@@ -79,7 +103,9 @@ export class InquiriesService {
     const [rows, total] = await qb.getManyAndCount();
 
     // 유저 정보 배치 조회
-    const userIds = [...new Set(rows.map((i) => i.user_id).filter(Boolean))] as string[];
+    const userIds = [
+      ...new Set(rows.map((i) => i.user_id).filter(Boolean)),
+    ] as string[];
     let userMap = new Map<string, { nickname: string; email: string | null }>();
     if (userIds.length > 0) {
       const users: { id: string; nickname: string; email: string | null }[] =
@@ -92,7 +118,9 @@ export class InquiriesService {
 
     const items = rows.map((i) => ({
       ...i,
-      user_nickname: i.user_id ? (userMap.get(i.user_id)?.nickname ?? null) : null,
+      user_nickname: i.user_id
+        ? (userMap.get(i.user_id)?.nickname ?? null)
+        : null,
       user_email: i.user_id ? (userMap.get(i.user_id)?.email ?? null) : null,
       user_short_id: i.user_id ? i.user_id.slice(0, 8) : null,
     }));
@@ -118,7 +146,7 @@ export class InquiriesService {
     // 유저 컨텍스트 (탈퇴 유저면 user_id가 null)
     let userContext: Record<string, unknown> = {};
     if (inquiry.user_id) {
-      const [ctx] = await this.dataSource.query(
+      const rows: Record<string, unknown>[] = await this.dataSource.query(
         `SELECT u.nickname                    AS user_nickname,
                 u.email                      AS user_email,
                 LEFT(u.id::text, 8)          AS user_short_id,
@@ -131,7 +159,7 @@ export class InquiriesService {
          WHERE u.id::text = $1`,
         [inquiry.user_id],
       );
-      userContext = ctx ?? {};
+      userContext = rows[0] ?? {};
     }
 
     return { ...inquiry, ...userContext, comments };
@@ -142,7 +170,12 @@ export class InquiriesService {
     const inquiry = await this.repo.findOneBy({ id });
     if (!inquiry) throw new NotFoundException();
 
-    const comment = this.commentRepo.create({ inquiry_id: id, author_role: 'admin', author_id: adminId, content });
+    const comment = this.commentRepo.create({
+      inquiry_id: id,
+      author_role: 'admin',
+      author_id: adminId,
+      content,
+    });
     await this.commentRepo.save(comment);
     await this.repo.increment({ id }, 'user_unread', 1);
 
@@ -163,6 +196,8 @@ export class InquiriesService {
 
   // ── 통계용 ───────────────────────────────────────────
   async countPending(): Promise<number> {
-    return this.repo.count({ where: [{ status: 'OPEN' }, { status: 'IN_PROGRESS' }] });
+    return this.repo.count({
+      where: [{ status: 'OPEN' }, { status: 'IN_PROGRESS' }],
+    });
   }
 }

@@ -7,7 +7,9 @@ import { ApplicationsController } from './applications.controller';
 import { ApplicationsService } from './applications.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Application, ApplicationStep, StepChecklistItem])],
+  imports: [
+    TypeOrmModule.forFeature([Application, ApplicationStep, StepChecklistItem]),
+  ],
   controllers: [ApplicationsController],
   providers: [ApplicationsService],
   exports: [ApplicationsService],

@@ -57,12 +57,17 @@ export class AuthController {
   @UseGuards(AuthGuard('kakao'))
   async kakaoCallback(@Req() req: Request, @Res() res: Response) {
     const kakaoUser = req.user as KakaoCallbackUser;
-    const { user, isNew } = await this.authService.findOrCreateKakaoUser(kakaoUser);
-    const { accessToken, refreshToken } = await this.authService.issueTokens(user);
+    const { user, isNew } =
+      await this.authService.findOrCreateKakaoUser(kakaoUser);
+    const { accessToken, refreshToken } =
+      await this.authService.issueTokens(user);
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
 
-    const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:5173');
+    const frontendUrl = this.config.get<string>(
+      'FRONTEND_URL',
+      'http://localhost:5173',
+    );
     const params = new URLSearchParams({
       access_token: accessToken,
       is_new: String(isNew),
@@ -80,13 +85,24 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async refresh(@CurrentUser() user: AuthenticatedUser) {
     const accessToken = await this.authService.refreshAccessToken(user.id);
-    return { accessToken, user: { id: user.id, nickname: user.nickname, email: user.email, role: user.role } };
+    return {
+      accessToken,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        role: user.role,
+      },
+    };
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  async logout(@CurrentUser() user: AuthenticatedUser, @Res({ passthrough: true }) res: Response) {
+  async logout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     await this.authService.logout(user.id);
     res.clearCookie('refresh_token', { path: '/' });
     return { message: '로그아웃 되었습니다.' };
