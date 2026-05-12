@@ -29,21 +29,28 @@ export class DashboardService {
       }),
     ]);
 
-    // 현재 스텝에 '면접'이 포함된 IN_PROGRESS 카드 수
-    const interviews = await this.appRepo
-      .createQueryBuilder('app')
-      .innerJoin(
-        'application_steps',
-        's',
-        's.application_id = app.id AND s.order_index = app.current_step_index',
-      )
+    // 면접 본 횟수 — '면접' 스텝 중 KST 기준 날짜가 오늘 이전인 것 (모든 비삭제 카드 대상)
+    const KST = 9 * 60 * 60 * 1000;
+    const today = new Date(Date.now() + KST).toISOString().split('T')[0];
+    const interviewsAttended = await this.stepRepo
+      .createQueryBuilder('step')
+      .innerJoin('step.application', 'app')
       .where('app.user_id = :userId', { userId })
-      .andWhere('app.status = :status', { status: 'IN_PROGRESS' })
       .andWhere('app.deleted_at IS NULL')
-      .andWhere("s.name LIKE '%면접%'")
+      .andWhere('step.scheduledDate IS NOT NULL')
+      .andWhere(
+        "(step.scheduledDate AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE < :today",
+        { today },
+      )
+      .andWhere("step.name LIKE '%면접%'")
       .getCount();
 
-    return { total: inProgress + passed + failed, interviews, passed };
+    return {
+      total: inProgress + passed + failed,
+      inProgress,
+      interviewsAttended,
+      passed,
+    };
   }
 
   async getDdayList(userId: string) {

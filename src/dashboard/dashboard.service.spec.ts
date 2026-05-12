@@ -56,47 +56,49 @@ describe('DashboardService', () => {
 
   // ── getStats ───────────────────────────────────────────
   describe('getStats', () => {
-    it('IN_PROGRESS / PASSED / FAILED 상태 각각 count 호출', async () => {
+    it('IN_PROGRESS / PASSED / FAILED 각각 count → total·inProgress·passed', async () => {
       appRepo.count
         .mockResolvedValueOnce(5) // IN_PROGRESS
         .mockResolvedValueOnce(2) // PASSED
         .mockResolvedValueOnce(1); // FAILED
-
-      const qb = makeQb(3);
-      appRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(0));
 
       const result = await service.getStats(USER_ID);
 
       expect(appRepo.count).toHaveBeenCalledTimes(3);
-      // 전체 = IN_PROGRESS + PASSED + FAILED (PLANNED 제외)
+      // 전체(지원한 회사) = IN_PROGRESS + PASSED + FAILED (PLANNED 제외)
       expect(result.total).toBe(8);
+      expect(result.inProgress).toBe(5);
       expect(result.passed).toBe(2);
     });
 
-    it('면접 카운트는 QueryBuilder로 조회 (스텝명에 "면접" 포함)', async () => {
+    it('"면접 본 횟수"는 stepRepo QueryBuilder로 조회 (스텝명 "면접" + 과거 날짜)', async () => {
       appRepo.count
         .mockResolvedValueOnce(4)
         .mockResolvedValueOnce(1)
         .mockResolvedValueOnce(0);
-
-      const qb = makeQb(2);
-      appRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+      const stepQb = makeQb(3);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
 
       const result = await service.getStats(USER_ID);
 
-      expect(appRepo.createQueryBuilder).toHaveBeenCalled();
-      expect(qb.getCount).toHaveBeenCalled();
-      expect(result.interviews).toBe(2);
+      expect(stepRepo.createQueryBuilder).toHaveBeenCalled();
+      expect(stepQb.getCount).toHaveBeenCalled();
+      expect(result.interviewsAttended).toBe(3);
     });
 
-    it('통계가 모두 0인 경우 → { total: 0, interviews: 0, passed: 0 }', async () => {
+    it('통계가 모두 0 → { total: 0, inProgress: 0, interviewsAttended: 0, passed: 0 }', async () => {
       appRepo.count.mockResolvedValue(0);
-      const qb = makeQb(0);
-      appRepo.createQueryBuilder = jest.fn().mockReturnValue(qb);
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(0));
 
       const result = await service.getStats(USER_ID);
 
-      expect(result).toEqual({ total: 0, interviews: 0, passed: 0 });
+      expect(result).toEqual({
+        total: 0,
+        inProgress: 0,
+        interviewsAttended: 0,
+        passed: 0,
+      });
     });
   });
 
