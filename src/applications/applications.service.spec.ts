@@ -207,6 +207,43 @@ describe('ApplicationsService', () => {
       });
     });
 
+    it('templateId=it_dev → IT 개발 전형 스텝 생성', async () => {
+      const app = makeApp({ status: 'IN_PROGRESS' });
+      const { em, savedSteps } = makeEntityManager(app);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.create('user-uuid-1', {
+        companyName: '네이버',
+        status: 'IN_PROGRESS',
+        templateId: 'it_dev',
+      });
+
+      expect(savedSteps.map((s: { name: string }) => s.name)).toEqual([
+        '서류 제출',
+        '코딩테스트·과제',
+        '1차 기술면접',
+        '2차 컬처핏',
+        '최종 합격',
+      ]);
+      expect(savedSteps[0]).toMatchObject({ orderIndex: 0 });
+      expect(savedSteps[4]).toMatchObject({ name: '최종 합격', orderIndex: 4 });
+    });
+
+    it('templateId 미지정 → general(기본 4스텝)', async () => {
+      const app = makeApp({ status: 'IN_PROGRESS' });
+      const { em, savedSteps } = makeEntityManager(app);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.create('user-uuid-1', {
+        companyName: '쿠팡',
+        status: 'IN_PROGRESS',
+      });
+
+      expect(savedSteps.map((s: { name: string }) => s.name)).toEqual(
+        DEFAULT_STEP_NAMES,
+      );
+    });
+
     it('deadline 전달 시 첫 스텝(서류 제출) scheduledDate에 자동 설정', async () => {
       const app = makeApp({ status: 'IN_PROGRESS', deadline: '2025-12-31' });
       const { em, savedSteps } = makeEntityManager(app);
@@ -359,6 +396,53 @@ describe('ApplicationsService', () => {
       await expect(
         service.update('user-uuid-1', 'nonexistent', { companyName: '수정' }),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('직무명을 채우면 needsDetail이 false로 재계산됨 ("상세 입력 필요" 배지 해제)', async () => {
+      const app = makeApp({
+        status: 'IN_PROGRESS',
+        jobTitle: null,
+        needsDetail: true,
+      });
+      const saved: Partial<Application>[] = [];
+      appRepo.findOne
+        .mockResolvedValueOnce(app)
+        .mockResolvedValue({ ...app, jobTitle: '백엔드 개발자', steps: [] });
+      appRepo.save.mockImplementation(async (a) => {
+        saved.push(a as Application);
+        return a as Application;
+      });
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        jobTitle: '백엔드 개발자',
+      });
+
+      expect(saved[0]).toMatchObject({
+        jobTitle: '백엔드 개발자',
+        needsDetail: false,
+      });
+    });
+
+    it('IN_PROGRESS인데 직무명이 여전히 없으면 needsDetail은 true 유지', async () => {
+      const app = makeApp({
+        status: 'IN_PROGRESS',
+        jobTitle: null,
+        needsDetail: true,
+      });
+      const saved: Partial<Application>[] = [];
+      appRepo.findOne
+        .mockResolvedValueOnce(app)
+        .mockResolvedValue({ ...app, steps: [] });
+      appRepo.save.mockImplementation(async (a) => {
+        saved.push(a as Application);
+        return a as Application;
+      });
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        memo: '메모만 수정',
+      });
+
+      expect(saved[0]).toMatchObject({ needsDetail: true });
     });
   });
 
