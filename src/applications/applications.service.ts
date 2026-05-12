@@ -16,8 +16,7 @@ import {
   CreateChecklistItemDto,
   UpdateChecklistItemDto,
 } from './dto/checklist-item.dto';
-
-const DEFAULT_STEPS = ['서류 제출', '1차 면접', '2차 면접', '최종 합격'];
+import { stepsForTemplate } from './application-templates';
 
 @Injectable()
 export class ApplicationsService {
@@ -74,7 +73,12 @@ export class ApplicationsService {
       const saved = await em.save(Application, app);
 
       if (status === 'IN_PROGRESS') {
-        await this.createDefaultSteps(em, saved.id, dto.deadline);
+        await this.createDefaultSteps(
+          em,
+          saved.id,
+          dto.deadline,
+          dto.templateId,
+        );
       }
 
       return em.findOne(Application, {
@@ -92,6 +96,12 @@ export class ApplicationsService {
     const becomesInProgress = dto.status === 'IN_PROGRESS';
 
     Object.assign(app, dto);
+    // needsDetail은 (status, jobTitle)에서 파생 — 명시적으로 보내지 않으면 재계산
+    // (IN_PROGRESS인데 직무명이 비어 있으면 "상세 입력 필요" 배지, 채우면 해제)
+    if (dto.needsDetail === undefined) {
+      app.needsDetail =
+        app.status === 'IN_PROGRESS' && !(app.jobTitle ?? '').trim();
+    }
     await this.appRepo.save(app);
 
     // 저장 완료 후 스텝 생성 (cascade 영향 없음)
@@ -183,8 +193,9 @@ export class ApplicationsService {
     em: EntityManager,
     applicationId: string,
     deadline?: string | null,
+    templateId?: string | null,
   ) {
-    const steps = DEFAULT_STEPS.map((name, i) =>
+    const steps = stepsForTemplate(templateId).map((name, i) =>
       em.create(ApplicationStep, {
         applicationId,
         orderIndex: i,
