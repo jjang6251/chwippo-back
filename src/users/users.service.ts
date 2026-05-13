@@ -16,6 +16,14 @@ export class UsersService {
     await this.repo.update(userId, { termsAgreedAt: new Date() });
   }
 
+  async markOnboarded(userId: string): Promise<void> {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    if (!user.onboardedAt) {
+      await this.repo.update(userId, { onboardedAt: new Date() });
+    }
+  }
+
   async updateNickname(userId: string, nickname: string): Promise<User> {
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
