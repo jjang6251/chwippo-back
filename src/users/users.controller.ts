@@ -26,6 +26,12 @@ export class UsersController {
     await this.usersService.agreeTerms(user.id);
   }
 
+  @Post('me/onboard')
+  @HttpCode(204)
+  async markOnboarded(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.usersService.markOnboarded(user.id);
+  }
+
   @Patch('me/nickname')
   async updateNickname(
     @CurrentUser() user: AuthUser,

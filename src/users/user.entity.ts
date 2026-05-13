@@ -36,4 +36,7 @@ export class User {
 
   @Column({ name: 'dashboard_config', type: 'jsonb', nullable: true })
   dashboardConfig: { sections: { id: string; visible: boolean }[] } | null;
+
+  @Column({ name: 'onboarded_at', type: 'timestamptz', nullable: true })
+  onboardedAt: Date | null;
 }

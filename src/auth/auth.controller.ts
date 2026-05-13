@@ -22,6 +22,7 @@ interface AuthenticatedUser {
   nickname: string;
   email: string | null;
   role: string;
+  onboardedAt: Date | null;
 }
 
 interface KakaoCallbackUser {
@@ -75,6 +76,7 @@ export class AuthController {
       user_nickname: user.nickname,
       user_role: user.role,
       ...(user.email ? { user_email: user.email } : {}),
+      ...(user.onboardedAt ? { user_onboarded_at: user.onboardedAt.toISOString() } : {}),
     });
     return res.redirect(`${frontendUrl}/login/callback?${params.toString()}`);
   }
@@ -92,6 +94,7 @@ export class AuthController {
         nickname: user.nickname,
         email: user.email,
         role: user.role,
+        onboardedAt: user.onboardedAt ?? null,
       },
     };
   }
