@@ -39,4 +39,7 @@ export class User {
 
   @Column({ name: 'onboarded_at', type: 'timestamptz', nullable: true })
   onboardedAt: Date | null;
+
+  @Column({ name: 'suspended_at', type: 'timestamptz', nullable: true })
+  suspendedAt: Date | null;
 }
