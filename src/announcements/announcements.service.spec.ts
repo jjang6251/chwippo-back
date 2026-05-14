@@ -151,7 +151,7 @@ describe('AnnouncementsService', () => {
       const existing = makeAnnouncement({ ends_at: new Date('2026-12-31T00:00:00Z') });
       repo.findOne.mockResolvedValue(existing);
       repo.save.mockResolvedValue({ ...existing, ends_at: null });
-      const result = await service.update('uuid-1', { ends_at: null });
+      await service.update('uuid-1', { ends_at: null });
       expect(repo.save).toHaveBeenCalled();
       const savedArg = repo.save.mock.calls[0][0] as Announcement;
       expect(savedArg.ends_at).toBeNull();
