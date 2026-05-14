@@ -23,6 +23,7 @@ interface AuthenticatedUser {
   email: string | null;
   role: string;
   onboardedAt: Date | null;
+  termsAgreedAt: Date | null;
 }
 
 interface KakaoCallbackUser {
@@ -71,11 +72,12 @@ export class AuthController {
     );
     const params = new URLSearchParams({
       access_token: accessToken,
-      is_new: String(isNew),
+      needs_terms: String(!user.termsAgreedAt),
       user_id: user.id,
       user_nickname: user.nickname,
       user_role: user.role,
       ...(user.email ? { user_email: user.email } : {}),
+      ...(user.termsAgreedAt ? { user_terms_agreed_at: user.termsAgreedAt.toISOString() } : {}),
       ...(user.onboardedAt ? { user_onboarded_at: user.onboardedAt.toISOString() } : {}),
     });
     return res.redirect(`${frontendUrl}/login/callback?${params.toString()}`);
@@ -95,6 +97,7 @@ export class AuthController {
         email: user.email,
         role: user.role,
         onboardedAt: user.onboardedAt ?? null,
+        termsAgreedAt: user.termsAgreedAt ?? null,
       },
     };
   }
