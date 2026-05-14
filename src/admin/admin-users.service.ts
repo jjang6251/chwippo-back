@@ -25,6 +25,7 @@ function escapeSearch(s: string): string {
 }
 
 function omitSensitive(user: User): Omit<User, 'refreshToken' | 'kakaoId'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { refreshToken: _r, kakaoId: _k, ...safe } = user;
   return safe;
 }
@@ -99,8 +100,13 @@ export class AdminUsersService {
     userId: string,
     dto: UpdateAdminUserDto,
   ): Promise<void> {
-    if (adminId === userId && (dto.suspended !== undefined || dto.role !== undefined)) {
-      throw new ForbiddenException('자기 자신의 정지·권한은 변경할 수 없습니다.');
+    if (
+      adminId === userId &&
+      (dto.suspended !== undefined || dto.role !== undefined)
+    ) {
+      throw new ForbiddenException(
+        '자기 자신의 정지·권한은 변경할 수 없습니다.',
+      );
     }
 
     await this.dataSource.transaction(async (manager) => {
@@ -110,13 +116,27 @@ export class AdminUsersService {
       if (dto.suspended === true && !user.suspendedAt) {
         user.suspendedAt = new Date();
         await manager.save(User, user);
-        await this.auditService.log(adminId, 'suspend', 'user', userId, {}, manager);
+        await this.auditService.log(
+          adminId,
+          'suspend',
+          'user',
+          userId,
+          {},
+          manager,
+        );
       }
 
       if (dto.suspended === false && user.suspendedAt) {
         user.suspendedAt = null;
         await manager.save(User, user);
-        await this.auditService.log(adminId, 'unsuspend', 'user', userId, {}, manager);
+        await this.auditService.log(
+          adminId,
+          'unsuspend',
+          'user',
+          userId,
+          {},
+          manager,
+        );
       }
 
       if (dto.role !== undefined && dto.role !== user.role) {
@@ -167,7 +187,14 @@ export class AdminUsersService {
       const user = await manager.findOne(User, { where: { id: userId } });
       if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
 
-      await this.auditService.log(adminId, 'delete', 'user', userId, {}, manager);
+      await this.auditService.log(
+        adminId,
+        'delete',
+        'user',
+        userId,
+        {},
+        manager,
+      );
       await manager.remove(User, user);
     });
   }
@@ -204,14 +231,21 @@ export class AdminUsersService {
     ] = await Promise.all([
       this.appRepo.find({ where: { userId } }),
       this.inquiryRepo.find({ where: { user_id: userId } }),
-      this.dataSource.manager.findOne(UserProfile, { where: { user_id: userId } }),
+      this.dataSource.manager.findOne(UserProfile, {
+        where: { user_id: userId },
+      }),
       this.dataSource.manager.find(Education, { where: { user_id: userId } }),
       this.dataSource.manager.find(Experience, { where: { user_id: userId } }),
       this.dataSource.manager.find(Cert, { where: { user_id: userId } }),
-      this.dataSource.manager.find(LanguageCert, { where: { user_id: userId } }),
+      this.dataSource.manager.find(LanguageCert, {
+        where: { user_id: userId },
+      }),
       this.dataSource.manager.find(Award, { where: { user_id: userId } }),
       this.dataSource.manager.find(Document, { where: { user_id: userId } }),
-      this.dataSource.manager.find(CoverletterCustom, { where: { user_id: userId }, order: { order_index: 'ASC' } }),
+      this.dataSource.manager.find(CoverletterCustom, {
+        where: { user_id: userId },
+        order: { order_index: 'ASC' },
+      }),
     ]);
 
     await this.auditService.log(adminId, 'export', 'user', userId, {});
