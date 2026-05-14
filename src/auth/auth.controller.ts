@@ -59,16 +59,21 @@ export class AuthController {
   @UseGuards(AuthGuard('kakao'))
   async kakaoCallback(@Req() req: Request, @Res() res: Response) {
     const kakaoUser = req.user as KakaoCallbackUser;
+    const frontendUrl = this.config.get<string>(
+      'FRONTEND_URL',
+      'http://localhost:5173',
+    );
     const { user } = await this.authService.findOrCreateKakaoUser(kakaoUser);
+
+    if (user.suspendedAt) {
+      return res.redirect(`${frontendUrl}/login?error=suspended`);
+    }
+
     const { accessToken, refreshToken } =
       await this.authService.issueTokens(user);
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
 
-    const frontendUrl = this.config.get<string>(
-      'FRONTEND_URL',
-      'http://localhost:5173',
-    );
     const params = new URLSearchParams({
       access_token: accessToken,
       needs_terms: String(!user.termsAgreedAt),

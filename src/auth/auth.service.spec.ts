@@ -166,7 +166,7 @@ describe('AuthService', () => {
       const nullUser = makeUser({ termsAgreedAt: null });
       const agreedUser = makeUser({ termsAgreedAt: new Date() });
 
-      expect(String(!nullUser.termsAgreedAt)).toBe('true');   // needs_terms="true"
+      expect(String(!nullUser.termsAgreedAt)).toBe('true'); // needs_terms="true"
       expect(String(!agreedUser.termsAgreedAt)).toBe('false'); // needs_terms="false"
     });
   });

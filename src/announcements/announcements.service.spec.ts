@@ -51,7 +51,9 @@ describe('AnnouncementsService', () => {
       const result = await service.getActive();
       expect(result).toBe(item);
       expect(repo.findOne).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ active: true }) }),
+        expect.objectContaining({
+          where: expect.objectContaining({ active: true }),
+        }),
       );
     });
 
@@ -78,7 +80,10 @@ describe('AnnouncementsService', () => {
     });
 
     it('활성 공지가 여러 개일 때 findOne으로 최신 1개만 반환한다', async () => {
-      const latest = makeAnnouncement({ id: 'latest', created_at: new Date('2026-05-01') });
+      const latest = makeAnnouncement({
+        id: 'latest',
+        created_at: new Date('2026-05-01'),
+      });
       repo.findOne.mockResolvedValue(latest);
       const result = await service.getActive();
       expect(result).toBe(latest);
@@ -90,7 +95,10 @@ describe('AnnouncementsService', () => {
 
   describe('findAll', () => {
     it('전체 공지를 created_at DESC로 반환한다', async () => {
-      const items = [makeAnnouncement({ id: 'a' }), makeAnnouncement({ id: 'b' })];
+      const items = [
+        makeAnnouncement({ id: 'a' }),
+        makeAnnouncement({ id: 'b' }),
+      ];
       repo.find.mockResolvedValue(items);
       const result = await service.findAll();
       expect(result).toEqual(items);
@@ -109,7 +117,14 @@ describe('AnnouncementsService', () => {
       const entity = makeAnnouncement();
       repo.create.mockReturnValue(entity);
       repo.save.mockResolvedValue(entity);
-      const dto = { title: '공지', body: '내용', type: 'banner' as const, active: true, starts_at: null, ends_at: null };
+      const dto = {
+        title: '공지',
+        body: '내용',
+        type: 'banner' as const,
+        active: true,
+        starts_at: null,
+        ends_at: null,
+      };
       const result = await service.create(dto);
       expect(repo.create).toHaveBeenCalled();
       expect(repo.save).toHaveBeenCalledWith(entity);
@@ -117,11 +132,16 @@ describe('AnnouncementsService', () => {
     });
 
     it('starts_at·ends_at 문자열을 Date로 변환한다', async () => {
-      const entity = makeAnnouncement({ starts_at: new Date('2026-06-01T00:00:00Z') });
+      const entity = makeAnnouncement({
+        starts_at: new Date('2026-06-01T00:00:00Z'),
+      });
       repo.create.mockReturnValue(entity);
       repo.save.mockResolvedValue(entity);
       const dto = {
-        title: '공지', body: '내용', type: 'banner' as const, active: false,
+        title: '공지',
+        body: '내용',
+        type: 'banner' as const,
+        active: false,
         starts_at: '2026-06-01T00:00:00.000Z',
         ends_at: null,
       };
@@ -144,11 +164,15 @@ describe('AnnouncementsService', () => {
 
     it('존재하지 않는 id면 NotFoundException을 던진다', async () => {
       repo.findOne.mockResolvedValue(null);
-      await expect(service.update('not-exist', { title: 'x' })).rejects.toThrow(NotFoundException);
+      await expect(service.update('not-exist', { title: 'x' })).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('ends_at을 null로 명시하면 null로 업데이트한다', async () => {
-      const existing = makeAnnouncement({ ends_at: new Date('2026-12-31T00:00:00Z') });
+      const existing = makeAnnouncement({
+        ends_at: new Date('2026-12-31T00:00:00Z'),
+      });
       repo.findOne.mockResolvedValue(existing);
       repo.save.mockResolvedValue({ ...existing, ends_at: null });
       await service.update('uuid-1', { ends_at: null });
@@ -178,7 +202,10 @@ describe('AnnouncementsService', () => {
     it('starts_at 문자열을 Date로 변환한다', async () => {
       const existing = makeAnnouncement({ starts_at: null });
       repo.findOne.mockResolvedValue(existing);
-      repo.save.mockResolvedValue({ ...existing, starts_at: new Date('2026-06-01T00:00:00Z') });
+      repo.save.mockResolvedValue({
+        ...existing,
+        starts_at: new Date('2026-06-01T00:00:00Z'),
+      });
       await service.update('uuid-1', { starts_at: '2026-06-01T00:00:00.000Z' });
       const savedArg = repo.save.mock.calls[0][0] as Announcement;
       expect(savedArg.starts_at).toBeInstanceOf(Date);
@@ -196,7 +223,9 @@ describe('AnnouncementsService', () => {
 
     it('존재하지 않는 id면 NotFoundException을 던진다', async () => {
       repo.findOne.mockResolvedValue(null);
-      await expect(service.remove('not-exist')).rejects.toThrow(NotFoundException);
+      await expect(service.remove('not-exist')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });
