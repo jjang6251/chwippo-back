@@ -5,10 +5,14 @@ import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
 import { UsersService } from './users.service';
+import { StorageUsageService } from '../myinfo/storage-usage.service';
+import { FilesService } from '../files/files.service';
 
 describe('UsersService', () => {
   let service: UsersService;
   let userRepo: jest.Mocked<Repository<User>>;
+  let storageUsage: jest.Mocked<StorageUsageService>;
+  let filesService: jest.Mocked<FilesService>;
 
   const makeUser = (overrides: Partial<User> = {}): User =>
     ({
@@ -25,16 +29,23 @@ describe('UsersService', () => {
 
   beforeEach(async () => {
     const mockRepo = mock<Repository<User>>();
+    const mockStorage = mock<StorageUsageService>();
+    const mockFiles = mock<FilesService>();
+    mockStorage.collectAllFileUrls.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UsersService,
         { provide: getRepositoryToken(User), useValue: mockRepo },
+        { provide: StorageUsageService, useValue: mockStorage },
+        { provide: FilesService, useValue: mockFiles },
       ],
     }).compile();
 
     service = module.get<UsersService>(UsersService);
     userRepo = module.get(getRepositoryToken(User));
+    storageUsage = module.get(StorageUsageService);
+    filesService = module.get(FilesService);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -94,6 +105,44 @@ describe('UsersService', () => {
         new NotFoundException('사용자를 찾을 수 없습니다.'),
       );
       expect(userRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('탈퇴 시 R2 파일 cascade 삭제 (E-6) — collectAllFileUrls 결과를 모두 deleteFile 호출', async () => {
+      const user = makeUser();
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+      storageUsage.collectAllFileUrls.mockResolvedValue([
+        'r2://cert-1.pdf',
+        'r2://award-1.jpg',
+        'r2://doc-1.pdf',
+      ]);
+
+      await service.deleteAccount('user-uuid-1');
+
+      // DB 삭제 → R2 cascade 순서 보장 (호출 순서 검증)
+      expect(storageUsage.collectAllFileUrls).toHaveBeenCalledWith(
+        'user-uuid-1',
+      );
+      const removeOrder = (userRepo.remove as jest.Mock).mock
+        .invocationCallOrder[0];
+      const firstDeleteOrder = (filesService.deleteFile as jest.Mock).mock
+        .invocationCallOrder[0];
+      expect(removeOrder).toBeLessThan(firstDeleteOrder);
+      expect(filesService.deleteFile).toHaveBeenCalledTimes(3);
+      expect(filesService.deleteFile).toHaveBeenCalledWith('r2://cert-1.pdf');
+      expect(filesService.deleteFile).toHaveBeenCalledWith('r2://award-1.jpg');
+      expect(filesService.deleteFile).toHaveBeenCalledWith('r2://doc-1.pdf');
+    });
+
+    it('파일 없는 유저 탈퇴 시 → deleteFile 미호출', async () => {
+      const user = makeUser();
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+      storageUsage.collectAllFileUrls.mockResolvedValue([]);
+
+      await service.deleteAccount('user-uuid-1');
+
+      expect(filesService.deleteFile).not.toHaveBeenCalled();
     });
   });
 

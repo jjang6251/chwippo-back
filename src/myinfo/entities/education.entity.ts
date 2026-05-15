@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { BigIntTransformer } from '../../common/transformers/bigint.transformer';
 
 @Entity('myinfo_educations')
 export class Education {
@@ -21,4 +22,6 @@ export class Education {
   @Column({ nullable: true }) status: string; // 재학중/졸업/휴학/수료/중퇴/편입/졸업예정
   @Column({ nullable: true }) location: string;
   @Column({ nullable: true }) file_url: string;
+  @Column({ type: 'bigint', nullable: true, transformer: BigIntTransformer })
+  file_size_bytes: number | null;
 }

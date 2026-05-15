@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -9,10 +9,11 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { FilesService } from './files.service';
 
-// jest.mock 팩토리에서 외부 변수 참조 금지 (hoisting으로 인한 초기화 순서 문제)
-// 대신 클래스/함수를 자동 mock 후 beforeEach에서 구현체 주입
+// jest.mock 팩토리에서 외부 변수 참조 금지 (hoisting 이슈)
 jest.mock('@aws-sdk/client-s3');
 jest.mock('@aws-sdk/s3-request-presigner');
+
+const R2_PUBLIC = 'https://pub-test.r2.dev';
 
 describe('FilesService', () => {
   let service: FilesService;
@@ -45,10 +46,11 @@ describe('FilesService', () => {
               .fn()
               .mockImplementation((key: string, defaultVal?: string) => {
                 const map: Record<string, string> = {
-                  AWS_REGION: 'ap-northeast-2',
-                  AWS_S3_BUCKET: 'chwippo',
-                  AWS_ACCESS_KEY_ID: 'test-key-id',
-                  AWS_SECRET_ACCESS_KEY: 'test-secret',
+                  R2_ENDPOINT: 'https://acct.r2.cloudflarestorage.com',
+                  R2_BUCKET: 'chwippo',
+                  R2_ACCESS_KEY_ID: 'test-key-id',
+                  R2_SECRET_ACCESS_KEY: 'test-secret',
+                  R2_PUBLIC_URL: R2_PUBLIC,
                 };
                 return map[key] ?? defaultVal ?? '';
               }),
@@ -61,80 +63,41 @@ describe('FilesService', () => {
     service = module.get<FilesService>(FilesService);
   });
 
-  // ── createPresignedUrl ─────────────────────────────────
-  describe('createPresignedUrl', () => {
-    it('image/jpeg → 통과, uploadUrl과 fileUrl 반환', async () => {
+  // ── createPresignedUrl — 성공 흐름 ─────────────────────
+  describe('createPresignedUrl — 성공', () => {
+    it('image/jpeg + 유효한 scope → uploadUrl/fileUrl 반환, fileUrl 형식 정확', async () => {
       const result = await service.createPresignedUrl(
         'user-uuid-1',
         'myinfo/language-cert',
         'image/jpeg',
         1024,
       );
-
       expect(result.uploadUrl).toBeDefined();
-      expect(result.fileUrl).toContain(
-        'users/user-uuid-1/myinfo/language-cert/',
+      expect(result.fileUrl).toMatch(
+        new RegExp(
+          `^${R2_PUBLIC}/users/user-uuid-1/myinfo/language-cert/[a-f0-9-]+\\.jpg$`,
+        ),
       );
-      expect(result.fileUrl).toContain('.jpg');
     });
 
-    it('image/png → .png 확장자로 S3 key 생성', async () => {
+    it('image/png → .png 확장자', async () => {
       const result = await service.createPresignedUrl(
         'user-uuid-1',
         'myinfo/cert',
         'image/png',
         512,
       );
-      expect(result.fileUrl).toContain('.png');
+      expect(result.fileUrl).toMatch(/\.png$/);
     });
 
-    it('application/pdf → .pdf 확장자로 S3 key 생성', async () => {
+    it('application/pdf → .pdf 확장자', async () => {
       const result = await service.createPresignedUrl(
         'user-uuid-1',
         'myinfo/award',
         'application/pdf',
         2048,
       );
-      expect(result.fileUrl).toContain('.pdf');
-    });
-
-    it('허용되지 않는 contentType(text/plain) → BadRequestException', async () => {
-      await expect(
-        service.createPresignedUrl(
-          'user-uuid-1',
-          'myinfo/cert',
-          'text/plain',
-          1024,
-        ),
-      ).rejects.toThrow(
-        new BadRequestException(
-          '허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.',
-        ),
-      );
-    });
-
-    it('허용되지 않는 contentType(video/mp4) → BadRequestException', async () => {
-      await expect(
-        service.createPresignedUrl(
-          'user-uuid-1',
-          'myinfo/cert',
-          'video/mp4',
-          1024,
-        ),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('fileSize = 10MB + 1 → BadRequestException', async () => {
-      await expect(
-        service.createPresignedUrl(
-          'user-uuid-1',
-          'myinfo/cert',
-          'image/jpeg',
-          10 * 1024 * 1024 + 1,
-        ),
-      ).rejects.toThrow(
-        new BadRequestException('파일 크기는 10MB 이하여야 합니다.'),
-      );
+      expect(result.fileUrl).toMatch(/\.pdf$/);
     });
 
     it('fileSize = 10MB (경계값) → 통과', async () => {
@@ -148,18 +111,6 @@ describe('FilesService', () => {
       ).resolves.toBeDefined();
     });
 
-    it('S3 key 구조: users/{userId}/{scope}/{uuid}.{ext}', async () => {
-      const result = await service.createPresignedUrl(
-        'user-abc',
-        'myinfo/language-cert',
-        'application/pdf',
-        100,
-      );
-      expect(result.fileUrl).toMatch(
-        /^https:\/\/chwippo\.s3\.ap-northeast-2\.amazonaws\.com\/users\/user-abc\/myinfo\/language-cert\/[a-f0-9-]+\.pdf$/,
-      );
-    });
-
     it('PutObjectCommand에 올바른 파라미터 전달', async () => {
       await service.createPresignedUrl(
         'user-uuid-1',
@@ -167,7 +118,6 @@ describe('FilesService', () => {
         'image/jpeg',
         1024,
       );
-
       expect(PutObjectCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           Bucket: 'chwippo',
@@ -177,67 +127,160 @@ describe('FilesService', () => {
       );
     });
 
-    it('getSignedUrl에 expiresIn: 300 전달', async () => {
+    it('S3 key 구조: users/{userId}/{scope}/{uuid}.{ext} (IDOR 방지)', async () => {
+      const result = await service.createPresignedUrl(
+        'user-abc',
+        'myinfo/language-cert',
+        'application/pdf',
+        100,
+      );
+      expect(result.fileUrl).toContain('users/user-abc/myinfo/language-cert/');
+    });
+
+    it('getSignedUrl에 expiresIn: 300 (5분) 전달', async () => {
       await service.createPresignedUrl(
         'user-uuid-1',
         'myinfo/cert',
         'image/jpeg',
         1024,
       );
-
       expect(getSignedUrl).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),
-        { expiresIn: 300 },
+        {
+          expiresIn: 300,
+        },
       );
     });
+  });
 
-    it('fileSize = 0 (경계값) → 통과', async () => {
+  // ── createPresignedUrl — scope 검증 (FB-8, FB-10, S-5, S-6) ─
+  describe('createPresignedUrl — scope 화이트리스트', () => {
+    it.each([
+      ['admin/audit'],
+      ['users/other-user/cert'],
+      ['../etc/passwd'],
+      ['myinfo/../admin'],
+      [''],
+      ['myinfo/unknown-section'],
+    ])('허용되지 않은 scope "%s" → BadRequestException', async (scope) => {
+      await expect(
+        service.createPresignedUrl('user-1', scope, 'image/jpeg', 1024),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it.each([
+      ['myinfo/cert'],
+      ['myinfo/award'],
+      ['myinfo/language-cert'],
+      ['myinfo/document'],
+      ['myinfo/education'],
+    ])('허용된 scope "%s" → 통과', async (scope) => {
+      await expect(
+        service.createPresignedUrl('user-1', scope, 'image/jpeg', 1024),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  // ── createPresignedUrl — contentType / fileSize ───────
+  describe('createPresignedUrl — contentType·fileSize 검증', () => {
+    it('text/plain → BadRequestException', async () => {
+      await expect(
+        service.createPresignedUrl('u1', 'myinfo/cert', 'text/plain', 1024),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('image/svg+xml (XSS 위험) → BadRequestException', async () => {
+      await expect(
+        service.createPresignedUrl('u1', 'myinfo/cert', 'image/svg+xml', 1024),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('fileSize 0 → BadRequestException (FB-5)', async () => {
+      await expect(
+        service.createPresignedUrl('u1', 'myinfo/cert', 'image/jpeg', 0),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('fileSize 음수 → BadRequestException', async () => {
+      await expect(
+        service.createPresignedUrl('u1', 'myinfo/cert', 'image/jpeg', -1),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('fileSize > 10MB → BadRequestException', async () => {
       await expect(
         service.createPresignedUrl(
-          'user-uuid-1',
+          'u1',
           'myinfo/cert',
           'image/jpeg',
-          0,
+          10 * 1024 * 1024 + 1,
         ),
-      ).resolves.toBeDefined();
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
   // ── deleteFile ─────────────────────────────────────────
   describe('deleteFile', () => {
-    it('URL에서 올바른 key를 추출해 DeleteObjectCommand에 전달', async () => {
-      const fileUrl =
-        'https://chwippo.s3.ap-northeast-2.amazonaws.com/users/user-uuid-1/myinfo/cert/abc-123.pdf';
-
+    it('R2 publicUrl prefix 기반 fileUrl → 올바른 Key 추출 후 DeleteObjectCommand 호출', async () => {
+      const fileUrl = `${R2_PUBLIC}/users/u1/myinfo/cert/abc-123.pdf`;
       await service.deleteFile(fileUrl);
-
       expect(DeleteObjectCommand).toHaveBeenCalledWith({
         Bucket: 'chwippo',
-        Key: 'users/user-uuid-1/myinfo/cert/abc-123.pdf',
+        Key: 'users/u1/myinfo/cert/abc-123.pdf',
       });
       expect(mockS3Send).toHaveBeenCalled();
     });
 
-    it('URL에서 leading slash가 제거된 key로 호출', async () => {
-      const fileUrl =
-        'https://chwippo.s3.ap-northeast-2.amazonaws.com/some/path/file.jpg';
-
-      await service.deleteFile(fileUrl);
-
-      const callArg = (DeleteObjectCommand as jest.Mock).mock.calls[0][0];
-      expect(callArg.Key).toBe('some/path/file.jpg');
-      expect(callArg.Key).not.toMatch(/^\//);
+    it('S3 send 실패해도 throw 하지 않음 (best-effort, FI-5)', async () => {
+      mockS3Send.mockRejectedValue(new Error('R2 NoSuchKey'));
+      await expect(
+        service.deleteFile(`${R2_PUBLIC}/users/u1/file.pdf`),
+      ).resolves.toBeUndefined();
     });
 
-    it('S3 send 실패 시 에러가 호출자로 전파됨', async () => {
-      mockS3Send.mockRejectedValue(new Error('S3 NoSuchBucket'));
+    it('빈 URL 입력 → no-op (예외 없이 반환)', async () => {
+      await expect(service.deleteFile('')).resolves.toBeUndefined();
+      expect(mockS3Send).not.toHaveBeenCalled();
+    });
+  });
 
+  // ── deleteOwnFile (권한 검증 + 보상 cleanup용) ───────────
+  describe('deleteOwnFile — 권한 검증', () => {
+    it('본인 userId 일치 → DeleteObjectCommand 호출', async () => {
+      const fileUrl = `${R2_PUBLIC}/users/u1/myinfo/cert/abc.pdf`;
+      await service.deleteOwnFile('u1', fileUrl);
+      expect(DeleteObjectCommand).toHaveBeenCalledWith({
+        Bucket: 'chwippo',
+        Key: 'users/u1/myinfo/cert/abc.pdf',
+      });
+    });
+
+    it('다른 사용자 파일 삭제 시도 → ForbiddenException (S-2 강화)', async () => {
+      const fileUrl = `${R2_PUBLIC}/users/u_other/myinfo/cert/abc.pdf`;
+      await expect(service.deleteOwnFile('u1', fileUrl)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(mockS3Send).not.toHaveBeenCalled();
+    });
+
+    it('admin/audit 같은 다른 경로 시도 → ForbiddenException', async () => {
+      const fileUrl = `${R2_PUBLIC}/admin/audit/secrets.pdf`;
+      await expect(service.deleteOwnFile('u1', fileUrl)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('publicUrl prefix 안 맞는 외부 URL → BadRequestException', async () => {
       await expect(
-        service.deleteFile(
-          'https://chwippo.s3.ap-northeast-2.amazonaws.com/users/u1/file.pdf',
-        ),
-      ).rejects.toThrow('S3 NoSuchBucket');
+        service.deleteOwnFile('u1', 'https://evil.com/users/u1/cert.pdf'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('빈 fileUrl → BadRequestException', async () => {
+      await expect(service.deleteOwnFile('u1', '')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

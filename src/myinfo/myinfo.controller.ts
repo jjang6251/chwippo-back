@@ -8,6 +8,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { MyinfoService } from './myinfo.service';
+import { StorageUsageService } from './storage-usage.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 interface AuthUser {
@@ -16,7 +17,16 @@ interface AuthUser {
 
 @Controller('myinfo')
 export class MyinfoController {
-  constructor(private readonly myinfoService: MyinfoService) {}
+  constructor(
+    private readonly myinfoService: MyinfoService,
+    private readonly storageUsage: StorageUsageService,
+  ) {}
+
+  // ── Storage Usage ─────────────────────────────────────────
+  @Get('storage-usage')
+  getStorageUsage(@CurrentUser() user: AuthUser) {
+    return this.storageUsage.getUsage(user.id);
+  }
 
   // ── Profile ───────────────────────────────────────────────
   @Get('profile')

@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddSuspendedAtAndAuditLogs1779200000000
-  implements MigrationInterface
-{
+export class AddSuspendedAtAndAuditLogs1779200000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `ALTER TABLE "users" ADD "suspended_at" TIMESTAMP WITH TIME ZONE`,
@@ -41,8 +39,6 @@ export class AddSuspendedAtAndAuditLogs1779200000000
     await queryRunner.query(`DROP INDEX "idx_admin_audit_logs_target"`);
     await queryRunner.query(`DROP INDEX "idx_admin_audit_logs_admin"`);
     await queryRunner.query(`DROP TABLE "admin_audit_logs"`);
-    await queryRunner.query(
-      `ALTER TABLE "users" DROP COLUMN "suspended_at"`,
-    );
+    await queryRunner.query(`ALTER TABLE "users" DROP COLUMN "suspended_at"`);
   }
 }
