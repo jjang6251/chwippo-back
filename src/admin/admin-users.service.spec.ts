@@ -11,6 +11,14 @@ import { AdminAuditService } from './admin-audit.service';
 import { User } from '../users/user.entity';
 import { Application } from '../applications/application.entity';
 import { Inquiry } from '../inquiries/inquiry.entity';
+import { Cert } from '../myinfo/entities/cert.entity';
+import { Award } from '../myinfo/entities/award.entity';
+import { LanguageCert } from '../myinfo/entities/language-cert.entity';
+import { Experience } from '../myinfo/entities/experience.entity';
+import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
+import { Document } from '../myinfo/entities/document.entity';
+import { Education } from '../myinfo/entities/education.entity';
+import { StorageUsageService } from '../myinfo/storage-usage.service';
 
 const ADMIN_ID = 'admin-uuid';
 const USER_ID = 'user-uuid';
@@ -30,7 +38,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     onboardedAt: null,
     suspendedAt: null,
     ...overrides,
-  } as User;
+  };
 }
 
 const mockQb = {
@@ -61,8 +69,22 @@ const mockUserRepo = () => ({
 
 const mockAppRepo = () => ({
   find: jest.fn(),
-  count: jest.fn(),
+  count: jest.fn().mockResolvedValue(0),
 });
+
+const mockCountRepo = () => ({
+  count: jest.fn().mockResolvedValue(0),
+});
+
+const mockStorageUsage = {
+  getUsage: jest.fn().mockResolvedValue({
+    usedBytes: 0,
+    limitBytes: 100 * 1024 * 1024,
+    usedMB: 0,
+    limitMB: 100,
+    percentage: 0,
+  }),
+};
 
 const mockInquiryRepo = () => ({
   find: jest.fn(),
@@ -78,10 +100,12 @@ const mockDataSourceManager = {
 };
 
 const mockDataSource = {
-  transaction: jest.fn().mockImplementation(
-    async <T>(cb: (manager: EntityManager) => Promise<T>): Promise<T> =>
-      cb(mockEntityManager as unknown as EntityManager),
-  ),
+  transaction: jest
+    .fn()
+    .mockImplementation(
+      async <T>(cb: (manager: EntityManager) => Promise<T>): Promise<T> =>
+        cb(mockEntityManager as unknown as EntityManager),
+    ),
   manager: mockDataSourceManager,
 };
 
@@ -104,8 +128,22 @@ describe('AdminUsersService', () => {
         { provide: getRepositoryToken(User), useFactory: mockUserRepo },
         { provide: getRepositoryToken(Application), useFactory: mockAppRepo },
         { provide: getRepositoryToken(Inquiry), useFactory: mockInquiryRepo },
+        { provide: getRepositoryToken(Cert), useFactory: mockCountRepo },
+        { provide: getRepositoryToken(Award), useFactory: mockCountRepo },
+        {
+          provide: getRepositoryToken(LanguageCert),
+          useFactory: mockCountRepo,
+        },
+        { provide: getRepositoryToken(Experience), useFactory: mockCountRepo },
+        {
+          provide: getRepositoryToken(CoverletterCustom),
+          useFactory: mockCountRepo,
+        },
+        { provide: getRepositoryToken(Document), useFactory: mockCountRepo },
+        { provide: getRepositoryToken(Education), useFactory: mockCountRepo },
         { provide: AdminAuditService, useValue: mockAuditService },
         { provide: DataSource, useValue: mockDataSource },
+        { provide: StorageUsageService, useValue: mockStorageUsage },
       ],
     }).compile();
 
@@ -153,11 +191,13 @@ describe('AdminUsersService', () => {
     it('검색어의 SQL 와일드카드(%, _, \\)를 이스케이프한다', async () => {
       await service.findAll({ search: '100%완료_테스트\\값' });
 
-      const [[, params]] = mockQb.andWhere.mock.calls as [[string, Record<string, string>]];
+      const [[, params]] = mockQb.andWhere.mock.calls as [
+        [string, Record<string, string>],
+      ];
       // 이스케이프된 형태가 포함돼야 함
-      expect(params.search).toContain('\\%완료');   // % → \%
-      expect(params.search).toContain('\\_테스트');  // _ → \_
-      expect(params.search).toContain('\\\\값');     // \ → \\
+      expect(params.search).toContain('\\%완료'); // % → \%
+      expect(params.search).toContain('\\_테스트'); // _ → \_
+      expect(params.search).toContain('\\\\값'); // \ → \\
       // 원본 이스케이프 안 된 형태는 없어야 함 (와일드카드 앞에 \ 없는 형태)
       expect(params.search).not.toContain('100%완료'); // 원본 그대로인 부분 없음
     });
@@ -169,7 +209,9 @@ describe('AdminUsersService', () => {
 
     it('lastActiveAt NULLS LAST orderBy가 포함된다', async () => {
       await service.findAll({});
-      const orderCalls = mockQb.orderBy.mock.calls.concat(mockQb.addOrderBy.mock.calls) as [string, ...unknown[]][];
+      const orderCalls = mockQb.orderBy.mock.calls.concat(
+        mockQb.addOrderBy.mock.calls,
+      ) as [string, ...unknown[]][];
       const hasNullsLast = orderCalls.some(
         ([expr]) => typeof expr === 'string' && expr.includes('lastActiveAt'),
       );
@@ -178,17 +220,16 @@ describe('AdminUsersService', () => {
 
     it('role 필터 지정 시 andWhere에 role 조건이 추가된다', async () => {
       await service.findAll({ role: 'admin' });
-      expect(mockQb.andWhere).toHaveBeenCalledWith(
-        'u.role = :role',
-        { role: 'admin' },
-      );
+      expect(mockQb.andWhere).toHaveBeenCalledWith('u.role = :role', {
+        role: 'admin',
+      });
     });
 
     it('role 미지정 시 role andWhere 호출 안 함', async () => {
       await service.findAll({});
-      const roleCalls = (mockQb.andWhere.mock.calls as [string, unknown?][]).filter(
-        ([clause]) => clause.includes('u.role'),
-      );
+      const roleCalls = (
+        mockQb.andWhere.mock.calls as [string, unknown?][]
+      ).filter(([clause]) => clause.includes('u.role'));
       expect(roleCalls).toHaveLength(0);
     });
 
@@ -204,9 +245,9 @@ describe('AdminUsersService', () => {
 
     it('suspended 미지정 시 suspendedAt andWhere 호출 안 함', async () => {
       await service.findAll({});
-      const suspendCalls = (mockQb.andWhere.mock.calls as [string, unknown?][]).filter(
-        ([clause]) => clause.includes('suspendedAt'),
-      );
+      const suspendCalls = (
+        mockQb.andWhere.mock.calls as [string, unknown?][]
+      ).filter(([clause]) => clause.includes('suspendedAt'));
       expect(suspendCalls).toHaveLength(0);
     });
 
@@ -236,14 +277,52 @@ describe('AdminUsersService', () => {
 
     it('없는 ID → NotFoundException', async () => {
       userRepo.findOne.mockResolvedValue(null);
-      await expect(service.findOne('not-exist')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('not-exist')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
-    it('응답에 refreshToken·kakaoId가 포함되지 않는다', async () => {
+    it('응답에 refreshToken·kakaoId가 포함되지 않는다 (PU-S1)', async () => {
       userRepo.findOne.mockResolvedValue(makeUser());
-      const result = await service.findOne(USER_ID) as Record<string, unknown>;
+      const result = (await service.findOne(USER_ID)) as Record<
+        string,
+        unknown
+      >;
       expect(result).not.toHaveProperty('refreshToken');
       expect(result).not.toHaveProperty('kakaoId');
+    });
+
+    it('stats 필드 포함 — storage·applicationCount·myinfoCount (PU-1)', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser());
+      const result = (await service.findOne(USER_ID)) as Record<
+        string,
+        unknown
+      >;
+      expect(result.stats).toEqual(
+        expect.objectContaining({
+          storage: expect.objectContaining({
+            usedBytes: expect.any(Number),
+            limitBytes: expect.any(Number),
+            percentage: expect.any(Number),
+          }),
+          applicationCount: expect.any(Number),
+          myinfoCount: expect.objectContaining({
+            cert: expect.any(Number),
+            award: expect.any(Number),
+            languageCert: expect.any(Number),
+            experience: expect.any(Number),
+            coverletterCustom: expect.any(Number),
+            document: expect.any(Number),
+            education: expect.any(Number),
+          }),
+        }),
+      );
+    });
+
+    it('storageUsage.getUsage가 user id로 호출됨 (PU-1)', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser());
+      await service.findOne(USER_ID);
+      expect(mockStorageUsage.getUsage).toHaveBeenCalledWith(USER_ID);
     });
   });
 
@@ -253,8 +332,12 @@ describe('AdminUsersService', () => {
   describe('updateUser()', () => {
     describe('정지 (suspend)', () => {
       it('정상: suspendedAt 설정 + audit_log suspend 기록', async () => {
-        mockEntityManager.findOne.mockResolvedValue(makeUser({ suspendedAt: null }));
-        mockEntityManager.save.mockResolvedValue(makeUser({ suspendedAt: new Date() }));
+        mockEntityManager.findOne.mockResolvedValue(
+          makeUser({ suspendedAt: null }),
+        );
+        mockEntityManager.save.mockResolvedValue(
+          makeUser({ suspendedAt: new Date() }),
+        );
         mockAuditService.log.mockResolvedValue(undefined);
 
         await service.updateUser(ADMIN_ID, USER_ID, { suspended: true });
@@ -274,7 +357,9 @@ describe('AdminUsersService', () => {
       });
 
       it('이미 정지 상태 → idempotent (suspendedAt 갱신 안 함)', async () => {
-        const alreadySuspended = makeUser({ suspendedAt: new Date('2026-01-01') });
+        const alreadySuspended = makeUser({
+          suspendedAt: new Date('2026-01-01'),
+        });
         mockEntityManager.findOne.mockResolvedValue(alreadySuspended);
 
         await service.updateUser(ADMIN_ID, USER_ID, { suspended: true });
@@ -286,8 +371,12 @@ describe('AdminUsersService', () => {
 
     describe('정지 해제 (unsuspend)', () => {
       it('정상: suspendedAt null 설정 + audit_log unsuspend 기록', async () => {
-        mockEntityManager.findOne.mockResolvedValue(makeUser({ suspendedAt: new Date() }));
-        mockEntityManager.save.mockResolvedValue(makeUser({ suspendedAt: null }));
+        mockEntityManager.findOne.mockResolvedValue(
+          makeUser({ suspendedAt: new Date() }),
+        );
+        mockEntityManager.save.mockResolvedValue(
+          makeUser({ suspendedAt: null }),
+        );
         mockAuditService.log.mockResolvedValue(undefined);
 
         await service.updateUser(ADMIN_ID, USER_ID, { suspended: false });
@@ -307,7 +396,9 @@ describe('AdminUsersService', () => {
       });
 
       it('이미 활성 상태 → idempotent (저장 안 함)', async () => {
-        mockEntityManager.findOne.mockResolvedValue(makeUser({ suspendedAt: null }));
+        mockEntityManager.findOne.mockResolvedValue(
+          makeUser({ suspendedAt: null }),
+        );
 
         await service.updateUser(ADMIN_ID, USER_ID, { suspended: false });
 
@@ -334,7 +425,9 @@ describe('AdminUsersService', () => {
       });
 
       it('admin → user 강등: audit_log revoke_admin + before·after detail', async () => {
-        mockEntityManager.findOne.mockResolvedValue(makeUser({ role: 'admin' }));
+        mockEntityManager.findOne.mockResolvedValue(
+          makeUser({ role: 'admin' }),
+        );
         mockEntityManager.save.mockResolvedValue(makeUser({ role: 'user' }));
         mockAuditService.log.mockResolvedValue(undefined);
 
@@ -361,8 +454,12 @@ describe('AdminUsersService', () => {
 
     describe('닉네임 변경 (rename)', () => {
       it('정상: audit_log rename + before·after detail', async () => {
-        mockEntityManager.findOne.mockResolvedValue(makeUser({ nickname: '홍길동' }));
-        mockEntityManager.save.mockResolvedValue(makeUser({ nickname: '익명1234' }));
+        mockEntityManager.findOne.mockResolvedValue(
+          makeUser({ nickname: '홍길동' }),
+        );
+        mockEntityManager.save.mockResolvedValue(
+          makeUser({ nickname: '익명1234' }),
+        );
         mockAuditService.log.mockResolvedValue(undefined);
 
         await service.updateUser(ADMIN_ID, USER_ID, { nickname: '익명1234' });
@@ -408,8 +505,12 @@ describe('AdminUsersService', () => {
       });
 
       it('자기 자신 닉네임 변경은 허용된다 (셀프 rename은 차단 아님)', async () => {
-        mockEntityManager.findOne.mockResolvedValue(makeUser({ id: ADMIN_ID, nickname: '기존' }));
-        mockEntityManager.save.mockResolvedValue(makeUser({ id: ADMIN_ID, nickname: '새닉네임' }));
+        mockEntityManager.findOne.mockResolvedValue(
+          makeUser({ id: ADMIN_ID, nickname: '기존' }),
+        );
+        mockEntityManager.save.mockResolvedValue(
+          makeUser({ id: ADMIN_ID, nickname: '새닉네임' }),
+        );
         mockAuditService.log.mockResolvedValue(undefined);
 
         await expect(
@@ -426,8 +527,12 @@ describe('AdminUsersService', () => {
     });
 
     it('audit_log insert 실패 시 에러 전파 (트랜잭션 rollback)', async () => {
-      mockEntityManager.findOne.mockResolvedValue(makeUser({ suspendedAt: null }));
-      mockEntityManager.save.mockResolvedValue(makeUser({ suspendedAt: new Date() }));
+      mockEntityManager.findOne.mockResolvedValue(
+        makeUser({ suspendedAt: null }),
+      );
+      mockEntityManager.save.mockResolvedValue(
+        makeUser({ suspendedAt: new Date() }),
+      );
       mockAuditService.log.mockRejectedValue(new Error('DB error'));
 
       await expect(
@@ -462,16 +567,16 @@ describe('AdminUsersService', () => {
     });
 
     it('자기 자신 삭제 시도 → ForbiddenException', async () => {
-      await expect(
-        service.deleteUser(ADMIN_ID, ADMIN_ID),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.deleteUser(ADMIN_ID, ADMIN_ID)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('없는 userId → NotFoundException', async () => {
       mockEntityManager.findOne.mockResolvedValue(null);
-      await expect(
-        service.deleteUser(ADMIN_ID, 'not-exist'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.deleteUser(ADMIN_ID, 'not-exist')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('audit_log insert 실패 시 에러 전파 (트랜잭션 rollback)', async () => {
@@ -479,9 +584,9 @@ describe('AdminUsersService', () => {
       mockEntityManager.remove.mockResolvedValue(makeUser());
       mockAuditService.log.mockRejectedValue(new Error('DB error'));
 
-      await expect(
-        service.deleteUser(ADMIN_ID, USER_ID),
-      ).rejects.toThrow('DB error');
+      await expect(service.deleteUser(ADMIN_ID, USER_ID)).rejects.toThrow(
+        'DB error',
+      );
     });
   });
 
@@ -516,15 +621,16 @@ describe('AdminUsersService', () => {
   // exportUser
   // ──────────────────────────────────────────
   describe('exportUser()', () => {
-    let appRepo: jest.Mocked<{ find: jest.Mock }>
-    let inquiryRepo: jest.Mocked<{ find: jest.Mock }>
+    let appRepo: jest.Mocked<{ find: jest.Mock }>;
+    let inquiryRepo: jest.Mocked<{ find: jest.Mock }>;
 
     beforeEach(() => {
-      appRepo = (service as unknown as { appRepo: typeof appRepo }).appRepo
-      inquiryRepo = (service as unknown as { inquiryRepo: typeof inquiryRepo }).inquiryRepo
-      appRepo.find.mockResolvedValue([])
-      inquiryRepo.find.mockResolvedValue([])
-    })
+      appRepo = (service as unknown as { appRepo: typeof appRepo }).appRepo;
+      inquiryRepo = (service as unknown as { inquiryRepo: typeof inquiryRepo })
+        .inquiryRepo;
+      appRepo.find.mockResolvedValue([]);
+      inquiryRepo.find.mockResolvedValue([]);
+    });
 
     it('정상: 데이터 반환 + audit_log export 기록', async () => {
       userRepo.findOne.mockResolvedValue(makeUser());
@@ -544,13 +650,15 @@ describe('AdminUsersService', () => {
 
     it('없는 userId → NotFoundException', async () => {
       userRepo.findOne.mockResolvedValue(null);
-      await expect(
-        service.exportUser(ADMIN_ID, 'not-exist'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.exportUser(ADMIN_ID, 'not-exist')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('export 결과에 refreshToken이 포함되지 않는다', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser({ refreshToken: 'secret-refresh' }));
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ refreshToken: 'secret-refresh' }),
+      );
       mockAuditService.log.mockResolvedValue(undefined);
 
       const result = await service.exportUser(ADMIN_ID, USER_ID);
@@ -560,7 +668,9 @@ describe('AdminUsersService', () => {
     });
 
     it('export 결과에 kakaoId가 포함되지 않는다', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser({ kakaoId: 'kakao-secret-123' }));
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ kakaoId: 'kakao-secret-123' }),
+      );
       mockAuditService.log.mockResolvedValue(undefined);
 
       const result = await service.exportUser(ADMIN_ID, USER_ID);
@@ -573,7 +683,7 @@ describe('AdminUsersService', () => {
       userRepo.findOne.mockResolvedValue(makeUser());
       mockAuditService.log.mockResolvedValue(undefined);
 
-      const result = await service.exportUser(ADMIN_ID, USER_ID) as Record<string, unknown>;
+      const result = await service.exportUser(ADMIN_ID, USER_ID);
 
       expect(result).toHaveProperty('myinfo');
       expect(result.myinfo).toMatchObject({
@@ -591,13 +701,19 @@ describe('AdminUsersService', () => {
     it('myinfo 데이터가 있으면 결과에 포함된다', async () => {
       userRepo.findOne.mockResolvedValue(makeUser());
       mockAuditService.log.mockResolvedValue(undefined);
-      mockDataSourceManager.findOne.mockResolvedValue({ user_id: USER_ID, name: '홍길동' });
+      mockDataSourceManager.findOne.mockResolvedValue({
+        user_id: USER_ID,
+        name: '홍길동',
+      });
       mockDataSourceManager.find
         .mockResolvedValueOnce([{ id: 'edu-1', school_name: '서울대학교' }]) // educations
-        .mockResolvedValueOnce([{ id: 'exp-1', activity_name: '동아리' }])   // experiences
-        .mockResolvedValue([]);                                                // 나머지
+        .mockResolvedValueOnce([{ id: 'exp-1', activity_name: '동아리' }]) // experiences
+        .mockResolvedValue([]); // 나머지
 
-      const result = await service.exportUser(ADMIN_ID, USER_ID) as Record<string, Record<string, unknown>>;
+      const result = (await service.exportUser(ADMIN_ID, USER_ID)) as Record<
+        string,
+        Record<string, unknown>
+      >;
 
       expect(result.myinfo.profile).toMatchObject({ name: '홍길동' });
       expect((result.myinfo.educations as unknown[]).length).toBe(1);
@@ -607,10 +723,17 @@ describe('AdminUsersService', () => {
     it('applications, inquiries도 결과에 포함된다', async () => {
       userRepo.findOne.mockResolvedValue(makeUser());
       mockAuditService.log.mockResolvedValue(undefined);
-      appRepo.find.mockResolvedValue([{ id: 'app-1', companyName: '카카오' }] as never);
-      inquiryRepo.find.mockResolvedValue([{ id: 'inq-1', title: '문의입니다' }] as never);
+      appRepo.find.mockResolvedValue([
+        { id: 'app-1', companyName: '카카오' },
+      ] as never);
+      inquiryRepo.find.mockResolvedValue([
+        { id: 'inq-1', title: '문의입니다' },
+      ] as never);
 
-      const result = await service.exportUser(ADMIN_ID, USER_ID) as Record<string, unknown[]>;
+      const result = (await service.exportUser(ADMIN_ID, USER_ID)) as Record<
+        string,
+        unknown[]
+      >;
 
       expect(result.applications).toHaveLength(1);
       expect(result.inquiries).toHaveLength(1);

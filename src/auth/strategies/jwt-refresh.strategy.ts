@@ -37,7 +37,8 @@ export class JwtRefreshStrategy extends PassportStrategy(
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
     if (!user || user.refreshToken !== refreshToken)
       throw new UnauthorizedException();
-    if (user.suspendedAt) throw new UnauthorizedException('계정이 정지되었습니다.');
+    if (user.suspendedAt)
+      throw new UnauthorizedException('계정이 정지되었습니다.');
 
     return {
       id: user.id,

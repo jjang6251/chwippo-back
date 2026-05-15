@@ -22,7 +22,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     onboardedAt: null,
     suspendedAt: null,
     ...overrides,
-  } as User;
+  };
 }
 
 function makeRes(): jest.Mocked<Pick<Response, 'redirect' | 'cookie'>> {
@@ -64,18 +64,27 @@ describe('AuthController', () => {
   describe('kakaoCallback()', () => {
     it('정상 활성 유저 → access_token 포함 프론트 URL로 리다이렉트', async () => {
       const user = makeUser();
-      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({ user, isNew: false });
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user,
+        isNew: false,
+      });
       mockAuthService.issueTokens.mockResolvedValue({
         accessToken: 'access-token-value',
         refreshToken: 'refresh-token-value',
       });
 
-      const req = { user: { kakaoId: 'kakao-123', nickname: '테스트유저', email: null } } as any;
+      const req = {
+        user: { kakaoId: 'kakao-123', nickname: '테스트유저', email: null },
+      } as any;
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
 
-      expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'refresh-token-value', expect.any(Object));
+      expect(res.cookie).toHaveBeenCalledWith(
+        'refresh_token',
+        'refresh-token-value',
+        expect.any(Object),
+      );
       const redirectUrl: string = (res.redirect as jest.Mock).mock.calls[0][0];
       expect(redirectUrl).toContain(`${FRONTEND_URL}/login/callback`);
       expect(redirectUrl).toContain('access_token=access-token-value');
@@ -83,9 +92,14 @@ describe('AuthController', () => {
 
     it('정지된 유저 → /login?error=suspended 리다이렉트 (토큰 발급 안 함)', async () => {
       const suspendedUser = makeUser({ suspendedAt: new Date() });
-      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({ user: suspendedUser, isNew: false });
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user: suspendedUser,
+        isNew: false,
+      });
 
-      const req = { user: { kakaoId: 'kakao-123', nickname: '테스트유저', email: null } } as any;
+      const req = {
+        user: { kakaoId: 'kakao-123', nickname: '테스트유저', email: null },
+      } as any;
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
@@ -97,10 +111,18 @@ describe('AuthController', () => {
     });
 
     it('정지된 어드민도 /login?error=suspended 리다이렉트', async () => {
-      const suspendedAdmin = makeUser({ role: 'admin', suspendedAt: new Date() });
-      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({ user: suspendedAdmin, isNew: false });
+      const suspendedAdmin = makeUser({
+        role: 'admin',
+        suspendedAt: new Date(),
+      });
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user: suspendedAdmin,
+        isNew: false,
+      });
 
-      const req = { user: { kakaoId: 'kakao-admin', nickname: '어드민', email: null } } as any;
+      const req = {
+        user: { kakaoId: 'kakao-admin', nickname: '어드민', email: null },
+      } as any;
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
@@ -112,13 +134,18 @@ describe('AuthController', () => {
 
     it('신규 유저(termsAgreedAt=null)는 needs_terms=true로 리다이렉트', async () => {
       const newUser = makeUser({ termsAgreedAt: null });
-      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({ user: newUser, isNew: true });
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user: newUser,
+        isNew: true,
+      });
       mockAuthService.issueTokens.mockResolvedValue({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
       });
 
-      const req = { user: { kakaoId: 'kakao-new', nickname: '신규', email: null } } as any;
+      const req = {
+        user: { kakaoId: 'kakao-new', nickname: '신규', email: null },
+      } as any;
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
@@ -129,13 +156,18 @@ describe('AuthController', () => {
 
     it('기존 유저(termsAgreedAt 있음)는 needs_terms=false로 리다이렉트', async () => {
       const existingUser = makeUser({ termsAgreedAt: new Date('2026-01-01') });
-      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({ user: existingUser, isNew: false });
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user: existingUser,
+        isNew: false,
+      });
       mockAuthService.issueTokens.mockResolvedValue({
         accessToken: 'access-token',
         refreshToken: 'refresh-token',
       });
 
-      const req = { user: { kakaoId: 'kakao-exist', nickname: '기존', email: null } } as any;
+      const req = {
+        user: { kakaoId: 'kakao-exist', nickname: '기존', email: null },
+      } as any;
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);

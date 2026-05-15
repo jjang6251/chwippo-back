@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { Application } from '../applications/application.entity';
 import { Inquiry } from '../inquiries/inquiry.entity';
@@ -19,6 +19,7 @@ import { LanguageCert } from '../myinfo/entities/language-cert.entity';
 import { Award } from '../myinfo/entities/award.entity';
 import { Document } from '../myinfo/entities/document.entity';
 import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
+import { StorageUsageService } from '../myinfo/storage-usage.service';
 
 function escapeSearch(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
@@ -38,8 +39,21 @@ export class AdminUsersService {
     private readonly appRepo: Repository<Application>,
     @InjectRepository(Inquiry)
     private readonly inquiryRepo: Repository<Inquiry>,
+    @InjectRepository(Cert) private readonly certRepo: Repository<Cert>,
+    @InjectRepository(Award) private readonly awardRepo: Repository<Award>,
+    @InjectRepository(LanguageCert)
+    private readonly langCertRepo: Repository<LanguageCert>,
+    @InjectRepository(Experience)
+    private readonly expRepo: Repository<Experience>,
+    @InjectRepository(CoverletterCustom)
+    private readonly coverCustomRepo: Repository<CoverletterCustom>,
+    @InjectRepository(Document)
+    private readonly docRepo: Repository<Document>,
+    @InjectRepository(Education)
+    private readonly eduRepo: Repository<Education>,
     private readonly dataSource: DataSource,
     private readonly auditService: AdminAuditService,
+    private readonly storageUsage: StorageUsageService,
   ) {}
 
   async findAll(query: {
@@ -92,7 +106,45 @@ export class AdminUsersService {
   async findOne(id: string): Promise<object> {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
-    return omitSensitive(user);
+
+    const [
+      storage,
+      applicationCount,
+      cert,
+      award,
+      langCert,
+      experience,
+      coverletterCustom,
+      document,
+      education,
+    ] = await Promise.all([
+      this.storageUsage.getUsage(id),
+      this.appRepo.count({ where: { userId: id, deletedAt: IsNull() } }),
+      this.certRepo.count({ where: { user_id: id } }),
+      this.awardRepo.count({ where: { user_id: id } }),
+      this.langCertRepo.count({ where: { user_id: id } }),
+      this.expRepo.count({ where: { user_id: id } }),
+      this.coverCustomRepo.count({ where: { user_id: id } }),
+      this.docRepo.count({ where: { user_id: id } }),
+      this.eduRepo.count({ where: { user_id: id } }),
+    ]);
+
+    return {
+      ...omitSensitive(user),
+      stats: {
+        storage,
+        applicationCount,
+        myinfoCount: {
+          cert,
+          award,
+          languageCert: langCert,
+          experience,
+          coverletterCustom,
+          document,
+          education,
+        },
+      },
+    };
   }
 
   async updateUser(

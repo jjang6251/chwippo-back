@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   S3Client,
@@ -7,6 +12,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
+import { isAllowedScope } from './scope.const';
 
 const ALLOWED_TYPES: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -17,33 +23,46 @@ const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 
 @Injectable()
 export class FilesService {
+  private readonly logger = new Logger(FilesService.name);
   private readonly s3: S3Client;
   private readonly bucket: string;
+  private readonly publicUrlPrefix: string;
 
   constructor(private readonly config: ConfigService) {
     this.s3 = new S3Client({
-      region: config.get('AWS_REGION', 'ap-northeast-2'),
+      region: 'auto',
+      endpoint: config.get('R2_ENDPOINT', ''),
       credentials: {
-        accessKeyId: config.get('AWS_ACCESS_KEY_ID', ''),
-        secretAccessKey: config.get('AWS_SECRET_ACCESS_KEY', ''),
+        accessKeyId: config.get('R2_ACCESS_KEY_ID', ''),
+        secretAccessKey: config.get('R2_SECRET_ACCESS_KEY', ''),
       },
     });
-    this.bucket = config.get('AWS_S3_BUCKET', 'chwippo');
+    this.bucket = config.get<string>('R2_BUCKET', 'chwippo');
+    // 끝에 / 있으면 제거 — 키 결합 시 // 방지
+    const publicUrl = config.get<string>('R2_PUBLIC_URL', '');
+    this.publicUrlPrefix = publicUrl.replace(/\/$/, '');
   }
 
   async createPresignedUrl(
     userId: string,
-    scope: string, // e.g. 'myinfo/language-cert', 'myinfo/cert'
+    scope: string,
     contentType: string,
     fileSize: number,
   ): Promise<{ uploadUrl: string; fileUrl: string }> {
+    // scope 화이트리스트 검증 — path injection·권한 우회 차단
+    if (!isAllowedScope(scope)) {
+      throw new BadRequestException('허용되지 않는 scope입니다.');
+    }
+
     if (!ALLOWED_TYPES[contentType]) {
       throw new BadRequestException(
         '허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.',
       );
     }
-    if (fileSize > MAX_BYTES) {
-      throw new BadRequestException('파일 크기는 10MB 이하여야 합니다.');
+    if (fileSize <= 0 || fileSize > MAX_BYTES) {
+      throw new BadRequestException(
+        '파일 크기는 1B 이상 10MB 이하여야 합니다.',
+      );
     }
 
     const ext = ALLOWED_TYPES[contentType];
@@ -57,16 +76,51 @@ export class FilesService {
     });
 
     const uploadUrl = await getSignedUrl(this.s3, command, { expiresIn: 300 });
-    const fileUrl = `https://${this.bucket}.s3.${this.config.get('AWS_REGION', 'ap-northeast-2')}.amazonaws.com/${key}`;
+    const fileUrl = `${this.publicUrlPrefix}/${key}`;
 
     return { uploadUrl, fileUrl };
   }
 
+  /**
+   * 본인이 업로드한 파일만 R2에서 삭제.
+   * key path가 users/{userId}/... 구조라서 userId 일치 여부로 권한 검증.
+   * ValidationPipe 거부 등 컨트롤러 진입 전 실패한 경우 프론트가 보상 호출.
+   */
+  async deleteOwnFile(userId: string, fileUrl: string): Promise<void> {
+    if (!fileUrl) {
+      throw new BadRequestException('fileUrl이 필요합니다.');
+    }
+    if (!this.publicUrlPrefix || !fileUrl.startsWith(this.publicUrlPrefix)) {
+      throw new BadRequestException('잘못된 파일 URL입니다.');
+    }
+    const key = fileUrl.slice(this.publicUrlPrefix.length + 1);
+    if (!key.startsWith(`users/${userId}/`)) {
+      throw new ForbiddenException(
+        '본인이 업로드한 파일만 삭제할 수 있습니다.',
+      );
+    }
+    await this.deleteFile(fileUrl);
+  }
+
+  /**
+   * R2에서 파일 삭제. 실패해도 예외를 throw 하지 않고 로그만 남김.
+   * (DB는 이미 삭제됐을 수 있어 호출자 흐름을 막지 않기 위함. 고아 파일은 R2 무료 한도 내 무해)
+   */
   async deleteFile(fileUrl: string): Promise<void> {
-    const url = new URL(fileUrl);
-    const key = url.pathname.slice(1); // remove leading slash
-    await this.s3.send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
-    );
+    try {
+      if (!fileUrl || !this.publicUrlPrefix) return;
+      // publicUrlPrefix를 잘라내고 key만 추출
+      const key = fileUrl.startsWith(this.publicUrlPrefix)
+        ? fileUrl.slice(this.publicUrlPrefix.length + 1)
+        : new URL(fileUrl).pathname.slice(1);
+
+      await this.s3.send(
+        new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `R2 파일 삭제 실패 (무시): ${fileUrl}, ${(err as Error).message}`,
+      );
+    }
   }
 }

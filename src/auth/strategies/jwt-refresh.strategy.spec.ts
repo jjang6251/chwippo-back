@@ -24,7 +24,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     onboardedAt: null,
     suspendedAt: null,
     ...overrides,
-  } as User;
+  };
 }
 
 function makeRequest(refreshToken: string | undefined): Request {
@@ -72,36 +72,38 @@ describe('JwtRefreshStrategy', () => {
   it('refresh token 쿠키 없음 → UnauthorizedException', async () => {
     const req = makeRequest(undefined);
 
-    await expect(
-      strategy.validate(req, { sub: 'user-uuid' }),
-    ).rejects.toThrow(UnauthorizedException);
+    await expect(strategy.validate(req, { sub: 'user-uuid' })).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('유저가 존재하지 않으면 UnauthorizedException', async () => {
     userRepo.findOne.mockResolvedValue(null);
     const req = makeRequest(REFRESH_TOKEN);
 
-    await expect(
-      strategy.validate(req, { sub: 'not-exist' }),
-    ).rejects.toThrow(UnauthorizedException);
+    await expect(strategy.validate(req, { sub: 'not-exist' })).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('저장된 refresh token과 불일치 → UnauthorizedException', async () => {
-    userRepo.findOne.mockResolvedValue(makeUser({ refreshToken: 'different-token' }));
+    userRepo.findOne.mockResolvedValue(
+      makeUser({ refreshToken: 'different-token' }),
+    );
     const req = makeRequest(REFRESH_TOKEN);
 
-    await expect(
-      strategy.validate(req, { sub: 'user-uuid' }),
-    ).rejects.toThrow(UnauthorizedException);
+    await expect(strategy.validate(req, { sub: 'user-uuid' })).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('정지된 유저 (suspendedAt !== null) → UnauthorizedException (refresh 경로 우회 차단)', async () => {
     userRepo.findOne.mockResolvedValue(makeUser({ suspendedAt: new Date() }));
     const req = makeRequest(REFRESH_TOKEN);
 
-    await expect(
-      strategy.validate(req, { sub: 'user-uuid' }),
-    ).rejects.toThrow(UnauthorizedException);
+    await expect(strategy.validate(req, { sub: 'user-uuid' })).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('정지된 어드민도 refresh 경로 차단', async () => {
@@ -110,8 +112,8 @@ describe('JwtRefreshStrategy', () => {
     );
     const req = makeRequest(REFRESH_TOKEN);
 
-    await expect(
-      strategy.validate(req, { sub: 'user-uuid' }),
-    ).rejects.toThrow(UnauthorizedException);
+    await expect(strategy.validate(req, { sub: 'user-uuid' })).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 });

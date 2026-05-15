@@ -32,7 +32,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   async validate(payload: JwtPayload) {
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
     if (!user) throw new UnauthorizedException();
-    if (user.suspendedAt) throw new UnauthorizedException('계정이 정지되었습니다.');
+    if (user.suspendedAt)
+      throw new UnauthorizedException('계정이 정지되었습니다.');
 
     // 하루 1번만 갱신 (요청마다 쓰지 않도록)
     const todayKST = new Date().toLocaleDateString('en-CA', {

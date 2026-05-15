@@ -23,12 +23,37 @@ export const envValidationSchema = Joi.object({
 
   FRONTEND_URL: Joi.string().default('http://localhost:5173'),
 
-  // M5 S3 파일 업로드 시 필요
-  AWS_REGION: Joi.string().default('ap-northeast-2'),
-  AWS_ACCESS_KEY_ID: Joi.string().optional(),
-  AWS_SECRET_ACCESS_KEY: Joi.string().optional(),
-  AWS_S3_BUCKET: Joi.string().optional(),
+  // Cloudflare R2 (S3 호환) — 파일 업로드 인프라
+  // production에선 required, dev에선 optional (자격증명 없어도 다른 기능 개발 가능하도록)
+  R2_ENDPOINT: Joi.string().uri().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  R2_ACCESS_KEY_ID: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  R2_SECRET_ACCESS_KEY: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  R2_BUCKET: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+  R2_PUBLIC_URL: Joi.string().uri().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
+
+  // 사용자당 저장 용량 한도 (MB 단위)
+  MAX_STORAGE_PER_USER_MB: Joi.number().integer().min(1).default(100),
 
   ADMIN_EMAIL: Joi.string().allow('').optional(),
-  ADMIN_KAKAO_ID: Joi.string().optional(),
+  ADMIN_KAKAO_ID: Joi.string().allow('').optional(),
 });

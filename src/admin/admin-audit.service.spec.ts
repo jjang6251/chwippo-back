@@ -19,7 +19,7 @@ function makeLog(overrides: Partial<AdminAuditLog> = {}): AdminAuditLog {
     detail: {},
     createdAt: new Date('2026-01-01'),
     ...overrides,
-  } as AdminAuditLog;
+  };
 }
 
 describe('AdminAuditService', () => {
@@ -61,7 +61,10 @@ describe('AdminAuditService', () => {
     it('adminUserId가 null이어도 저장한다 (어드민 계정 삭제 후 소급 보존)', async () => {
       repo.save.mockResolvedValue(makeLog({ adminUserId: null }));
 
-      await service.log(null, 'rename', 'user', 'user-uuid', { before: 'A', after: 'B' });
+      await service.log(null, 'rename', 'user', 'user-uuid', {
+        before: 'A',
+        after: 'B',
+      });
 
       expect(repo.save).toHaveBeenCalledWith(
         expect.objectContaining({ adminUserId: null }),
@@ -69,9 +72,18 @@ describe('AdminAuditService', () => {
     });
 
     it('manager가 제공되면 manager.save()를 사용한다', async () => {
-      const mockManager = { save: jest.fn().mockResolvedValue(makeLog()) } as unknown as EntityManager;
+      const mockManager = {
+        save: jest.fn().mockResolvedValue(makeLog()),
+      } as unknown as EntityManager;
 
-      await service.log('admin-uuid', 'delete', 'user', 'user-uuid', {}, mockManager);
+      await service.log(
+        'admin-uuid',
+        'delete',
+        'user',
+        'user-uuid',
+        {},
+        mockManager,
+      );
 
       expect(mockManager.save).toHaveBeenCalled();
       expect(repo.save).not.toHaveBeenCalled();
