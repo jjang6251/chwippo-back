@@ -1,8 +1,10 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { MyinfoService } from './myinfo.service';
+import { StorageUsageService } from './storage-usage.service';
 import { UserProfile } from './entities/user-profile.entity';
 import { LanguageCert } from './entities/language-cert.entity';
 import { Cert } from './entities/cert.entity';
@@ -12,6 +14,7 @@ import { Coverletter } from './entities/coverletter.entity';
 import { CoverletterCustom } from './entities/coverletter-custom.entity';
 import { Document } from './entities/document.entity';
 import { Education } from './entities/education.entity';
+import { FilesService } from '../files/files.service';
 
 describe('MyinfoService', () => {
   let service: MyinfoService;
@@ -24,62 +27,88 @@ describe('MyinfoService', () => {
   let documentRepo: jest.Mocked<Repository<Document>>;
   let coverCustomRepo: jest.Mocked<Repository<CoverletterCustom>>;
   let educationRepo: jest.Mocked<Repository<Education>>;
+  let storageUsage: jest.Mocked<StorageUsageService>;
+  let filesService: jest.Mocked<FilesService>;
+  let mockManager: jest.Mocked<EntityManager>;
 
   const USER_ID = 'user-uuid-1';
 
   beforeEach(async () => {
+    profileRepo = mock<Repository<UserProfile>>();
+    langCertRepo = mock<Repository<LanguageCert>>();
+    certRepo = mock<Repository<Cert>>();
+    awardRepo = mock<Repository<Award>>();
+    expRepo = mock<Repository<Experience>>();
+    coverRepo = mock<Repository<Coverletter>>();
+    documentRepo = mock<Repository<Document>>();
+    coverCustomRepo = mock<Repository<CoverletterCustom>>();
+    educationRepo = mock<Repository<Education>>();
+    storageUsage = mock<StorageUsageService>();
+    filesService = mock<FilesService>();
+
+    // 트랜잭션 내 manager가 동일한 mock repo들을 반환하도록 — 외부 mock 설정이 transaction 안에서도 그대로 적용됨
+    mockManager = mock<EntityManager>();
+    mockManager.query.mockResolvedValue([]);
+    mockManager.getRepository.mockImplementation((entity: unknown) => {
+      if (entity === Cert) return certRepo;
+      if (entity === Award) return awardRepo;
+      if (entity === LanguageCert) return langCertRepo;
+      if (entity === Document) return documentRepo;
+      if (entity === Education) return educationRepo;
+      if (entity === Experience) return expRepo;
+      if (entity === Coverletter) return coverRepo;
+      if (entity === CoverletterCustom) return coverCustomRepo;
+      return mock<Repository<unknown>>();
+    });
+    storageUsage.assertWithinLimit.mockResolvedValue(undefined);
+
+    const mockDataSource = mock<DataSource>();
+    mockDataSource.transaction.mockImplementation(
+      // overload: callback first
+      async (...args: unknown[]) => {
+        const cb = (typeof args[0] === 'function' ? args[0] : args[1]) as (
+          m: EntityManager,
+        ) => Promise<unknown>;
+        return cb(mockManager);
+      },
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MyinfoService,
-        {
-          provide: getRepositoryToken(UserProfile),
-          useValue: mock<Repository<UserProfile>>(),
-        },
-        {
-          provide: getRepositoryToken(LanguageCert),
-          useValue: mock<Repository<LanguageCert>>(),
-        },
-        {
-          provide: getRepositoryToken(Cert),
-          useValue: mock<Repository<Cert>>(),
-        },
-        {
-          provide: getRepositoryToken(Award),
-          useValue: mock<Repository<Award>>(),
-        },
-        {
-          provide: getRepositoryToken(Experience),
-          useValue: mock<Repository<Experience>>(),
-        },
-        {
-          provide: getRepositoryToken(Coverletter),
-          useValue: mock<Repository<Coverletter>>(),
-        },
-        {
-          provide: getRepositoryToken(Document),
-          useValue: mock<Repository<Document>>(),
-        },
+        { provide: getRepositoryToken(UserProfile), useValue: profileRepo },
+        { provide: getRepositoryToken(LanguageCert), useValue: langCertRepo },
+        { provide: getRepositoryToken(Cert), useValue: certRepo },
+        { provide: getRepositoryToken(Award), useValue: awardRepo },
+        { provide: getRepositoryToken(Experience), useValue: expRepo },
+        { provide: getRepositoryToken(Coverletter), useValue: coverRepo },
+        { provide: getRepositoryToken(Document), useValue: documentRepo },
         {
           provide: getRepositoryToken(CoverletterCustom),
-          useValue: mock<Repository<CoverletterCustom>>(),
+          useValue: coverCustomRepo,
         },
-        {
-          provide: getRepositoryToken(Education),
-          useValue: mock<Repository<Education>>(),
-        },
+        { provide: getRepositoryToken(Education), useValue: educationRepo },
+        { provide: getDataSourceToken(), useValue: mockDataSource },
+        { provide: StorageUsageService, useValue: storageUsage },
+        { provide: FilesService, useValue: filesService },
       ],
     }).compile();
 
     service = module.get<MyinfoService>(MyinfoService);
-    profileRepo = module.get(getRepositoryToken(UserProfile));
-    langCertRepo = module.get(getRepositoryToken(LanguageCert));
-    certRepo = module.get(getRepositoryToken(Cert));
-    awardRepo = module.get(getRepositoryToken(Award));
-    expRepo = module.get(getRepositoryToken(Experience));
-    coverRepo = module.get(getRepositoryToken(Coverletter));
-    documentRepo = module.get(getRepositoryToken(Document));
-    coverCustomRepo = module.get(getRepositoryToken(CoverletterCustom));
-    educationRepo = module.get(getRepositoryToken(Education));
+    // 기본값: count 0으로 한도 미달, save는 입력 그대로 반환, findOne은 null
+    for (const repo of [
+      certRepo,
+      awardRepo,
+      langCertRepo,
+      documentRepo,
+      educationRepo,
+      expRepo,
+      coverCustomRepo,
+    ]) {
+      (repo.count as jest.Mock).mockResolvedValue(0);
+      (repo.save as jest.Mock).mockImplementation(async (e) => e);
+      (repo.create as jest.Mock).mockImplementation((e) => e);
+    }
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -414,6 +443,114 @@ describe('MyinfoService', () => {
   });
 
   // ── Documents ──────────────────────────────────────────
+  // ── 시나리오 기반: 항목 수 한도 + storage cap + R2 cascade ──
+  describe('시나리오 기반 보안·운영', () => {
+    describe('항목 수 한도 (FB-11)', () => {
+      it('자격증 30개 도달한 상태에서 31번째 createCert → BadRequestException', async () => {
+        (certRepo.count as jest.Mock).mockResolvedValue(30);
+        await expect(
+          service.createCert(USER_ID, { name: '신규자격증' }),
+        ).rejects.toThrow(/자격증.*최대 30개/);
+        expect(certRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('어학 10개 도달 → 11번째 차단', async () => {
+        (langCertRepo.count as jest.Mock).mockResolvedValue(10);
+        await expect(
+          service.createLangCert(USER_ID, { cert_type: 'TOEIC' }),
+        ).rejects.toThrow(/어학.*최대 10개/);
+      });
+
+      it('한도 미달 → 정상 INSERT (29개 → 30번째 등록 가능, E-9)', async () => {
+        (certRepo.count as jest.Mock).mockResolvedValue(29);
+        const result = await service.createCert(USER_ID, { name: '자격증' });
+        expect(certRepo.save).toHaveBeenCalled();
+        expect(result).toBeDefined();
+      });
+    });
+
+    describe('storage cap (FB-6, FB-7)', () => {
+      it('createCert with file_size_bytes — assertWithinLimit 호출됨', async () => {
+        await service.createCert(USER_ID, {
+          name: '자격증',
+          file_url: 'r2://new.pdf',
+          file_size_bytes: 5 * 1024 * 1024,
+        });
+        expect(storageUsage.assertWithinLimit).toHaveBeenCalledWith(
+          USER_ID,
+          5 * 1024 * 1024,
+          mockManager,
+        );
+      });
+
+      it('파일 없는 createCert — storage cap 검증 스킵 (H-7)', async () => {
+        await service.createCert(USER_ID, { name: '자격증' });
+        expect(storageUsage.assertWithinLimit).not.toHaveBeenCalled();
+      });
+
+      it('cap 초과 시 R2 파일 cleanup 후 throw (FI-3)', async () => {
+        storageUsage.assertWithinLimit.mockRejectedValueOnce(
+          new BadRequestException('저장 공간 부족'),
+        );
+        await expect(
+          service.createCert(USER_ID, {
+            name: 'X',
+            file_url: 'r2://orphan.pdf',
+            file_size_bytes: 5 * 1024 * 1024,
+          }),
+        ).rejects.toThrow(BadRequestException);
+        expect(filesService.deleteFile).toHaveBeenCalledWith('r2://orphan.pdf');
+      });
+    });
+
+    describe('R2 cascade 삭제', () => {
+      it('deleteCert가 R2 파일도 함께 삭제 (H-3)', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://cert.pdf',
+        } as unknown as Cert);
+
+        await service.deleteCert(USER_ID, 'c-1');
+
+        expect(certRepo.delete).toHaveBeenCalledWith({
+          id: 'c-1',
+          user_id: USER_ID,
+        });
+        expect(filesService.deleteFile).toHaveBeenCalledWith('r2://cert.pdf');
+      });
+
+      it('파일 없는 항목 삭제 시 filesService.deleteFile 미호출', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: null,
+        } as unknown as Cert);
+
+        await service.deleteCert(USER_ID, 'c-1');
+
+        expect(certRepo.delete).toHaveBeenCalled();
+        expect(filesService.deleteFile).not.toHaveBeenCalled();
+      });
+
+      it('updateCert 파일 교체 시 이전 R2 파일 삭제 (H-4)', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://old.pdf',
+          file_size_bytes: 1024,
+        } as unknown as Cert);
+
+        await service.updateCert(USER_ID, 'c-1', {
+          file_url: 'r2://new.pdf',
+          file_size_bytes: 2048,
+        });
+
+        expect(filesService.deleteFile).toHaveBeenCalledWith('r2://old.pdf');
+      });
+    });
+  });
+
   describe('Documents', () => {
     it('getDocuments → user_id 조건, created_at DESC 정렬', async () => {
       documentRepo.find.mockResolvedValue([]);

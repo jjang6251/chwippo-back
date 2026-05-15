@@ -5,6 +5,7 @@ import { MyinfoItemsController } from './myinfo-items.controller';
 import { ExamSchedulesController } from './exam-schedules.controller';
 import { MyinfoService } from './myinfo.service';
 import { ExamSchedulesService } from './exam-schedules.service';
+import { StorageUsageService } from './storage-usage.service';
 import { UserProfile } from './entities/user-profile.entity';
 import { LanguageCert } from './entities/language-cert.entity';
 import { Cert } from './entities/cert.entity';
@@ -15,6 +16,7 @@ import { CoverletterCustom } from './entities/coverletter-custom.entity';
 import { Document } from './entities/document.entity';
 import { ExamSchedule } from './entities/exam-schedule.entity';
 import { Education } from './entities/education.entity';
+import { FilesModule } from '../files/files.module';
 
 @Module({
   imports: [
@@ -30,12 +32,14 @@ import { Education } from './entities/education.entity';
       ExamSchedule,
       Education,
     ]),
+    FilesModule,
   ],
   controllers: [
     MyinfoController,
     MyinfoItemsController,
     ExamSchedulesController,
   ],
-  providers: [MyinfoService, ExamSchedulesService],
+  providers: [MyinfoService, ExamSchedulesService, StorageUsageService],
+  exports: [StorageUsageService],
 })
 export class MyinfoModule {}

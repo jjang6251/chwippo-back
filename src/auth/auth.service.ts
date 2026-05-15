@@ -44,7 +44,11 @@ export class AuthService {
     // ADMIN_KAKAO_ID 환경변수와 일치하면 자동으로 admin 승격
     // 직접 DB 쿼리 없이 첫 로그인 시점에만 적용 (이미 admin이면 스킵)
     const adminKakaoId = this.config.get<string>('ADMIN_KAKAO_ID');
-    if (adminKakaoId && user.kakaoId === adminKakaoId && user.role !== 'admin') {
+    if (
+      adminKakaoId &&
+      user.kakaoId === adminKakaoId &&
+      user.role !== 'admin'
+    ) {
       await this.userRepo.update(user.id, { role: 'admin' });
       user.role = 'admin';
     }

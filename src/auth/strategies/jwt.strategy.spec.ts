@@ -21,7 +21,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     onboardedAt: null,
     suspendedAt: null,
     ...overrides,
-  } as User;
+  };
 }
 
 const mockUserRepo = () => ({

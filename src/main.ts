@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
@@ -17,11 +17,32 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
+  const validationLogger = new Logger('ValidationPipe');
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors) => {
+        validationLogger.warn(
+          `Validation failed: ${JSON.stringify(
+            errors.map((e) => ({
+              property: e.property,
+              constraints: e.constraints,
+              value: e.value as unknown,
+            })),
+          )}`,
+        );
+        return new BadRequestException(
+          errors
+            .map((e) =>
+              e.constraints
+                ? Object.values(e.constraints).join(', ')
+                : e.property,
+            )
+            .join('; '),
+        );
+      },
     }),
   );
   app.useGlobalFilters(new AllExceptionsFilter());

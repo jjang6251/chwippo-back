@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
+import { StorageUsageService } from '../myinfo/storage-usage.service';
 
 type DayRow = { date: string; count: number };
 
@@ -11,6 +12,7 @@ export class AdminService {
     private readonly usersService: UsersService,
     private readonly inquiriesService: InquiriesService,
     private readonly dataSource: DataSource,
+    private readonly storageUsage: StorageUsageService,
   ) {}
 
   async getStats() {
@@ -20,15 +22,37 @@ export class AdminService {
     startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
 
-    const [totalUsers, newUsersMonth, newUsersWeek, pendingInquiries] =
-      await Promise.all([
-        this.usersService.countAll(),
-        this.usersService.countByDate(startOfMonth),
-        this.usersService.countByDate(startOfWeek),
-        this.inquiriesService.countPending(),
-      ]);
+    const [
+      totalUsers,
+      newUsersMonth,
+      newUsersWeek,
+      pendingInquiries,
+      totalUsedBytes,
+      nearCapUserCount,
+    ] = await Promise.all([
+      this.usersService.countAll(),
+      this.usersService.countByDate(startOfMonth),
+      this.usersService.countByDate(startOfWeek),
+      this.inquiriesService.countPending(),
+      this.storageUsage.getGlobalUsage(),
+      this.storageUsage.getNearCapUserCount(),
+    ]);
 
-    return { totalUsers, newUsersMonth, newUsersWeek, pendingInquiries };
+    const averageBytes =
+      totalUsers > 0 ? Math.round(totalUsedBytes / totalUsers) : 0;
+
+    return {
+      totalUsers,
+      newUsersMonth,
+      newUsersWeek,
+      pendingInquiries,
+      globalStorage: {
+        totalUsedBytes,
+        averageBytes,
+        nearCapUserCount,
+        r2FreeLimitGB: 10,
+      },
+    };
   }
 
   async getAnalytics(days: number) {

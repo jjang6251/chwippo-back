@@ -3,11 +3,13 @@ import { DataSource } from 'typeorm';
 import { AdminService } from './admin.service';
 import { UsersService } from '../users/users.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
+import { StorageUsageService } from '../myinfo/storage-usage.service';
 
 describe('AdminService', () => {
   let service: AdminService;
   let usersService: jest.Mocked<UsersService>;
   let inquiriesService: jest.Mocked<InquiriesService>;
+  let storageUsage: jest.Mocked<StorageUsageService>;
   let dataSource: { query: jest.Mock };
 
   beforeEach(async () => {
@@ -20,6 +22,11 @@ describe('AdminService', () => {
       countPending: jest.fn(),
     } as Partial<InquiriesService>;
 
+    const mockStorageUsage = {
+      getGlobalUsage: jest.fn().mockResolvedValue(0),
+      getNearCapUserCount: jest.fn().mockResolvedValue(0),
+    } as unknown as jest.Mocked<StorageUsageService>;
+
     const mockDataSource = {
       query: jest.fn(),
     };
@@ -30,12 +37,14 @@ describe('AdminService', () => {
         { provide: UsersService, useValue: mockUsersService },
         { provide: InquiriesService, useValue: mockInquiriesService },
         { provide: DataSource, useValue: mockDataSource },
+        { provide: StorageUsageService, useValue: mockStorageUsage },
       ],
     }).compile();
 
     service = module.get<AdminService>(AdminService);
     usersService = module.get(UsersService);
     inquiriesService = module.get(InquiriesService);
+    storageUsage = module.get(StorageUsageService);
     dataSource = module.get(DataSource);
   });
 
@@ -43,12 +52,14 @@ describe('AdminService', () => {
 
   // ── getStats ───────────────────────────────────────────
   describe('getStats', () => {
-    it('totalUsers, newUsersMonth, newUsersWeek, pendingInquiries 반환', async () => {
+    it('totalUsers, newUsersMonth, newUsersWeek, pendingInquiries, globalStorage 반환 (G-1)', async () => {
       usersService.countAll.mockResolvedValue(100);
       usersService.countByDate
         .mockResolvedValueOnce(10) // newUsersMonth
         .mockResolvedValueOnce(3); // newUsersWeek
       inquiriesService.countPending.mockResolvedValue(5);
+      storageUsage.getGlobalUsage.mockResolvedValue(500 * 1024 * 1024); // 500MB
+      storageUsage.getNearCapUserCount.mockResolvedValue(2);
 
       const result = await service.getStats();
 
@@ -57,6 +68,29 @@ describe('AdminService', () => {
         newUsersMonth: 10,
         newUsersWeek: 3,
         pendingInquiries: 5,
+        globalStorage: {
+          totalUsedBytes: 500 * 1024 * 1024,
+          averageBytes: Math.round((500 * 1024 * 1024) / 100), // 평균
+          nearCapUserCount: 2,
+          r2FreeLimitGB: 10,
+        },
+      });
+    });
+
+    it('사용자 0명 → averageBytes=0, nearCapUserCount=0 (G-2)', async () => {
+      usersService.countAll.mockResolvedValue(0);
+      usersService.countByDate.mockResolvedValue(0);
+      inquiriesService.countPending.mockResolvedValue(0);
+      storageUsage.getGlobalUsage.mockResolvedValue(0);
+      storageUsage.getNearCapUserCount.mockResolvedValue(0);
+
+      const result = await service.getStats();
+
+      expect(result.globalStorage).toEqual({
+        totalUsedBytes: 0,
+        averageBytes: 0,
+        nearCapUserCount: 0,
+        r2FreeLimitGB: 10,
       });
     });
 
