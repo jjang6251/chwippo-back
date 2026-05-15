@@ -104,7 +104,10 @@ describe('DashboardService', () => {
 
   // ── getDdayList ────────────────────────────────────────
   describe('getDdayList', () => {
-    const today = new Date().toISOString().split('T')[0];
+    // KST 기준 today — service 코드가 Asia/Seoul timezone으로 dday 계산하므로 동일하게 맞춰야 timezone-edge에서 1차이 안 남
+    const today = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Asia/Seoul',
+    });
     const todayMs = new Date(today).getTime();
 
     const makeDeadlineApp = (
