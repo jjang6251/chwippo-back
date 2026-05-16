@@ -6,7 +6,6 @@ import { envValidationSchema } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { ApplicationsModule } from './applications/applications.module';
-import { TodosModule } from './todos/todos.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { MyinfoModule } from './myinfo/myinfo.module';
 import { FilesModule } from './files/files.module';
@@ -27,7 +26,6 @@ import { HealthController } from './health/health.controller';
     DatabaseModule,
     AuthModule,
     ApplicationsModule,
-    TodosModule,
     DashboardModule,
     MyinfoModule,
     FilesModule,
