@@ -122,8 +122,9 @@ describe('InquiriesService', () => {
   });
 
   // ── findOneByUser ──────────────────────────────────────
+  // LRR P1T3 PR H — findOneBy({id, user_id}) + 404 일관 (security.md §2.2)
   describe('findOneByUser', () => {
-    it('id로 조회 성공 + userId 일치 → { ...inquiry, comments } 반환', async () => {
+    it('id+user_id 조회 성공 → { ...inquiry, comments } 반환', async () => {
       const inquiry = makeInquiry({ user_unread: 0 });
       const comments = [makeComment()];
       repo.findOneBy.mockResolvedValue(inquiry);
@@ -131,6 +132,11 @@ describe('InquiriesService', () => {
 
       const result = await service.findOneByUser('inq-uuid-1', 'user-uuid-1');
 
+      // user_id where 조건 포함 — IDOR 방어
+      expect(repo.findOneBy).toHaveBeenCalledWith({
+        id: 'inq-uuid-1',
+        user_id: 'user-uuid-1',
+      });
       expect(result.comments).toEqual(comments);
       expect(commentRepo.find).toHaveBeenCalledWith({
         where: { inquiry_id: 'inq-uuid-1' },
@@ -145,11 +151,16 @@ describe('InquiriesService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('user_id !== userId → ForbiddenException', async () => {
-      repo.findOneBy.mockResolvedValue(makeInquiry({ user_id: 'user-A' }));
+    it('다른 사용자의 inquiry → NotFoundException (IDOR 정보 누수 차단)', async () => {
+      // findOneBy({id, user_id})는 다른 사용자 소유면 null 반환 → 404로 동일 응답
+      repo.findOneBy.mockResolvedValue(null);
       await expect(
         service.findOneByUser('inq-uuid-1', 'user-B'),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
+      expect(repo.findOneBy).toHaveBeenCalledWith({
+        id: 'inq-uuid-1',
+        user_id: 'user-B',
+      });
     });
 
     it('user_unread > 0 → repo.update(id, { user_unread: 0 }) 호출', async () => {
@@ -201,8 +212,11 @@ describe('InquiriesService', () => {
       );
     });
 
-    it('CLOSED 문의 → ForbiddenException', async () => {
-      repo.findOneBy.mockResolvedValue(makeInquiry({ status: 'CLOSED' }));
+    it('CLOSED 문의 → ForbiddenException (본인 inquiry지만 닫힘)', async () => {
+      // user_id 매칭은 OK (findOneBy가 inquiry 반환), status가 CLOSED라서 거부
+      repo.findOneBy.mockResolvedValue(
+        makeInquiry({ status: 'CLOSED', user_id: 'user-uuid-1' }),
+      );
       await expect(
         service.addUserComment('inq-uuid-1', 'user-uuid-1', '닫힌 문의에 댓글'),
       ).rejects.toThrow(
@@ -210,11 +224,16 @@ describe('InquiriesService', () => {
       );
     });
 
-    it('다른 userId → ForbiddenException', async () => {
-      repo.findOneBy.mockResolvedValue(makeInquiry({ user_id: 'user-A' }));
+    it('다른 사용자의 inquiry → NotFoundException (IDOR 정보 누수 차단)', async () => {
+      // findOneBy({id, user_id})가 매칭 안 됨 → null → NotFound
+      repo.findOneBy.mockResolvedValue(null);
       await expect(
         service.addUserComment('inq-uuid-1', 'user-B', '내용'),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
+      expect(repo.findOneBy).toHaveBeenCalledWith({
+        id: 'inq-uuid-1',
+        user_id: 'user-B',
+      });
     });
 
     it('존재하지 않는 id → NotFoundException', async () => {
