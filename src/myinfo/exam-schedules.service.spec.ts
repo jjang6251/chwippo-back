@@ -1,8 +1,8 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { ExamSchedulesService } from './exam-schedules.service';
 import { ExamSchedule } from './entities/exam-schedule.entity';
 import { Cert } from './entities/cert.entity';
@@ -13,10 +13,25 @@ describe('ExamSchedulesService', () => {
   let examRepo: jest.Mocked<Repository<ExamSchedule>>;
   let certRepo: jest.Mocked<Repository<Cert>>;
   let langCertRepo: jest.Mocked<Repository<LanguageCert>>;
+  let mockManager: jest.Mocked<EntityManager>;
 
   const USER_ID = 'user-uuid-1';
 
   beforeEach(async () => {
+    mockManager = mock<EntityManager>();
+    // manager.create(Entity, data) — data 그대로 반환
+    mockManager.create.mockImplementation(
+      (_entity: unknown, data: unknown) => data as never,
+    );
+
+    const mockDataSource = {
+      transaction: jest
+        .fn()
+        .mockImplementation(async (cb: (m: EntityManager) => unknown) =>
+          cb(mockManager),
+        ),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExamSchedulesService,
@@ -31,6 +46,10 @@ describe('ExamSchedulesService', () => {
         {
           provide: getRepositoryToken(LanguageCert),
           useValue: mock<Repository<LanguageCert>>(),
+        },
+        {
+          provide: getDataSourceToken(),
+          useValue: mockDataSource,
         },
       ],
     }).compile();
@@ -166,6 +185,7 @@ describe('ExamSchedulesService', () => {
   });
 
   // ── convertToCert ─────────────────────────────────────
+  // LRR P1T2 H-1: 트랜잭션 + pessimistic_write lock 으로 race·rollback 보장
   describe('convertToCert', () => {
     it('language 타입 → myinfo_language_certs로 이관 (cert_type + score_grade) + 원본 삭제', async () => {
       const exam = {
@@ -175,27 +195,38 @@ describe('ExamSchedulesService', () => {
         cert_type: 'TOEIC',
         name: 'TOEIC',
         exam_date: new Date('2026-05-15T09:00:00+09:00'),
-      } as any;
-      examRepo.findOne.mockResolvedValue(exam);
-      langCertRepo.create.mockImplementation((dto) => dto as any);
-      langCertRepo.save.mockResolvedValue({} as any);
-      examRepo.delete.mockResolvedValue({ affected: 1 } as any);
+      };
+      mockManager.findOne.mockResolvedValue(exam);
+      mockManager.save.mockResolvedValue({});
+      mockManager.delete.mockResolvedValue({ affected: 1 } as never);
 
       await service.convertToCert(USER_ID, 'x1', { score_grade: '850' });
 
-      expect(langCertRepo.create).toHaveBeenCalledWith(
+      // manager.findOne with pessimistic_write lock 검증
+      expect(mockManager.findOne).toHaveBeenCalledWith(
+        ExamSchedule,
+        expect.objectContaining({
+          where: { id: 'x1', user_id: USER_ID },
+          lock: { mode: 'pessimistic_write' },
+        }),
+      );
+      // LanguageCert로 save (Cert 아님)
+      expect(mockManager.save).toHaveBeenCalledWith(
+        LanguageCert,
         expect.objectContaining({
           user_id: USER_ID,
           cert_type: 'TOEIC',
           score_grade: '850',
         }),
       );
-      expect(langCertRepo.save).toHaveBeenCalled();
-      expect(certRepo.create).not.toHaveBeenCalled();
-      expect(examRepo.delete).toHaveBeenCalledWith({
+      expect(mockManager.delete).toHaveBeenCalledWith(ExamSchedule, {
         id: 'x1',
         user_id: USER_ID,
       });
+      // 직접 repo는 안 씀
+      expect(examRepo.findOne).not.toHaveBeenCalled();
+      expect(certRepo.save).not.toHaveBeenCalled();
+      expect(langCertRepo.save).not.toHaveBeenCalled();
     });
 
     it('cert 타입 → myinfo_certs로 이관 (name) + 원본 삭제', async () => {
@@ -206,23 +237,21 @@ describe('ExamSchedulesService', () => {
         cert_type: null,
         name: '정보처리기사 필기',
         exam_date: new Date('2026-06-01T09:00:00+09:00'),
-      } as any;
-      examRepo.findOne.mockResolvedValue(exam);
-      certRepo.create.mockImplementation((dto) => dto as any);
-      certRepo.save.mockResolvedValue({} as any);
-      examRepo.delete.mockResolvedValue({ affected: 1 } as any);
+      };
+      mockManager.findOne.mockResolvedValue(exam);
+      mockManager.save.mockResolvedValue({});
+      mockManager.delete.mockResolvedValue({ affected: 1 } as never);
 
       await service.convertToCert(USER_ID, 'x2', {});
 
-      expect(certRepo.create).toHaveBeenCalledWith(
+      expect(mockManager.save).toHaveBeenCalledWith(
+        Cert,
         expect.objectContaining({
           user_id: USER_ID,
           name: '정보처리기사 필기',
         }),
       );
-      expect(certRepo.save).toHaveBeenCalled();
-      expect(langCertRepo.create).not.toHaveBeenCalled();
-      expect(examRepo.delete).toHaveBeenCalledWith({
+      expect(mockManager.delete).toHaveBeenCalledWith(ExamSchedule, {
         id: 'x2',
         user_id: USER_ID,
       });
@@ -236,25 +265,27 @@ describe('ExamSchedulesService', () => {
         cert_type: null,
         name: '기타 어학 시험',
         exam_date: new Date('2026-06-01T09:00:00+09:00'),
-      } as any;
-      examRepo.findOne.mockResolvedValue(exam);
-      langCertRepo.create.mockImplementation((dto) => dto as any);
-      langCertRepo.save.mockResolvedValue({} as any);
+      };
+      mockManager.findOne.mockResolvedValue(exam);
+      mockManager.save.mockResolvedValue({});
+      mockManager.delete.mockResolvedValue({ affected: 1 } as never);
 
       await service.convertToCert(USER_ID, 'x3', { score_grade: 'B' });
 
-      expect(langCertRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cert_type: '기타 어학 시험',
-        }),
+      expect(mockManager.save).toHaveBeenCalledWith(
+        LanguageCert,
+        expect.objectContaining({ cert_type: '기타 어학 시험' }),
       );
     });
 
-    it('타인 시험 일정 이관 시도 → NotFoundException', async () => {
-      examRepo.findOne.mockResolvedValue(null);
+    it('타인 시험 일정 이관 시도 → NotFoundException (트랜잭션 내 rollback)', async () => {
+      mockManager.findOne.mockResolvedValue(null);
       await expect(
         service.convertToCert('attacker-uid', 'x1', { score_grade: '900' }),
       ).rejects.toThrow(NotFoundException);
+      // findOne 외 다른 작업 미수행
+      expect(mockManager.save).not.toHaveBeenCalled();
+      expect(mockManager.delete).not.toHaveBeenCalled();
     });
 
     it('cert 타입에서 score_grade 없어도 정상 이관 (자격증은 점수 선택)', async () => {
@@ -265,14 +296,55 @@ describe('ExamSchedulesService', () => {
         cert_type: null,
         name: 'SQLD',
         exam_date: new Date('2026-06-01T09:00:00+09:00'),
-      } as any;
-      examRepo.findOne.mockResolvedValue(exam);
-      certRepo.create.mockImplementation((dto) => dto as any);
-      certRepo.save.mockResolvedValue({} as any);
+      };
+      mockManager.findOne.mockResolvedValue(exam);
+      mockManager.save.mockResolvedValue({});
+      mockManager.delete.mockResolvedValue({ affected: 1 } as never);
 
       await service.convertToCert(USER_ID, 'x4', {});
 
-      expect(certRepo.save).toHaveBeenCalled();
+      expect(mockManager.save).toHaveBeenCalled();
+    });
+
+    // 신규: 트랜잭션 rollback 시나리오
+    it('save 실패 시 delete 호출 안 됨 (트랜잭션 rollback)', async () => {
+      const exam = {
+        id: 'x5',
+        user_id: USER_ID,
+        exam_type: 'cert',
+        cert_type: null,
+        name: 'AWS SAA',
+        exam_date: new Date('2026-06-01T09:00:00+09:00'),
+      };
+      mockManager.findOne.mockResolvedValue(exam);
+      mockManager.save.mockRejectedValue(new Error('DB 일시 장애'));
+
+      await expect(service.convertToCert(USER_ID, 'x5', {})).rejects.toThrow(
+        'DB 일시 장애',
+      );
+
+      // save fail → delete는 호출되지 않음 (transaction rollback)
+      expect(mockManager.delete).not.toHaveBeenCalled();
+    });
+
+    it('pessimistic_write lock 옵션이 항상 지정됨 (race 방어)', async () => {
+      const exam = {
+        id: 'x6',
+        user_id: USER_ID,
+        exam_type: 'cert',
+        name: 'X',
+        exam_date: new Date(),
+      };
+      mockManager.findOne.mockResolvedValue(exam);
+      mockManager.save.mockResolvedValue({});
+      mockManager.delete.mockResolvedValue({ affected: 1 } as never);
+
+      await service.convertToCert(USER_ID, 'x6', {});
+
+      const callArgs = mockManager.findOne.mock.calls[0]?.[1] as
+        | { lock?: { mode: string } }
+        | undefined;
+      expect(callArgs?.lock).toEqual({ mode: 'pessimistic_write' });
     });
   });
 });
