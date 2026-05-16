@@ -23,7 +23,12 @@ export const envValidationSchema = Joi.object({
   KAKAO_CLIENT_SECRET: Joi.string().required(),
   KAKAO_REDIRECT_URI: Joi.string().required(),
 
-  FRONTEND_URL: Joi.string().default('http://localhost:5173'),
+  // prod에선 required (실수로 누락 시 localhost로 silent redirect 방지)
+  FRONTEND_URL: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.string().default('http://localhost:5173'),
+  }),
 
   // Cloudflare R2 (S3 호환) — 파일 업로드 인프라
   // production에선 required, dev에선 optional (자격증명 없어도 다른 기능 개발 가능하도록)

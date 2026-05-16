@@ -9,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { AdminAuditService } from './admin-audit.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -33,6 +34,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly inquiriesService: InquiriesService,
+    private readonly auditService: AdminAuditService,
   ) {}
 
   @Get('stats')
@@ -67,16 +69,27 @@ export class AdminController {
   }
 
   @Post('inquiries/:id/comments')
-  addComment(
+  async addComment(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: AdminCommentDto,
   ) {
-    return this.inquiriesService.addAdminComment(id, user.id, dto.content);
+    const comment = await this.inquiriesService.addAdminComment(
+      id,
+      user.id,
+      dto.content,
+    );
+    // 본문은 audit log에 평문 저장하지 않음 (privacy) — 길이만 기록
+    await this.auditService.log(user.id, 'reply_inquiry', 'inquiry', id, {
+      contentLength: dto.content.length,
+    });
+    return comment;
   }
 
   @Patch('inquiries/:id/close')
-  closeInquiry(@Param('id') id: string) {
-    return this.inquiriesService.closeInquiry(id);
+  async closeInquiry(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const result = await this.inquiriesService.closeInquiry(id);
+    await this.auditService.log(user.id, 'close_inquiry', 'inquiry', id, {});
+    return result;
   }
 }

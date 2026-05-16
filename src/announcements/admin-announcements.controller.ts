@@ -12,15 +12,24 @@ import {
 } from '@nestjs/common';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AnnouncementsService } from './announcements.service';
+import { AdminAuditService } from '../admin/admin-audit.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
+
+interface AuthUser {
+  id: string;
+}
 
 @Controller('admin/announcements')
 @UseGuards(RolesGuard)
 @Roles('admin')
 export class AdminAnnouncementsController {
-  constructor(private readonly service: AnnouncementsService) {}
+  constructor(
+    private readonly service: AnnouncementsService,
+    private readonly auditService: AdminAuditService,
+  ) {}
 
   @Get()
   findAll() {
@@ -28,18 +37,48 @@ export class AdminAnnouncementsController {
   }
 
   @Post()
-  create(@Body() dto: CreateAnnouncementDto) {
-    return this.service.create(dto);
+  async create(
+    @CurrentUser() admin: AuthUser,
+    @Body() dto: CreateAnnouncementDto,
+  ) {
+    const announcement = await this.service.create(dto);
+    await this.auditService.log(
+      admin.id,
+      'publish_announcement',
+      'announcement',
+      announcement.id,
+      { title: dto.title, type: dto.type, active: dto.active },
+    );
+    return announcement;
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateAnnouncementDto) {
-    return this.service.update(id, dto);
+  async update(
+    @CurrentUser() admin: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateAnnouncementDto,
+  ) {
+    const announcement = await this.service.update(id, dto);
+    await this.auditService.log(
+      admin.id,
+      'update_announcement',
+      'announcement',
+      id,
+      { changed: Object.keys(dto) },
+    );
+    return announcement;
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  async remove(@CurrentUser() admin: AuthUser, @Param('id') id: string) {
+    await this.service.remove(id);
+    await this.auditService.log(
+      admin.id,
+      'delete_announcement',
+      'announcement',
+      id,
+      {},
+    );
   }
 }

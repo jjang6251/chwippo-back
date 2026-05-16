@@ -24,10 +24,11 @@ const minimalDevEnv: Record<string, string> = {
   KAKAO_REDIRECT_URI: 'http://localhost:3000/auth/kakao/callback',
 };
 
-/** prod env = minimal + R2_* */
+/** prod env = minimal + R2_* + FRONTEND_URL (prod required) */
 const minimalProdEnv: Record<string, string> = {
   ...minimalDevEnv,
   NODE_ENV: 'production',
+  FRONTEND_URL: 'https://example.com',
   R2_ENDPOINT: 'https://account.r2.cloudflarestorage.com',
   R2_ACCESS_KEY_ID: 'access-key',
   R2_SECRET_ACCESS_KEY: 'secret-key',
@@ -173,9 +174,19 @@ describe('envValidationSchema', () => {
       expect(value.JWT_REFRESH_EXPIRES_IN).toBe('30d');
     });
 
-    it('FRONTEND_URL 누락 → http://localhost:5173', () => {
-      const { value } = validate(minimalDevEnv);
+    it('dev 모드: FRONTEND_URL 누락 → default http://localhost:5173', () => {
+      const env = { ...minimalDevEnv };
+      delete env.FRONTEND_URL;
+      const { value, error } = validate(env);
+      expect(error).toBeUndefined();
       expect(value.FRONTEND_URL).toBe('http://localhost:5173');
+    });
+
+    it('prod 모드: FRONTEND_URL 누락 → fail (silent localhost fallback 차단)', () => {
+      const env = { ...minimalProdEnv };
+      delete env.FRONTEND_URL;
+      const { error } = validate(env);
+      expect(errorKeys(error)).toContain('FRONTEND_URL');
     });
 
     it('MAX_STORAGE_PER_USER_MB 누락 → 100', () => {
