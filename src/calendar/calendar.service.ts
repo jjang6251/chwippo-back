@@ -1,8 +1,4 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Application } from '../applications/application.entity';
@@ -188,9 +184,10 @@ export class CalendarService {
   }
 
   async carryOverDailyNote(userId: string, id: string): Promise<DailyNote> {
-    const note = await this.noteRepo.findOne({ where: { id } });
-    if (!note) throw new NotFoundException();
-    if (note.userId !== userId) throw new ForbiddenException();
+    // LRR P1T3 PR H — IDOR 정보 누수 차단: userId where 조건에 포함 → 다른 사용자 일정이거나
+    // 존재 안 하거나 모두 NotFound로 동일 응답 (security.md §2.2 정식 패턴)
+    const note = await this.noteRepo.findOne({ where: { id, userId } });
+    if (!note) throw new NotFoundException('일정을 찾을 수 없습니다.');
     note.date = new Date().toLocaleDateString('en-CA', {
       timeZone: 'Asia/Seoul',
     });
@@ -210,17 +207,15 @@ export class CalendarService {
     id: string,
     dto: UpdateDailyNoteDto,
   ): Promise<DailyNote> {
-    const note = await this.noteRepo.findOne({ where: { id } });
-    if (!note) throw new NotFoundException();
-    if (note.userId !== userId) throw new ForbiddenException();
+    const note = await this.noteRepo.findOne({ where: { id, userId } });
+    if (!note) throw new NotFoundException('일정을 찾을 수 없습니다.');
     Object.assign(note, dto);
     return this.noteRepo.save(note);
   }
 
   async deleteDailyNote(userId: string, id: string): Promise<void> {
-    const note = await this.noteRepo.findOne({ where: { id } });
-    if (!note) throw new NotFoundException();
-    if (note.userId !== userId) throw new ForbiddenException();
+    const note = await this.noteRepo.findOne({ where: { id, userId } });
+    if (!note) throw new NotFoundException('일정을 찾을 수 없습니다.');
     await this.noteRepo.remove(note);
   }
 }

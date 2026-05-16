@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -352,6 +352,7 @@ describe('CalendarService', () => {
   });
 
   // ── updateDailyNote ────────────────────────────────────
+  // LRR P1T3 PR H — findOne({where:{id, userId}}) + 404 일관 (security.md §2.2)
   describe('updateDailyNote', () => {
     it('본인 노트 → Object.assign 후 save, 수정된 노트 반환', async () => {
       const note = makeNote({ isDone: false });
@@ -362,8 +363,9 @@ describe('CalendarService', () => {
         isDone: true,
       });
 
+      // userId where 조건 포함 — IDOR 방어
       expect(noteRepo.findOne).toHaveBeenCalledWith({
-        where: { id: 'note-uuid-1' },
+        where: { id: 'note-uuid-1', userId: 'user-1' },
       });
       expect(result.isDone).toBe(true);
       expect(noteRepo.save).toHaveBeenCalled();
@@ -378,13 +380,16 @@ describe('CalendarService', () => {
       expect(noteRepo.save).not.toHaveBeenCalled();
     });
 
-    it('다른 userId의 노트 → ForbiddenException (IDOR)', async () => {
-      const note = makeNote({ userId: 'other-user' });
-      noteRepo.findOne.mockResolvedValue(note);
+    it('다른 userId의 노트 → NotFoundException (IDOR 정보 누수 차단)', async () => {
+      // findOne({where:{id, userId}})는 다른 사용자 소유면 null 반환 → 404로 동일 응답
+      noteRepo.findOne.mockResolvedValue(null);
 
       await expect(
         service.updateDailyNote('user-1', 'note-uuid-1', { isDone: true }),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
+      expect(noteRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'note-uuid-1', userId: 'user-1' },
+      });
       expect(noteRepo.save).not.toHaveBeenCalled();
     });
   });
@@ -398,6 +403,9 @@ describe('CalendarService', () => {
 
       await service.deleteDailyNote('user-1', 'note-uuid-1');
 
+      expect(noteRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'note-uuid-1', userId: 'user-1' },
+      });
       expect(noteRepo.remove).toHaveBeenCalledWith(note);
     });
 
@@ -410,14 +418,50 @@ describe('CalendarService', () => {
       expect(noteRepo.remove).not.toHaveBeenCalled();
     });
 
-    it('다른 userId의 노트 → ForbiddenException (IDOR)', async () => {
-      const note = makeNote({ userId: 'other-user' });
-      noteRepo.findOne.mockResolvedValue(note);
+    it('다른 userId의 노트 → NotFoundException (IDOR 정보 누수 차단)', async () => {
+      noteRepo.findOne.mockResolvedValue(null);
 
       await expect(
         service.deleteDailyNote('user-1', 'note-uuid-1'),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(NotFoundException);
       expect(noteRepo.remove).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── carryOverDailyNote ────────────────────────────────
+  // LRR P1T3 PR H — 신규 spec (기존 누락, 같은 패턴 검증 추가)
+  describe('carryOverDailyNote', () => {
+    it('본인 노트 → date를 KST 오늘로 설정 + save', async () => {
+      const note = makeNote({ date: '2026-05-15' });
+      noteRepo.findOne.mockResolvedValue(note);
+      noteRepo.save.mockImplementation(async (n) => n as DailyNote);
+
+      const result = await service.carryOverDailyNote('user-1', 'note-uuid-1');
+
+      expect(noteRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'note-uuid-1', userId: 'user-1' },
+      });
+      // KST 기준 오늘 — YYYY-MM-DD 형식
+      expect(result.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(noteRepo.save).toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 노트 → NotFoundException', async () => {
+      noteRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.carryOverDailyNote('user-1', 'nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+      expect(noteRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('다른 userId의 노트 → NotFoundException (IDOR 정보 누수 차단)', async () => {
+      noteRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.carryOverDailyNote('user-1', 'note-uuid-1'),
+      ).rejects.toThrow(NotFoundException);
+      expect(noteRepo.save).not.toHaveBeenCalled();
     });
   });
 });

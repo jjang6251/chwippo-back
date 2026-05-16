@@ -43,9 +43,10 @@ export class InquiriesService {
 
   // ── 사용자: 문의 상세 (읽음 처리) ────────────────────
   async findOneByUser(id: string, userId: string) {
-    const inquiry = await this.repo.findOneBy({ id });
-    if (!inquiry) throw new NotFoundException();
-    if (inquiry.user_id !== userId) throw new ForbiddenException();
+    // LRR P1T3 PR H — IDOR 정보 누수 차단: user_id where 조건에 포함 → 다른 사용자 문의이거나
+    // 존재 안 하거나 모두 NotFound로 동일 응답 (security.md §2.2 정식 패턴)
+    const inquiry = await this.repo.findOneBy({ id, user_id: userId });
+    if (!inquiry) throw new NotFoundException('문의를 찾을 수 없습니다.');
 
     const comments = await this.commentRepo.find({
       where: { inquiry_id: id },
@@ -62,9 +63,8 @@ export class InquiriesService {
 
   // ── 사용자: 댓글 작성 → 어드민 미읽음 + 1 ───────────
   async addUserComment(id: string, userId: string, content: string) {
-    const inquiry = await this.repo.findOneBy({ id });
-    if (!inquiry) throw new NotFoundException();
-    if (inquiry.user_id !== userId) throw new ForbiddenException();
+    const inquiry = await this.repo.findOneBy({ id, user_id: userId });
+    if (!inquiry) throw new NotFoundException('문의를 찾을 수 없습니다.');
     if (inquiry.status === 'CLOSED')
       throw new ForbiddenException('닫힌 문의에는 댓글을 작성할 수 없어요.');
 
