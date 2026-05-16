@@ -145,8 +145,15 @@ export class AuthController {
   @UseGuards(JwtRefreshGuard)
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(@CurrentUser() user: AuthenticatedUser) {
-    const accessToken = await this.authService.refreshAccessToken(user.id);
+  async refresh(
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // Refresh token rotation (LRR P1T1 M-1) — 새 access·refresh 둘 다 발급
+    const { accessToken, refreshToken } = await this.authService.refreshTokens(
+      user.id,
+    );
+    res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
     return {
       accessToken,
       user: {

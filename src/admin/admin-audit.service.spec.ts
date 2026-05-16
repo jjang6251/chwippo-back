@@ -117,5 +117,24 @@ describe('AdminAuditService', () => {
         }),
       );
     });
+
+    it('repo.save 실패 (manager 없음) → throw하지 않음 (best-effort, audit 누락만)', async () => {
+      repo.save.mockRejectedValue(new Error('DB 일시 장애'));
+
+      // throw 안 함 — caller의 액션은 정상 응답 (일관성 유지)
+      await expect(
+        service.log('admin-uuid', 'reply_inquiry', 'inquiry', 'i1', {}),
+      ).resolves.toBeUndefined();
+    });
+
+    it('manager 제공 시 save 실패 → throw (트랜잭션 안에선 같이 rollback)', async () => {
+      const mockManager = {
+        save: jest.fn().mockRejectedValue(new Error('DB 장애')),
+      } as unknown as EntityManager;
+
+      await expect(
+        service.log('admin-uuid', 'suspend', 'user', 'u1', {}, mockManager),
+      ).rejects.toThrow('DB 장애');
+    });
   });
 });
