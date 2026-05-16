@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
+import { randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
@@ -41,6 +42,18 @@ const REFRESH_COOKIE_OPTIONS = {
   path: '/',
 };
 
+// OAuth Login CSRF 방어용 nonce cookie (passport-kakao state 옵션 대체 — stateless 정책 유지)
+const OAUTH_STATE_COOKIE = 'oauth_state';
+const OAUTH_STATE_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax' as const,
+  maxAge: 5 * 60 * 1000, // 5분 — 카카오 로그인 완료에 충분
+  path: '/',
+};
+
+const KAKAO_AUTHORIZE_URL = 'https://kauth.kakao.com/oauth/authorize';
+
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -48,11 +61,27 @@ export class AuthController {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * 카카오 로그인 시작.
+   * Login CSRF 방어를 위해 자체 nonce를 cookie에 저장하고 state 파라미터로 카카오에 전달.
+   * 카카오는 state를 callback URL에 echo back — 우리가 cookie와 비교해 위변조 방어.
+   * passport-kakao guard 대신 직접 redirect (passport state 옵션은 session 필요).
+   */
   @Public()
   @Get('kakao')
-  @UseGuards(AuthGuard('kakao'))
-  kakaoLogin() {
-    // Passport가 카카오 로그인 페이지로 리다이렉트
+  kakaoLogin(@Res() res: Response) {
+    const nonce = randomBytes(32).toString('hex');
+    res.cookie(OAUTH_STATE_COOKIE, nonce, OAUTH_STATE_COOKIE_OPTIONS);
+
+    const clientId = this.config.getOrThrow<string>('KAKAO_CLIENT_ID');
+    const redirectUri = this.config.getOrThrow<string>('KAKAO_REDIRECT_URI');
+    const url =
+      `${KAKAO_AUTHORIZE_URL}?` +
+      `client_id=${clientId}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=code` +
+      `&state=${nonce}`;
+    return res.redirect(url);
   }
 
   @Public()
@@ -60,11 +89,27 @@ export class AuthController {
   @Get('kakao/callback')
   @UseGuards(AuthGuard('kakao'))
   async kakaoCallback(@Req() req: Request, @Res() res: Response) {
-    const kakaoUser = req.user as KakaoCallbackUser;
     const frontendUrl = this.config.get<string>(
       'FRONTEND_URL',
       'http://localhost:5173',
     );
+
+    // OAuth state 검증 — cookie nonce ↔ query state 일치 필수 (CSRF 방어)
+    const cookieState = (req.cookies as Record<string, unknown> | undefined)?.[
+      OAUTH_STATE_COOKIE
+    ];
+    const queryState = req.query.state;
+    res.clearCookie(OAUTH_STATE_COOKIE, { path: '/' }); // 한 번만 사용
+    if (
+      typeof cookieState !== 'string' ||
+      typeof queryState !== 'string' ||
+      cookieState.length === 0 ||
+      cookieState !== queryState
+    ) {
+      return res.redirect(`${frontendUrl}/login?error=oauth_state_mismatch`);
+    }
+
+    const kakaoUser = req.user as KakaoCallbackUser;
     const { user } = await this.authService.findOrCreateKakaoUser(kakaoUser);
 
     if (user.suspendedAt) {
