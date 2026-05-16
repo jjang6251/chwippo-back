@@ -11,6 +11,8 @@ export const envValidationSchema = Joi.object({
   DB_USERNAME: Joi.string().required(),
   DB_PASSWORD: Joi.string().allow('').default(''), // Postgres.app은 비밀번호 없음
   DB_DATABASE: Joi.string().required(),
+  // 코드에서 `=== 'true'` 비교 — 오타(True/1/yes 등)가 silent false 되지 않도록 화이트리스트
+  DB_SSL: Joi.string().valid('true', 'false').default('false'),
 
   JWT_SECRET: Joi.string().required(),
   JWT_EXPIRES_IN: Joi.string().default('1h'),
