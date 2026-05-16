@@ -135,7 +135,9 @@ export class AuthController {
         ? { user_onboarded_at: user.onboardedAt.toISOString() }
         : {}),
     });
-    return res.redirect(`${frontendUrl}/login/callback?${params.toString()}`);
+    // Fragment(#) 사용: server access log·Referer header에 token 미노출
+    // (브라우저 history만 잔존 — 사용자 본인 디바이스라 신뢰 영역)
+    return res.redirect(`${frontendUrl}/login/callback#${params.toString()}`);
   }
 
   @Public()

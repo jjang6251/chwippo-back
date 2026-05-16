@@ -254,8 +254,11 @@ describe('AuthController', () => {
         expect.any(Object),
       );
       const redirectUrl: string = (res.redirect as jest.Mock).mock.calls[0][0];
-      expect(redirectUrl).toContain(`${FRONTEND_URL}/login/callback`);
+      // Fragment(#) 사용: server log·Referer에 token 미노출
+      expect(redirectUrl).toContain(`${FRONTEND_URL}/login/callback#`);
       expect(redirectUrl).toContain('access_token=access-token-value');
+      // query string에 token 없음 (fragment에만)
+      expect(redirectUrl).not.toMatch(/\/login\/callback\?[^#]*access_token/);
     });
 
     it('정지된 유저 → /login?error=suspended 리다이렉트 (토큰 발급 안 함)', async () => {
