@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy, StrategyOptionsWithRequest } from 'passport-jwt';
+import { createHash } from 'crypto';
 import type { Request } from 'express';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -35,8 +36,12 @@ export class JwtRefreshStrategy extends PassportStrategy(
     if (!refreshToken) throw new UnauthorizedException();
 
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
-    if (!user || user.refreshToken !== refreshToken)
-      throw new UnauthorizedException();
+    if (!user) throw new UnauthorizedException();
+
+    // DB엔 hash 저장 → cookie의 평문 JWT를 hash해서 비교 (LRR P1T1 M-2)
+    const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
+    if (user.refreshToken !== tokenHash) throw new UnauthorizedException();
+
     if (user.suspendedAt)
       throw new UnauthorizedException('계정이 정지되었습니다.');
 

@@ -2,10 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { UnauthorizedException } from '@nestjs/common';
 import { mock } from 'jest-mock-extended';
-import { EntityNotFoundError, Repository } from 'typeorm';
+import { createHash } from 'crypto';
+import { QueryFailedError, Repository } from 'typeorm';
 import { AuthService, KakaoUser } from './auth.service';
 import { User } from '../users/user.entity';
+
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -96,6 +100,44 @@ describe('AuthService', () => {
         expect.objectContaining({ kakaoId: 'kakao-new', nickname: '새유저' }),
       );
       expect(userRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('동시 가입 race (unique violation) → 다른 요청의 user를 findOne으로 반환', async () => {
+      const existing = makeUser({ kakaoId: 'kakao-race' });
+      userRepo.findOne
+        .mockResolvedValueOnce(null) // 첫 findOne — 아직 INSERT 안 됨
+        .mockResolvedValueOnce(existing); // 두 번째 findOne — 다른 요청이 먼저 INSERT 완료
+      userRepo.create.mockReturnValue(existing);
+
+      const uniqueErr = new QueryFailedError('insert', [], new Error('dup'));
+      (
+        uniqueErr as QueryFailedError & { driverError?: { code?: string } }
+      ).driverError = { code: '23505' };
+      userRepo.save.mockRejectedValue(uniqueErr);
+
+      const result = await service.findOrCreateKakaoUser({
+        kakaoId: 'kakao-race',
+        nickname: '경쟁자',
+        email: null,
+      });
+
+      expect(result.isNew).toBe(false); // race 해소 시 isNew=false
+      expect(result.user).toEqual(existing);
+    });
+
+    it('unique violation 외 다른 save 에러 → 원본 에러 전파', async () => {
+      userRepo.findOne.mockResolvedValue(null);
+      userRepo.create.mockReturnValue(makeUser());
+      const otherErr = new QueryFailedError('insert', [], new Error('other'));
+      userRepo.save.mockRejectedValue(otherErr);
+
+      await expect(
+        service.findOrCreateKakaoUser({
+          kakaoId: 'kakao-x',
+          nickname: 'x',
+          email: null,
+        }),
+      ).rejects.toThrow(QueryFailedError);
     });
 
     it('신규 유저 생성 시 kakaoId, nickname, email 필드 포함', async () => {
@@ -217,21 +259,25 @@ describe('AuthService', () => {
       );
     });
 
-    it('userRepo.update로 refreshToken을 DB에 저장', async () => {
+    it('userRepo.update로 SHA-256 hash 저장 (평문 X) — LRR P1T1 M-2', async () => {
       const user = makeUser();
       jwtService.sign
         .mockReturnValueOnce('access-token')
-        .mockReturnValueOnce('refresh-token');
+        .mockReturnValueOnce('refresh-token-plain');
       userRepo.update.mockResolvedValue({} as any);
 
       await service.issueTokens(user);
 
       expect(userRepo.update).toHaveBeenCalledWith(user.id, {
-        refreshToken: 'refresh-token',
+        refreshToken: sha256('refresh-token-plain'),
+      });
+      // 평문 절대 저장 X
+      expect(userRepo.update).not.toHaveBeenCalledWith(user.id, {
+        refreshToken: 'refresh-token-plain',
       });
     });
 
-    it('{ accessToken, refreshToken } 형태로 반환', async () => {
+    it('{ accessToken, refreshToken } 형태로 반환 (refresh는 평문 — 브라우저 cookie 보관)', async () => {
       const user = makeUser();
       jwtService.sign
         .mockReturnValueOnce('at-123')
@@ -244,32 +290,58 @@ describe('AuthService', () => {
     });
   });
 
-  // ── refreshAccessToken ─────────────────────────────────
-  describe('refreshAccessToken', () => {
-    it('유저 조회 성공 → jwtService.sign 호출 → accessToken 문자열 반환', async () => {
+  // ── refreshTokens (rotation) ──────────────────────────
+  describe('refreshTokens', () => {
+    it('새 access·refresh 둘 다 발급 + DB hash 갱신 — LRR P1T1 M-1', async () => {
       const user = makeUser();
-      userRepo.findOneOrFail.mockResolvedValue(user);
-      jwtService.sign.mockReturnValue('new-access-token');
+      userRepo.findOne.mockResolvedValue(user);
+      jwtService.sign
+        .mockReturnValueOnce('new-access')
+        .mockReturnValueOnce('new-refresh-plain');
+      userRepo.update.mockResolvedValue({} as any);
 
-      const result = await service.refreshAccessToken('user-uuid-1');
+      const result = await service.refreshTokens('user-uuid-1');
 
-      expect(userRepo.findOneOrFail).toHaveBeenCalledWith({
+      expect(userRepo.findOne).toHaveBeenCalledWith({
         where: { id: 'user-uuid-1' },
       });
-      expect(jwtService.sign).toHaveBeenCalledWith(
-        { sub: user.id, role: user.role },
-        { secret: 'test-jwt-secret', expiresIn: '1h' },
-      );
-      expect(result).toBe('new-access-token');
+      // 새 access + 새 refresh 둘 다 반환
+      expect(result).toEqual({
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh-plain',
+      });
+      // DB에 새 refresh의 hash로 갱신 (rotation)
+      expect(userRepo.update).toHaveBeenCalledWith(user.id, {
+        refreshToken: sha256('new-refresh-plain'),
+      });
     });
 
-    it('존재하지 않는 userId → findOneOrFail에서 EntityNotFoundError 전파', async () => {
-      userRepo.findOneOrFail.mockRejectedValue(
-        new EntityNotFoundError(User, {}),
-      );
+    it('rotation 효과: 같은 사용자 2회 호출 → 매번 다른 hash 저장', async () => {
+      const user = makeUser();
+      userRepo.findOne.mockResolvedValue(user);
+      jwtService.sign
+        .mockReturnValueOnce('a1')
+        .mockReturnValueOnce('r1')
+        .mockReturnValueOnce('a2')
+        .mockReturnValueOnce('r2');
+      userRepo.update.mockResolvedValue({} as any);
 
-      await expect(service.refreshAccessToken('nonexistent')).rejects.toThrow(
-        EntityNotFoundError,
+      await service.refreshTokens('user-uuid-1');
+      await service.refreshTokens('user-uuid-1');
+
+      expect(userRepo.update).toHaveBeenNthCalledWith(1, user.id, {
+        refreshToken: sha256('r1'),
+      });
+      expect(userRepo.update).toHaveBeenNthCalledWith(2, user.id, {
+        refreshToken: sha256('r2'),
+      });
+    });
+
+    it('존재하지 않는 userId → UnauthorizedException (500이 아닌 401로 변환)', async () => {
+      userRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.refreshTokens('nonexistent')).rejects.toThrow(
+        UnauthorizedException,
       );
     });
   });

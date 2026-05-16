@@ -54,6 +54,7 @@ function makeValidCallbackReq(kakaoUser: {
 const mockAuthService = {
   findOrCreateKakaoUser: jest.fn(),
   issueTokens: jest.fn(),
+  refreshTokens: jest.fn(),
 };
 
 const mockConfigService = {
@@ -353,6 +354,65 @@ describe('AuthController', () => {
 
       const redirectUrl: string = (res.redirect as jest.Mock).mock.calls[0][0];
       expect(redirectUrl).toContain('needs_terms=false');
+    });
+  });
+
+  describe('refresh() — Refresh token rotation (LRR P1T1 M-1)', () => {
+    const authenticatedUser = {
+      id: 'user-uuid',
+      nickname: '테스트유저',
+      email: 'test@test.com',
+      role: 'user',
+      onboardedAt: null,
+      termsAgreedAt: new Date('2026-01-01'),
+    };
+
+    it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
+      mockAuthService.refreshTokens.mockResolvedValue({
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      });
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.refresh(authenticatedUser, res);
+
+      // 새 access·refresh 둘 다 발급
+      expect(mockAuthService.refreshTokens).toHaveBeenCalledWith('user-uuid');
+      // 새 refresh를 cookie로 set (rotation 핵심)
+      expect(res.cookie).toHaveBeenCalledWith(
+        'refresh_token',
+        'new-refresh',
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 30 * 24 * 60 * 60 * 1000,
+        }),
+      );
+      // 응답 body 형식 유지 (frontend 변경 없음)
+      expect(result).toEqual({
+        accessToken: 'new-access',
+        user: {
+          id: 'user-uuid',
+          nickname: '테스트유저',
+          email: 'test@test.com',
+          role: 'user',
+          onboardedAt: null,
+          termsAgreedAt: authenticatedUser.termsAgreedAt,
+        },
+      });
+    });
+
+    it('refresh 응답에 refreshToken 평문 포함 X (cookie로만 전달)', async () => {
+      mockAuthService.refreshTokens.mockResolvedValue({
+        accessToken: 'a',
+        refreshToken: 'r',
+      });
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.refresh(authenticatedUser, res);
+
+      expect(result).not.toHaveProperty('refreshToken');
     });
   });
 });
