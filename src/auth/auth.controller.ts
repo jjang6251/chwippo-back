@@ -141,7 +141,9 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  // 60/min — 멀티탭·연속 reload·access token 만료 등 정상 사용 시나리오 여유.
+  // Refresh는 유효한 cookie 필요해 brute force 무의미, IP 기반 한도는 abuse 방어용.
+  @Throttle({ default: { ttl: 60_000, limit: 60 } })
   @UseGuards(JwtRefreshGuard)
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
