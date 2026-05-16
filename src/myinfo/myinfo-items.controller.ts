@@ -6,7 +6,6 @@ import {
   Param,
   Patch,
   Post,
-  BadRequestException,
 } from '@nestjs/common';
 import { MyinfoService } from './myinfo.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -22,6 +21,7 @@ import {
   CreateEducationDto,
   UpdateEducationDto,
 } from './dto/myinfo-items.dto';
+import { CreateDocumentDto } from './dto/document.dto';
 
 interface AuthUser {
   id: string;
@@ -174,11 +174,9 @@ export class MyinfoItemsController {
   @Post('documents')
   createDocument(
     @CurrentUser() user: AuthUser,
-    @Body() dto: { title: string; category?: string; file_url: string },
+    @Body() dto: CreateDocumentDto,
   ) {
-    if (!dto.title?.trim())
-      throw new BadRequestException('제목을 입력해주세요.');
-    if (!dto.file_url) throw new BadRequestException('파일을 업로드해주세요.');
+    // DTO에서 @IsString @MaxLength + @IsUrl로 검증 — 추가 trim/empty 가드 불필요
     return this.myinfoService.createDocument(user.id, dto);
   }
 
