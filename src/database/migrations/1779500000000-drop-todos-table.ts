@@ -22,14 +22,23 @@ export class DropTodosTable1779500000000 implements MigrationInterface {
     await queryRunner.query(`DROP TABLE IF EXISTS todos`);
   }
 
-  public down(): Promise<void> {
-    return Promise.reject(
-      new Error(
-        'DropTodosTable1779500000000.down() is irreversible. ' +
-          'todos data has been migrated to daily_notes (see 1778200000000) and the table is dead code. ' +
-          'If restore is truly needed: revert 1779400000000 (FK cleanup) → recreate table manually → ' +
-          'revert 1778200000000 to restore data.',
-      ),
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    // 스키마 복원 — 데이터는 비어있음 (1778200000000으로 daily_notes 이관 완료).
+    // CI rollback 검증(down → up) + 이전 마이그레이션들의 down()이 todos 테이블 존재를 가정해
+    // 정상 reversible로 작성. 실 복원이 필요한 경우 1778200000000 revert로 데이터까지 회복 가능.
+    await queryRunner.query(
+      `CREATE TABLE "todos" (
+        "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
+        "user_id" uuid NOT NULL,
+        "content" text NOT NULL,
+        "date" date NOT NULL,
+        "is_done" boolean NOT NULL DEFAULT false,
+        "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+        CONSTRAINT "PK_ca8cafd59ca6faaf67995344225" PRIMARY KEY ("id")
+      )`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "todos" ADD CONSTRAINT "FK_todos_user" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE`,
     );
   }
 }
