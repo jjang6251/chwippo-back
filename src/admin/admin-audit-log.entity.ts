@@ -15,6 +15,7 @@ export type AuditAction =
   | 'warn'
   | 'export'
   | 'close_inquiry'
+  | 'reply_inquiry'
   | 'publish_announcement'
   | 'update_announcement'
   | 'delete_announcement';

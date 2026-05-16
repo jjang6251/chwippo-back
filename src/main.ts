@@ -1,6 +1,9 @@
 import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -8,12 +11,33 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // bodyParser: false → 아래서 명시적 limit으로 재설정
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
+
+  // Cloudflare → Railway/EC2 proxy chain에서 client IP 식별 (ThrottlerGuard용)
+  // prod chain 확정 후 hop 수 조정 가능 (현재 1 hop 가정)
+  app.set('trust proxy', 1);
 
   app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     credentials: true,
   });
+
+  // HTTP 보안 헤더. API 전용이라 CSP·COEP는 비활성, COOP은 cross-origin 허용
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+  app.disable('x-powered-by');
+
+  // 요청 body 크기 제한 (DoS 방어 — 일반 API 호출은 충분히 작음)
+  app.use(json({ limit: '256kb' }));
+  app.use(urlencoded({ extended: true, limit: '256kb' }));
 
   app.use(cookieParser());
 
