@@ -271,16 +271,76 @@ describe('FilesService', () => {
       );
     });
 
-    it('publicUrl prefix 안 맞는 외부 URL → BadRequestException', async () => {
+    it('publicUrl prefix 안 맞는 외부 URL → ForbiddenException (assertOwnFileUrl 통합)', async () => {
+      // PR F 후: prefix mismatch도 본인 파일 아님으로 분류 → Forbidden
       await expect(
         service.deleteOwnFile('u1', 'https://evil.com/users/u1/cert.pdf'),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('빈 fileUrl → BadRequestException', async () => {
       await expect(service.deleteOwnFile('u1', '')).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  // ── assertOwnFileUrl (LRR P1T2 M-2 — myinfo·deleteOwnFile 공통 헬퍼) ─────
+  describe('assertOwnFileUrl — ownership 검증', () => {
+    it('본인 prefix → 통과 (예외 없음)', () => {
+      expect(() =>
+        service.assertOwnFileUrl(
+          'u1',
+          `${R2_PUBLIC}/users/u1/myinfo/cert/x.pdf`,
+        ),
+      ).not.toThrow();
+    });
+
+    it('다른 사용자 prefix → ForbiddenException (cross-user attach 차단)', () => {
+      expect(() =>
+        service.assertOwnFileUrl(
+          'u1',
+          `${R2_PUBLIC}/users/u2/myinfo/cert/x.pdf`,
+        ),
+      ).toThrow(ForbiddenException);
+    });
+
+    it('userId substring 우회 시도 (u1 prefix가 u11에 매치되지 않음)', () => {
+      expect(() =>
+        service.assertOwnFileUrl(
+          'u1',
+          `${R2_PUBLIC}/users/u11/myinfo/cert/x.pdf`,
+        ),
+      ).toThrow(ForbiddenException);
+    });
+
+    it('빈 fileUrl → BadRequestException', () => {
+      expect(() => service.assertOwnFileUrl('u1', '')).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('publicUrlPrefix 미설정 (dev 환경) → silently skip', async () => {
+      const noPrefixModule: TestingModule = await Test.createTestingModule({
+        providers: [
+          FilesService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string) => {
+                if (key === 'R2_PUBLIC_URL') return '';
+                if (key === 'R2_BUCKET') return 'chwippo';
+                return '';
+              }),
+            },
+          },
+        ],
+      }).compile();
+      const noPrefixService = noPrefixModule.get(FilesService);
+      // 빈 publicUrlPrefix → skip (가드가 dev 사용 막지 않음)
+      expect(() =>
+        noPrefixService.assertOwnFileUrl('u1', 'https://anywhere.com/x.pdf'),
+      ).not.toThrow();
     });
   });
 });

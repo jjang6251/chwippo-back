@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -547,6 +547,79 @@ describe('MyinfoService', () => {
         });
 
         expect(filesService.deleteFile).toHaveBeenCalledWith('r2://old.pdf');
+      });
+    });
+
+    // LRR P1T2 M-2: file_url ownership 검증
+    describe('file_url ownership 검증 (M-2)', () => {
+      it('createCert에 file_url 있으면 filesService.assertOwnFileUrl 호출', async () => {
+        await service.createCert(USER_ID, {
+          name: '자격증',
+          file_url: 'r2://own.pdf',
+          file_size_bytes: 1024,
+        });
+        expect(filesService.assertOwnFileUrl).toHaveBeenCalledWith(
+          USER_ID,
+          'r2://own.pdf',
+        );
+      });
+
+      it('createCert에 file_url 없으면 assertOwnFileUrl 미호출 (skip)', async () => {
+        await service.createCert(USER_ID, { name: '자격증' });
+        expect(filesService.assertOwnFileUrl).not.toHaveBeenCalled();
+      });
+
+      it('assertOwnFileUrl이 ForbiddenException throw → createCert 전파 + storage cap 검증 미진입', async () => {
+        filesService.assertOwnFileUrl.mockImplementationOnce(() => {
+          throw new ForbiddenException(
+            '본인이 업로드한 파일만 사용할 수 있습니다.',
+          );
+        });
+        await expect(
+          service.createCert(USER_ID, {
+            name: '자격증',
+            file_url: 'r2://other-user.pdf',
+            file_size_bytes: 1024,
+          }),
+        ).rejects.toThrow(ForbiddenException);
+        // 검증 실패 → 트랜잭션 진입 안 함 → assertWithinLimit 미호출
+        expect(storageUsage.assertWithinLimit).not.toHaveBeenCalled();
+      });
+
+      it('updateCert 새 file_url → assertOwnFileUrl 호출', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://old.pdf',
+          file_size_bytes: 1024,
+        } as unknown as Cert);
+
+        await service.updateCert(USER_ID, 'c-1', {
+          file_url: 'r2://new.pdf',
+          file_size_bytes: 2048,
+        });
+
+        expect(filesService.assertOwnFileUrl).toHaveBeenCalledWith(
+          USER_ID,
+          'r2://new.pdf',
+        );
+      });
+
+      it('updateCert에서 file_url=null (파일 제거 의도) → assertOwnFileUrl skip', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://old.pdf',
+          file_size_bytes: 1024,
+        } as unknown as Cert);
+
+        await service.updateCert(USER_ID, 'c-1', {
+          file_url: null,
+          file_size_bytes: 0,
+        });
+
+        // null은 truthy 아니라 검증 skip
+        expect(filesService.assertOwnFileUrl).not.toHaveBeenCalled();
       });
     });
   });

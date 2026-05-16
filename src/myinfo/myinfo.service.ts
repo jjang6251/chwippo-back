@@ -52,6 +52,11 @@ export class MyinfoService {
     const fileSize = data.file_size_bytes ?? 0;
     const fileUrl = data.file_url ?? null;
 
+    // LRR P1T2 M-2: 다른 사용자 파일 URL attach 차단
+    if (fileUrl) {
+      this.filesService.assertOwnFileUrl(userId, fileUrl);
+    }
+
     try {
       return await this.dataSource.transaction<T>(async (manager) => {
         // 1. 사용자 row 락 — 사용자별 mutex
@@ -105,6 +110,11 @@ export class MyinfoService {
     const { userId, id, entityClass, repo, data } = opts;
     const newFileSize = data.file_size_bytes;
     const newFileUrl = data.file_url;
+
+    // LRR P1T2 M-2: 새 파일 첨부 시 본인 prefix 검증 (null=파일 제거 의도라 skip)
+    if (newFileUrl) {
+      this.filesService.assertOwnFileUrl(userId, newFileUrl);
+    }
 
     // 파일이 교체되는 경우만 트랜잭션 + cap 검증
     if (newFileUrl !== undefined && newFileSize !== undefined) {
