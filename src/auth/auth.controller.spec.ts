@@ -6,6 +6,9 @@ import { AuthService } from './auth.service';
 import { User } from '../users/user.entity';
 
 const FRONTEND_URL = 'http://localhost:5173';
+const KAKAO_CLIENT_ID = 'kakao-app-id';
+const KAKAO_REDIRECT_URI = 'http://localhost:3000/auth/kakao/callback';
+const VALID_STATE = 'a'.repeat(64); // 32바이트 hex
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
@@ -25,11 +28,27 @@ function makeUser(overrides: Partial<User> = {}): User {
   };
 }
 
-function makeRes(): jest.Mocked<Pick<Response, 'redirect' | 'cookie'>> {
+function makeRes(): jest.Mocked<
+  Pick<Response, 'redirect' | 'cookie' | 'clearCookie'>
+> {
   return {
     redirect: jest.fn(),
     cookie: jest.fn(),
-  } as jest.Mocked<Pick<Response, 'redirect' | 'cookie'>>;
+    clearCookie: jest.fn(),
+  } as jest.Mocked<Pick<Response, 'redirect' | 'cookie' | 'clearCookie'>>;
+}
+
+/** state·cookie 일치하는 valid callback request 생성 헬퍼 */
+function makeValidCallbackReq(kakaoUser: {
+  kakaoId: string;
+  nickname: string;
+  email: string | null;
+}) {
+  return {
+    user: kakaoUser,
+    cookies: { oauth_state: VALID_STATE },
+    query: { state: VALID_STATE },
+  } as unknown as Parameters<typeof AuthController.prototype.kakaoCallback>[0];
 }
 
 const mockAuthService = {
@@ -41,6 +60,11 @@ const mockConfigService = {
   get: jest.fn().mockImplementation((key: string, defaultVal?: string) => {
     if (key === 'FRONTEND_URL') return FRONTEND_URL;
     return defaultVal ?? '';
+  }),
+  getOrThrow: jest.fn().mockImplementation((key: string) => {
+    if (key === 'KAKAO_CLIENT_ID') return KAKAO_CLIENT_ID;
+    if (key === 'KAKAO_REDIRECT_URI') return KAKAO_REDIRECT_URI;
+    throw new Error(`Unknown key: ${key}`);
   }),
 };
 
@@ -61,7 +85,149 @@ describe('AuthController', () => {
     controller = module.get(AuthController);
   });
 
-  describe('kakaoCallback()', () => {
+  describe('kakaoLogin() — OAuth state nonce 생성', () => {
+    it('oauth_state cookie set + 카카오 OAuth URL로 redirect (state 포함)', () => {
+      const res = makeRes() as unknown as Response;
+      controller.kakaoLogin(res);
+
+      // cookie set 검증
+      const cookieCall = (res.cookie as jest.Mock).mock.calls[0] as [
+        string,
+        string,
+        Record<string, unknown>,
+      ];
+      expect(cookieCall[0]).toBe('oauth_state');
+      expect(typeof cookieCall[1]).toBe('string');
+      expect(cookieCall[1].length).toBe(64); // 32 bytes hex
+      expect(cookieCall[2]).toEqual(
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          path: '/',
+        }),
+      );
+
+      // redirect URL 검증
+      const redirectUrl = (res.redirect as jest.Mock).mock
+        .calls[0][0] as string;
+      expect(redirectUrl).toContain('https://kauth.kakao.com/oauth/authorize');
+      expect(redirectUrl).toContain(`client_id=${KAKAO_CLIENT_ID}`);
+      expect(redirectUrl).toContain(
+        `redirect_uri=${encodeURIComponent(KAKAO_REDIRECT_URI)}`,
+      );
+      expect(redirectUrl).toContain('response_type=code');
+      expect(redirectUrl).toContain(`state=${cookieCall[1]}`);
+    });
+
+    it('호출마다 nonce 새로 생성 (재사용 X)', () => {
+      const res1 = makeRes() as unknown as Response;
+      const res2 = makeRes() as unknown as Response;
+      controller.kakaoLogin(res1);
+      controller.kakaoLogin(res2);
+      const nonce1 = (res1.cookie as jest.Mock).mock.calls[0][1] as string;
+      const nonce2 = (res2.cookie as jest.Mock).mock.calls[0][1] as string;
+      expect(nonce1).not.toBe(nonce2);
+    });
+  });
+
+  describe('kakaoCallback() — state 검증', () => {
+    it('cookie 없음 → /login?error=oauth_state_mismatch 리다이렉트', async () => {
+      const req = {
+        user: { kakaoId: 'k', nickname: 'n', email: null },
+        cookies: {},
+        query: { state: VALID_STATE },
+      } as any;
+      const res = makeRes() as unknown as Response;
+      await controller.kakaoCallback(req, res);
+      expect(res.clearCookie).toHaveBeenCalledWith('oauth_state', {
+        path: '/',
+      });
+      expect(mockAuthService.findOrCreateKakaoUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('query.state 없음 → mismatch 리다이렉트', async () => {
+      const req = {
+        user: { kakaoId: 'k', nickname: 'n', email: null },
+        cookies: { oauth_state: VALID_STATE },
+        query: {},
+      } as any;
+      const res = makeRes() as unknown as Response;
+      await controller.kakaoCallback(req, res);
+      expect(mockAuthService.findOrCreateKakaoUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('state 불일치 → mismatch 리다이렉트', async () => {
+      const req = {
+        user: { kakaoId: 'k', nickname: 'n', email: null },
+        cookies: { oauth_state: 'a'.repeat(64) },
+        query: { state: 'b'.repeat(64) },
+      } as any;
+      const res = makeRes() as unknown as Response;
+      await controller.kakaoCallback(req, res);
+      expect(mockAuthService.findOrCreateKakaoUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('query.state가 배열(다중 파라미터) → mismatch 리다이렉트 (type 안전)', async () => {
+      const req = {
+        user: { kakaoId: 'k', nickname: 'n', email: null },
+        cookies: { oauth_state: VALID_STATE },
+        query: { state: [VALID_STATE, 'other'] },
+      } as any;
+      const res = makeRes() as unknown as Response;
+      await controller.kakaoCallback(req, res);
+      expect(mockAuthService.findOrCreateKakaoUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('cookie 빈 문자열 → mismatch 리다이렉트', async () => {
+      const req = {
+        user: { kakaoId: 'k', nickname: 'n', email: null },
+        cookies: { oauth_state: '' },
+        query: { state: '' },
+      } as any;
+      const res = makeRes() as unknown as Response;
+      await controller.kakaoCallback(req, res);
+      expect(mockAuthService.findOrCreateKakaoUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('state 일치 시 항상 oauth_state cookie 삭제 (한 번만 사용)', async () => {
+      const user = makeUser();
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user,
+        isNew: false,
+      });
+      mockAuthService.issueTokens.mockResolvedValue({
+        accessToken: 'a',
+        refreshToken: 'r',
+      });
+      const req = makeValidCallbackReq({
+        kakaoId: 'k',
+        nickname: 'n',
+        email: null,
+      });
+      const res = makeRes() as unknown as Response;
+      await controller.kakaoCallback(req, res);
+      expect(res.clearCookie).toHaveBeenCalledWith('oauth_state', {
+        path: '/',
+      });
+    });
+  });
+
+  describe('kakaoCallback() — 인증 흐름 (state 통과 후)', () => {
     it('정상 활성 유저 → access_token 포함 프론트 URL로 리다이렉트', async () => {
       const user = makeUser();
       mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
@@ -73,9 +239,11 @@ describe('AuthController', () => {
         refreshToken: 'refresh-token-value',
       });
 
-      const req = {
-        user: { kakaoId: 'kakao-123', nickname: '테스트유저', email: null },
-      } as any;
+      const req = makeValidCallbackReq({
+        kakaoId: 'kakao-123',
+        nickname: '테스트유저',
+        email: null,
+      });
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
@@ -97,9 +265,11 @@ describe('AuthController', () => {
         isNew: false,
       });
 
-      const req = {
-        user: { kakaoId: 'kakao-123', nickname: '테스트유저', email: null },
-      } as any;
+      const req = makeValidCallbackReq({
+        kakaoId: 'kakao-123',
+        nickname: '테스트유저',
+        email: null,
+      });
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
@@ -120,9 +290,11 @@ describe('AuthController', () => {
         isNew: false,
       });
 
-      const req = {
-        user: { kakaoId: 'kakao-admin', nickname: '어드민', email: null },
-      } as any;
+      const req = makeValidCallbackReq({
+        kakaoId: 'kakao-admin',
+        nickname: '어드민',
+        email: null,
+      });
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
@@ -143,9 +315,11 @@ describe('AuthController', () => {
         refreshToken: 'refresh-token',
       });
 
-      const req = {
-        user: { kakaoId: 'kakao-new', nickname: '신규', email: null },
-      } as any;
+      const req = makeValidCallbackReq({
+        kakaoId: 'kakao-new',
+        nickname: '신규',
+        email: null,
+      });
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
@@ -165,9 +339,11 @@ describe('AuthController', () => {
         refreshToken: 'refresh-token',
       });
 
-      const req = {
-        user: { kakaoId: 'kakao-exist', nickname: '기존', email: null },
-      } as any;
+      const req = makeValidCallbackReq({
+        kakaoId: 'kakao-exist',
+        nickname: '기존',
+        email: null,
+      });
       const res = makeRes() as unknown as Response;
 
       await controller.kakaoCallback(req, res);
