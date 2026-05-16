@@ -82,23 +82,35 @@ export class FilesService {
   }
 
   /**
-   * 본인이 업로드한 파일만 R2에서 삭제.
-   * key path가 users/{userId}/... 구조라서 userId 일치 여부로 권한 검증.
-   * ValidationPipe 거부 등 컨트롤러 진입 전 실패한 경우 프론트가 보상 호출.
+   * fileUrl이 본인 R2 prefix (`{publicUrl}/users/{userId}/`)로 시작하는지 검증.
+   * - dev에서 R2_PUBLIC_URL 미설정 (publicUrlPrefix 빈 값) → skip (가드가 dev 사용 막지 않음)
+   * - prod는 env.validation에서 R2_PUBLIC_URL required (Joi when NODE_ENV)
+   *
+   * LRR P1T2 M-2: myinfo CRUD에서 다른 사용자 파일 URL attach 차단용.
+   * deleteOwnFile에서도 동일 검증 재사용.
    */
-  async deleteOwnFile(userId: string, fileUrl: string): Promise<void> {
+  assertOwnFileUrl(userId: string, fileUrl: string): void {
     if (!fileUrl) {
       throw new BadRequestException('fileUrl이 필요합니다.');
     }
-    if (!this.publicUrlPrefix || !fileUrl.startsWith(this.publicUrlPrefix)) {
-      throw new BadRequestException('잘못된 파일 URL입니다.');
+    if (!this.publicUrlPrefix) {
+      // dev R2 미설정 — silently skip
+      return;
     }
-    const key = fileUrl.slice(this.publicUrlPrefix.length + 1);
-    if (!key.startsWith(`users/${userId}/`)) {
+    const expectedPrefix = `${this.publicUrlPrefix}/users/${userId}/`;
+    if (!fileUrl.startsWith(expectedPrefix)) {
       throw new ForbiddenException(
-        '본인이 업로드한 파일만 삭제할 수 있습니다.',
+        '본인이 업로드한 파일만 사용할 수 있습니다.',
       );
     }
+  }
+
+  /**
+   * 본인이 업로드한 파일만 R2에서 삭제.
+   * ValidationPipe 거부 등 컨트롤러 진입 전 실패한 경우 프론트가 보상 호출.
+   */
+  async deleteOwnFile(userId: string, fileUrl: string): Promise<void> {
+    this.assertOwnFileUrl(userId, fileUrl);
     await this.deleteFile(fileUrl);
   }
 
