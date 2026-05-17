@@ -64,8 +64,12 @@ export class AdminController {
   }
 
   @Get('inquiries/:id')
-  getInquiry(@Param('id') id: string) {
-    return this.inquiriesService.findOneAdmin(id);
+  async getInquiry(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    // LRR P1T3 PR J — 어드민이 어떤 사용자의 문의 본문·PII context를 봤는지 추적.
+    // List 조회는 빈도 높고 PII 부분 노출이라 skip, 단건 상세만 audit (정책 트레이드오프).
+    const inquiry = await this.inquiriesService.findOneAdmin(id);
+    await this.auditService.log(user.id, 'view_inquiry', 'inquiry', id, {});
+    return inquiry;
   }
 
   @Post('inquiries/:id/comments')

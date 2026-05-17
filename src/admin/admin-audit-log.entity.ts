@@ -16,6 +16,7 @@ export type AuditAction =
   | 'export'
   | 'close_inquiry'
   | 'reply_inquiry'
+  | 'view_inquiry' // LRR P1T3 PR J — 단건 문의 상세 조회 (본문+사용자 context 노출)
   | 'publish_announcement'
   | 'update_announcement'
   | 'delete_announcement';
