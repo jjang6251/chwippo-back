@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { createTestApp } from './helpers/bootstrap';
 
 describe('App (e2e)', () => {
@@ -41,11 +42,25 @@ describe('App (e2e)', () => {
   });
 
   describe('응답 wrapping (ResponseTransformInterceptor)', () => {
-    it('health 응답이 { data, message } 형태로 wrap됨', async () => {
+    it('health 응답이 { data, message } 형태로 wrap됨 + DB ping (Phase 3-A INF-A2)', async () => {
       const res = await request(app.getHttpServer()).get('/health');
       expect(res.body).toHaveProperty('data');
       expect(res.body).toHaveProperty('message', 'ok');
-      expect(res.body.data).toHaveProperty('status', 'ok');
+      expect(res.body.data).toMatchObject({ status: 'ok', db: 'ok' });
+      expect(res.body.data).toHaveProperty('timestamp');
+    });
+  });
+
+  describe('Health DB ping 실패 → 503 (Phase 3-A INF-A2)', () => {
+    it('DataSource.query 실패 mock → ServiceUnavailableException', async () => {
+      const ds = app.get(DataSource);
+      const orig = ds.query.bind(ds);
+      ds.query = jest.fn().mockRejectedValueOnce(new Error('DB down')) as never;
+
+      const res = await request(app.getHttpServer()).get('/health').expect(503);
+      expect(res.body.message).toBeDefined();
+
+      ds.query = orig as never;
     });
   });
 });
