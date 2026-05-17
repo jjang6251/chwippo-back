@@ -50,6 +50,64 @@ describe('UsersService', () => {
 
   afterEach(() => jest.clearAllMocks());
 
+  // ── agreeTerms (LRR P2T1 PR N H-3) ────────────────────
+  describe('agreeTerms', () => {
+    it('정상: repo.update로 termsAgreedAt 갱신', async () => {
+      userRepo.update.mockResolvedValue({} as any);
+      await service.agreeTerms('user-uuid-1');
+      expect(userRepo.update).toHaveBeenCalledWith(
+        'user-uuid-1',
+        expect.objectContaining({ termsAgreedAt: expect.any(Date) }),
+      );
+    });
+
+    it('이미 동의한 user (idempotent) → 정상 호출 (timestamp 새 값으로 갱신)', async () => {
+      userRepo.update.mockResolvedValue({} as any);
+      await service.agreeTerms('user-uuid-1');
+      // NotFound 검증 없음 — 단순 update. affected row 0이어도 throw 안 함
+      expect(userRepo.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('존재하지 않는 userId → throw 없이 update 호출 (affected 0, race 시점 약점)', async () => {
+      userRepo.update.mockResolvedValue({ affected: 0 } as any);
+      await expect(service.agreeTerms('nonexistent')).resolves.toBeUndefined();
+    });
+  });
+
+  // ── markOnboarded (LRR P2T1 PR N H-3) ─────────────────
+  describe('markOnboarded', () => {
+    it('처음 호출 (onboardedAt null) → repo.update로 onboardedAt 설정', async () => {
+      const user = makeUser({ onboardedAt: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.update.mockResolvedValue({} as any);
+
+      await service.markOnboarded('user-uuid-1');
+
+      expect(userRepo.findOneBy).toHaveBeenCalledWith({ id: 'user-uuid-1' });
+      expect(userRepo.update).toHaveBeenCalledWith(
+        'user-uuid-1',
+        expect.objectContaining({ onboardedAt: expect.any(Date) }),
+      );
+    });
+
+    it('이미 onboard됨 (onboardedAt 있음) → update 호출 안 함 (idempotent)', async () => {
+      const user = makeUser({ onboardedAt: new Date('2026-01-01') });
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      await service.markOnboarded('user-uuid-1');
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 userId → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+      await expect(service.markOnboarded('nonexistent')).rejects.toThrow(
+        new NotFoundException('사용자를 찾을 수 없습니다.'),
+      );
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
   // ── updateNickname ─────────────────────────────────────
   describe('updateNickname', () => {
     it('존재하는 userId → 닉네임 변경 후 저장된 유저 반환', async () => {
