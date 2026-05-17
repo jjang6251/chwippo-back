@@ -301,7 +301,13 @@ export class ApplicationsService {
     itemId: string,
     dto: UpdateChecklistItemDto,
   ) {
+    // LRR P2T2 PR β (HI-1): stepId가 appId 소속인지 검증 (createChecklistItem 패턴과 일치)
     await this.findEntity(userId, appId);
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId: appId },
+    });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+
     const item = await this.checklistRepo.findOne({
       where: { id: itemId, stepId },
     });
@@ -317,7 +323,13 @@ export class ApplicationsService {
     stepId: string,
     itemId: string,
   ) {
+    // LRR P2T2 PR β (HI-1): stepId가 appId 소속인지 검증
     await this.findEntity(userId, appId);
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId: appId },
+    });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+
     const item = await this.checklistRepo.findOne({
       where: { id: itemId, stepId },
     });
