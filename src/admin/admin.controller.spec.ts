@@ -144,4 +144,54 @@ describe('AdminController — audit 호출', () => {
       expect(auditService.log).not.toHaveBeenCalled();
     });
   });
+
+  describe('getInquiries page/limit cap (LRR P1T3 PR K L-1)', () => {
+    beforeEach(() => {
+      inquiriesService.findAll.mockResolvedValue({ items: [], total: 0 });
+    });
+
+    it('limit 미지정 → 기본 30', async () => {
+      await controller.getInquiries(undefined, undefined, undefined, undefined);
+      expect(inquiriesService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1, limit: 30 }),
+      );
+    });
+
+    it('limit=150 → 100으로 cap', async () => {
+      await controller.getInquiries(undefined, undefined, '1', '150');
+      expect(inquiriesService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 100 }),
+      );
+    });
+
+    it('limit=0 → 1로 floor (음수·0 차단)', async () => {
+      await controller.getInquiries(undefined, undefined, '1', '0');
+      // parseInt('0')||30 = 30 (0은 falsy라 default 적용) — 정상 동작
+      expect(inquiriesService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 30 }),
+      );
+    });
+
+    it("limit='abc' (NaN) → 기본 30", async () => {
+      await controller.getInquiries(undefined, undefined, '1', 'abc');
+      expect(inquiriesService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 30 }),
+      );
+    });
+
+    it('page 미지정 → 1', async () => {
+      await controller.getInquiries(undefined, undefined, undefined, '30');
+      expect(inquiriesService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1 }),
+      );
+    });
+
+    it("page='0' → 1로 floor", async () => {
+      await controller.getInquiries(undefined, undefined, '0', '30');
+      // parseInt('0')||1 = 1 → max(1,1)=1
+      expect(inquiriesService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1 }),
+      );
+    });
+  });
 });

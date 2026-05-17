@@ -55,11 +55,14 @@ export class AdminController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    // LRR P1T3 PR K L-1 — page≥1, limit 1~100 cap (어드민 1명도 limit=999999 자기 부하 차단)
+    const pageNum = Math.max(parseInt(page ?? '1') || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit ?? '30') || 30, 1), 100);
     return this.inquiriesService.findAll({
       status,
       category,
-      page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 30,
+      page: pageNum,
+      limit: limitNum,
     });
   }
 

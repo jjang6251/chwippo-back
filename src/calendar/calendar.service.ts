@@ -198,7 +198,9 @@ export class CalendarService {
     userId: string,
     dto: CreateDailyNoteDto,
   ): Promise<DailyNote> {
-    const note = this.noteRepo.create({ userId, ...dto });
+    // LRR P1T3 PR K L-5 — userId가 spread 뒤에 와야 dto에 userId가 섞여 들어와도 override됨
+    // (forbidNonWhitelisted가 차단하지만 defense-in-depth)
+    const note = this.noteRepo.create({ ...dto, userId });
     return this.noteRepo.save(note);
   }
 

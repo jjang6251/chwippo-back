@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -29,6 +30,8 @@ export class DashboardSectionDto {
 
 export class UpdateDashboardConfigDto {
   @IsArray()
+  // LRR P1T3 PR K L-7 — 알려진 ID 8개 + 여유 → 20개 cap. self-DoS 차단
+  @ArrayMaxSize(20)
   @ValidateNested({ each: true })
   @Type(() => DashboardSectionDto)
   sections: DashboardSectionDto[];
