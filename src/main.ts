@@ -75,6 +75,15 @@ async function bootstrap() {
   const reflector = app.get(Reflector);
   app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
 
-  await app.listen(process.env.PORT ?? 3000);
+  // LRR Phase 3-A (INF-A1): SIGTERM/SIGINT 시 DB 커넥션·진행 중 요청 정리.
+  // Railway·EC2 deploy 시 graceful 셧다운 (in-flight request 완료 후 종료)
+  app.enableShutdownHooks();
+
+  const port = Number(process.env.PORT ?? 3000);
+  await app.listen(port);
+
+  // LRR Phase 3-A (INF-A3): 부팅 완료 로그 — 포트·환경·시간 명시
+  const env = process.env.NODE_ENV ?? 'development';
+  Logger.log(`🚀 chwippo-back listening on :${port} (env=${env})`, 'Bootstrap');
 }
 void bootstrap();
