@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -38,6 +39,31 @@ export class CalendarController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
+    // LRR P1T3 PR K L-3 — YYYY-MM-DD 형식 검증 (raw SQL 파라미터로 가나 invalid 입력 시 500 → 400으로 전환)
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    for (const [name, val] of [
+      ['date', date],
+      ['startDate', startDate],
+      ['endDate', endDate],
+    ] as const) {
+      if (val !== undefined && !datePattern.test(val)) {
+        throw new BadRequestException(
+          `${name}는 YYYY-MM-DD 형식이어야 합니다.`,
+        );
+      }
+    }
+    // LRR P1T3 PR K L-2 — 날짜 범위 31일 cap (정상 사용 월 단위에 여유, 무한 범위 부하 차단)
+    if (startDate && endDate) {
+      const days =
+        (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+        86400000;
+      if (days < 0) {
+        throw new BadRequestException('endDate가 startDate 이전입니다.');
+      }
+      if (days > 31) {
+        throw new BadRequestException('날짜 범위는 31일 이내여야 합니다.');
+      }
+    }
     return this.calendarService.getDailyNotes(user.id, {
       date,
       startDate,
