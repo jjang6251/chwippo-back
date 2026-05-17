@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -201,6 +201,122 @@ describe('UsersService', () => {
       await service.deleteAccount('user-uuid-1');
 
       expect(filesService.deleteFile).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── getDashboardConfig (LRR P2T1 PR O H-4) ────────────
+  describe('getDashboardConfig', () => {
+    it('DB dashboardConfig null → DEFAULT_SECTIONS (stats·dday·todos) 반환', async () => {
+      const user = makeUser({ dashboardConfig: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      const result = await service.getDashboardConfig('user-uuid-1');
+
+      expect(userRepo.findOneBy).toHaveBeenCalledWith({ id: 'user-uuid-1' });
+      expect(result.sections).toEqual([
+        { id: 'stats', visible: true },
+        { id: 'dday', visible: true },
+        { id: 'todos', visible: true },
+      ]);
+    });
+
+    it('기존 config 있음 → 그대로 반환', async () => {
+      const custom = {
+        sections: [
+          { id: 'stats', visible: true },
+          { id: 'cover_letter_quick', visible: true },
+        ],
+      };
+      const user = makeUser({ dashboardConfig: custom });
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      const result = await service.getDashboardConfig('user-uuid-1');
+      expect(result).toEqual(custom);
+    });
+
+    it('존재하지 않는 userId → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+      await expect(service.getDashboardConfig('nonexistent')).rejects.toThrow(
+        new NotFoundException('사용자를 찾을 수 없습니다.'),
+      );
+    });
+
+    it('orphan section ID 포함된 옛 DB row → 그대로 반환 (필터는 PATCH/프론트에서)', async () => {
+      const orphan = {
+        sections: [
+          { id: 'stats', visible: true },
+          { id: 'myinfo_progress', visible: true }, // ← deprecated
+          { id: 'dday', visible: true },
+        ],
+      };
+      const user = makeUser({ dashboardConfig: orphan });
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      const result = await service.getDashboardConfig('user-uuid-1');
+      expect(result).toEqual(orphan);
+    });
+  });
+
+  // ── updateDashboardConfig (LRR P2T1 PR O H-4) ─────────
+  describe('updateDashboardConfig', () => {
+    const validSections = [
+      { id: 'stats', visible: true },
+      { id: 'dday', visible: true },
+      { id: 'todos', visible: false },
+    ];
+
+    it('정상 sections → 200 + DB JSONB 저장 + 응답', async () => {
+      const user = makeUser({ dashboardConfig: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.save.mockImplementation(async (u) => u as User);
+
+      const result = await service.updateDashboardConfig('user-uuid-1', {
+        sections: validSections,
+      });
+
+      expect(userRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dashboardConfig: { sections: validSections },
+        }),
+      );
+      expect(result.sections).toEqual(validSections);
+    });
+
+    it('sections[0].id !== "stats" → BadRequestException', async () => {
+      const user = makeUser();
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      await expect(
+        service.updateDashboardConfig('user-uuid-1', {
+          sections: [
+            { id: 'dday', visible: true },
+            { id: 'stats', visible: true },
+          ],
+        }),
+      ).rejects.toThrow(
+        new BadRequestException('stats 섹션은 항상 첫 번째여야 합니다.'),
+      );
+      expect(userRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('sections [] → BadRequestException (sections[0] undefined → stats 첫 위치 enforce 실패)', async () => {
+      const user = makeUser();
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      await expect(
+        service.updateDashboardConfig('user-uuid-1', { sections: [] }),
+      ).rejects.toThrow(BadRequestException);
+      expect(userRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 userId → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+      await expect(
+        service.updateDashboardConfig('nonexistent', {
+          sections: validSections,
+        }),
+      ).rejects.toThrow(new NotFoundException('사용자를 찾을 수 없습니다.'));
+      expect(userRepo.save).not.toHaveBeenCalled();
     });
   });
 
