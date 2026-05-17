@@ -8,6 +8,8 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
+import { User } from '../src/users/user.entity';
 import { createTestApp } from './helpers/bootstrap';
 import { bearer, signInAsUser, signInAsAdmin } from './helpers/auth';
 import { cleanAllTestUsers } from './helpers/db';
@@ -134,6 +136,68 @@ describe('Auth refresh·logout (e2e)', () => {
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .set('Cookie', `refresh_token=${refreshToken}`)
+        .expect(401);
+    });
+  });
+
+  // ── M-5·M-7 JWT 서명·payload·형식 변조 → 401 ──────────
+  describe('JWT 변조 (M-5·M-7, A3-3·A3-4·A3-5·A4-4)', () => {
+    it('Bearer + 임의 문자열 (JWT 형식 아님) → 401', async () => {
+      return request(app.getHttpServer())
+        .get('/users/me/dashboard-config')
+        .set('Authorization', 'Bearer not-a-jwt-token')
+        .expect(401);
+    });
+
+    it('Bearer + 유효 JWT 형식이지만 서명 변조 (마지막 1글자 변경) → 401', async () => {
+      const { accessToken } = await signInAsUser(app);
+      const tampered =
+        accessToken.slice(0, -1) + (accessToken.endsWith('a') ? 'b' : 'a');
+      return request(app.getHttpServer())
+        .get('/users/me/dashboard-config')
+        .set('Authorization', `Bearer ${tampered}`)
+        .expect(401);
+    });
+
+    it('Bearer + payload 변조 (base64 디코드 후 sub 변경) → 401 (서명 불일치)', async () => {
+      const { accessToken } = await signInAsUser(app);
+      const parts = accessToken.split('.');
+      // payload (parts[1]) 변조 → 서명 검증 실패
+      const tamperedPayload = Buffer.from(
+        JSON.stringify({
+          sub: '00000000-0000-0000-0000-000000000000',
+          role: 'admin',
+        }),
+      ).toString('base64url');
+      const tampered = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
+      return request(app.getHttpServer())
+        .get('/users/me/dashboard-config')
+        .set('Authorization', `Bearer ${tampered}`)
+        .expect(401);
+    });
+  });
+
+  // ── M-9 변경 후 정지 → 401 통합 ───────────────────────
+  describe('변경 후 정지 → 다음 요청 401 (M-9, U3-17)', () => {
+    it('정상 요청 200 → DB suspendedAt 설정 → 옛 token으로 재요청 401', async () => {
+      const { accessToken, user } = await signInAsUser(app);
+
+      // 1차 요청 정상
+      await request(app.getHttpServer())
+        .get('/users/me/dashboard-config')
+        .set(bearer(accessToken))
+        .expect(200);
+
+      // 외부 admin이 정지 처리한 효과 — DB 직접 수정
+      await app
+        .get(DataSource)
+        .getRepository(User)
+        .update(user.id, { suspendedAt: new Date() });
+
+      // 2차 요청 — 옛 token이지만 JwtStrategy.validate가 suspendedAt 체크 → 401
+      await request(app.getHttpServer())
+        .get('/users/me/dashboard-config')
+        .set(bearer(accessToken))
         .expect(401);
     });
   });

@@ -211,6 +211,108 @@ describe('AuthService', () => {
       expect(String(!nullUser.termsAgreedAt)).toBe('true'); // needs_terms="true"
       expect(String(!agreedUser.termsAgreedAt)).toBe('false'); // needs_terms="false"
     });
+
+    // ── M-3 ADMIN_KAKAO_ID 자동 승격 ─────────────────────
+    describe('ADMIN_KAKAO_ID 자동 승격 (M-3, A2-13)', () => {
+      const adminId = 'kakao-admin-999';
+
+      beforeEach(() => {
+        const mockConfig = service['config'] as jest.Mocked<ConfigService>;
+        mockConfig.get.mockImplementation(
+          (key: string, defaultVal?: string) => {
+            if (key === 'ADMIN_KAKAO_ID') return adminId;
+            if (key === 'JWT_EXPIRES_IN') return '1h';
+            if (key === 'JWT_REFRESH_EXPIRES_IN') return '30d';
+            return defaultVal ?? '';
+          },
+        );
+      });
+
+      it('카카오ID === ADMIN_KAKAO_ID + role=user → admin 자동 승격 + repo.update 호출', async () => {
+        const user = makeUser({ kakaoId: adminId, role: 'user' });
+        userRepo.findOne.mockResolvedValue(user);
+
+        const result = await service.findOrCreateKakaoUser({
+          kakaoId: adminId,
+          nickname: '관리자',
+          email: 'admin@x.com',
+        });
+
+        expect(userRepo.update).toHaveBeenCalledWith(user.id, {
+          role: 'admin',
+        });
+        expect(result.user.role).toBe('admin');
+      });
+
+      it('이미 role=admin → update 미호출 (중복 승격 방지)', async () => {
+        const user = makeUser({ kakaoId: adminId, role: 'admin' });
+        userRepo.findOne.mockResolvedValue(user);
+
+        await service.findOrCreateKakaoUser({
+          kakaoId: adminId,
+          nickname: '관리자',
+          email: null,
+        });
+
+        expect(userRepo.update).not.toHaveBeenCalled();
+      });
+
+      it('카카오ID !== ADMIN_KAKAO_ID → 승격 안 됨', async () => {
+        const user = makeUser({ kakaoId: 'kakao-other', role: 'user' });
+        userRepo.findOne.mockResolvedValue(user);
+
+        const result = await service.findOrCreateKakaoUser({
+          kakaoId: 'kakao-other',
+          nickname: '일반',
+          email: null,
+        });
+
+        expect(result.user.role).toBe('user');
+        expect(userRepo.update).not.toHaveBeenCalled();
+      });
+
+      it('ADMIN_KAKAO_ID 미설정 (빈 문자열) → 승격 분기 미작동', async () => {
+        const mockConfig = service['config'] as jest.Mocked<ConfigService>;
+        mockConfig.get.mockImplementation(
+          (key: string, defaultVal?: string) => {
+            if (key === 'ADMIN_KAKAO_ID') return '';
+            if (key === 'JWT_EXPIRES_IN') return '1h';
+            if (key === 'JWT_REFRESH_EXPIRES_IN') return '30d';
+            return defaultVal ?? '';
+          },
+        );
+
+        const user = makeUser({ kakaoId: '', role: 'user' });
+        userRepo.findOne.mockResolvedValue(user);
+
+        await service.findOrCreateKakaoUser({
+          kakaoId: '',
+          nickname: 'x',
+          email: null,
+        });
+
+        // adminKakaoId가 빈 값이면 조건 분기 자체가 falsy로 차단
+        expect(userRepo.update).not.toHaveBeenCalled();
+      });
+    });
+
+    // ── M-4 nickname·email 그대로 저장 (XSS 처리는 렌더 측 책임) ─
+    it('M-4 (A2-28): <script> 포함 nickname → 그대로 저장 (sanitize는 렌더 측 책임)', async () => {
+      const xss = '<script>alert(1)</script>';
+      userRepo.findOne.mockResolvedValue(null);
+      userRepo.create.mockImplementation((dto) => dto as User);
+      userRepo.save.mockImplementation(async (u) => u as User);
+
+      const result = await service.findOrCreateKakaoUser({
+        kakaoId: 'kakao-x',
+        nickname: xss,
+        email: '"><img onerror=x>@a.com',
+      });
+
+      // 백엔드는 raw 저장 — XSS 방어는 프론트 escape (React 기본 escape)·admin 뷰 책임
+      expect(result.user.nickname).toBe(xss);
+      expect(result.user.email).toBe('"><img onerror=x>@a.com');
+    });
   });
 
   // ── issueTokens ────────────────────────────────────────

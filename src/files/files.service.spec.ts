@@ -314,6 +314,29 @@ describe('FilesService', () => {
       ).toThrow(ForbiddenException);
     });
 
+    // M-25 (F2-11): URL encoding 우회 시도 — `%2F`로 path separator 우회 가능?
+    it('M-25: URL-encoded `/` (%2F) 우회 시도 → 차단 (prefix string match 그대로)', () => {
+      // attacker: `${R2_PUBLIC}/users/u2%2Fmyinfo/...` — u2를 자신처럼 보이게 시도
+      expect(() =>
+        service.assertOwnFileUrl(
+          'u1',
+          `${R2_PUBLIC}/users/u2%2Fmyinfo/cert/x.pdf`,
+        ),
+      ).toThrow(ForbiddenException);
+    });
+
+    it('M-25: URL-encoded `..` (%2E%2E) — user 자신 prefix 안에 있으면 통과 (S3 key 리터럴 보관, 디코딩 안 함)', () => {
+      // %2E%2E는 `..`이지만 S3는 key를 normalize하지 않고 리터럴로 보관 →
+      // `users/u1/%2E%2E/u2/cert/x.pdf`는 그저 이상한 키일 뿐 다른 사용자 파일 접근 불가.
+      // ownership 검증의 의도는 "본인 prefix 시작"인데 이 URL은 본인 prefix로 시작하므로 통과 — 안전.
+      expect(() =>
+        service.assertOwnFileUrl(
+          'u1',
+          `${R2_PUBLIC}/users/u1/%2E%2E/u2/cert/x.pdf`,
+        ),
+      ).not.toThrow();
+    });
+
     it('빈 fileUrl → BadRequestException', () => {
       expect(() => service.assertOwnFileUrl('u1', '')).toThrow(
         BadRequestException,
