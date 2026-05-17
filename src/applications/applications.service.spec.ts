@@ -14,6 +14,7 @@ describe('ApplicationsService', () => {
   let service: ApplicationsService;
   let appRepo: jest.Mocked<Repository<Application>>;
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
+  let checklistRepo: jest.Mocked<Repository<StepChecklistItem>>;
   let dataSource: { transaction: jest.Mock; query: jest.Mock };
 
   const makeApp = (overrides: Partial<Application> = {}): Application =>
@@ -96,6 +97,7 @@ describe('ApplicationsService', () => {
           provide: getRepositoryToken(StepChecklistItem),
           useValue: mock<Repository<StepChecklistItem>>(),
         },
+        // checklistRepo는 module.get로 따로 받지 않고 위 inline mock 그대로 사용
         { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
@@ -103,6 +105,7 @@ describe('ApplicationsService', () => {
     service = module.get<ApplicationsService>(ApplicationsService);
     appRepo = module.get(getRepositoryToken(Application));
     stepRepo = module.get(getRepositoryToken(ApplicationStep));
+    checklistRepo = module.get(getRepositoryToken(StepChecklistItem));
     dataSource = module.get(DataSource);
   });
 
@@ -681,6 +684,77 @@ describe('ApplicationsService', () => {
       await expect(service.remove('user-B', 'app-uuid-1')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  // ── HI-1 회귀: checklist update/delete stepId-appId 매칭 ─────
+  describe('updateChecklistItem · deleteChecklistItem (HI-1)', () => {
+    it('updateChecklistItem: 본인 app + 본인 step·item → 200', async () => {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      stepRepo.findOne.mockResolvedValue(makeStep(0, '서류'));
+      const existingItem = { id: 'item-1', stepId: 'step-0', content: '기존' };
+      checklistRepo.findOne.mockResolvedValue(existingItem as never);
+      checklistRepo.save.mockImplementation(async (item) => item as never);
+
+      await service.updateChecklistItem(
+        'user-uuid-1',
+        'app-uuid-1',
+        'step-0',
+        'item-1',
+        { content: '갱신' },
+      );
+
+      expect(stepRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'step-0', applicationId: 'app-uuid-1' },
+      });
+    });
+
+    it('updateChecklistItem: 본인 app + 타인 stepId → NotFoundException (stepRepo.findOne null)', async () => {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      stepRepo.findOne.mockResolvedValue(null); // 타인 step
+      await expect(
+        service.updateChecklistItem(
+          'user-uuid-1',
+          'app-uuid-1',
+          'foreign-step',
+          'item-1',
+          { content: 'x' },
+        ),
+      ).rejects.toThrow(NotFoundException);
+      // checklistRepo는 호출되지 않아야 함 (step 검증에서 차단)
+      expect(checklistRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('deleteChecklistItem: 본인 app + 본인 step·item → ok', async () => {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      stepRepo.findOne.mockResolvedValue(makeStep(0, '서류'));
+      const existingItem = { id: 'item-1', stepId: 'step-0' };
+      checklistRepo.findOne.mockResolvedValue(existingItem as never);
+      checklistRepo.remove.mockResolvedValue(existingItem as never);
+
+      await service.deleteChecklistItem(
+        'user-uuid-1',
+        'app-uuid-1',
+        'step-0',
+        'item-1',
+      );
+
+      expect(checklistRepo.remove).toHaveBeenCalledWith(existingItem);
+    });
+
+    it('deleteChecklistItem: 본인 app + 타인 stepId → NotFoundException', async () => {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      stepRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.deleteChecklistItem(
+          'user-uuid-1',
+          'app-uuid-1',
+          'foreign-step',
+          'item-1',
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(checklistRepo.findOne).not.toHaveBeenCalled();
+      expect(checklistRepo.remove).not.toHaveBeenCalled();
     });
   });
 });
