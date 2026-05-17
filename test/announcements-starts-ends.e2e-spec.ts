@@ -6,6 +6,8 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
+import { Announcement } from '../src/announcements/announcement.entity';
 import { createTestApp } from './helpers/bootstrap';
 import { bearer, signInAsAdmin } from './helpers/auth';
 import { cleanAllTestUsers } from './helpers/db';
@@ -23,6 +25,12 @@ describe('Announcements starts/ends 논리 (e2e, PR X MED-T3-1)', () => {
   });
 
   afterEach(async () => {
+    await app
+      .get(DataSource)
+      .getRepository(Announcement)
+      .createQueryBuilder()
+      .delete()
+      .execute();
     await cleanAllTestUsers(app);
   });
 
