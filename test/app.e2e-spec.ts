@@ -1,32 +1,17 @@
 import { INestApplication } from '@nestjs/common';
-import { NestExpressApplication } from '@nestjs/platform-express';
-import { Test, TestingModule } from '@nestjs/testing';
-import helmet from 'helmet';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module';
+import { createTestApp } from './helpers/bootstrap';
 
 describe('App (e2e)', () => {
   let app: INestApplication<App>;
 
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
+  beforeAll(async () => {
+    app = await createTestApp();
+  });
 
-    // prod main.ts와 같은 helmet·x-powered-by 설정 적용
-    const expressApp =
-      moduleFixture.createNestApplication<NestExpressApplication>();
-    expressApp.use(
-      helmet({
-        contentSecurityPolicy: false,
-        crossOriginResourcePolicy: { policy: 'cross-origin' },
-        crossOriginEmbedderPolicy: false,
-      }),
-    );
-    expressApp.disable('x-powered-by');
-    app = expressApp;
-    await app.init();
+  afterAll(async () => {
+    await app.close();
   });
 
   it('/health (GET) 200', () => {
@@ -55,7 +40,12 @@ describe('App (e2e)', () => {
     });
   });
 
-  afterEach(async () => {
-    await app.close();
+  describe('응답 wrapping (ResponseTransformInterceptor)', () => {
+    it('health 응답이 { data, message } 형태로 wrap됨', async () => {
+      const res = await request(app.getHttpServer()).get('/health');
+      expect(res.body).toHaveProperty('data');
+      expect(res.body).toHaveProperty('message', 'ok');
+      expect(res.body.data).toHaveProperty('status', 'ok');
+    });
   });
 });
