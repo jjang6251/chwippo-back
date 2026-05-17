@@ -500,71 +500,152 @@ describe('ApplicationsService', () => {
     });
   });
 
-  // ── updateSteps ────────────────────────────────────────
+  // ── updateSteps (LRR P2T2 PR α — CRT-1 fix: checklist 보존) ─────
   describe('updateSteps', () => {
-    it('트랜잭션 내에서 기존 스텝 delete 후 새 스텝 save', async () => {
+    type RecordedCall =
+      | { op: 'update'; id: string; patch: Record<string, unknown> }
+      | { op: 'insert'; data: Record<string, unknown> }
+      | { op: 'delete'; ids: string[] };
+
+    const makeEm = (
+      existing: Array<{ id: string; orderIndex: number; name: string }>,
+    ): { em: EntityManager; calls: RecordedCall[] } => {
+      const calls: RecordedCall[] = [];
+      const em = {
+        find: jest.fn().mockResolvedValue(existing),
+        update: jest
+          .fn()
+          .mockImplementation(
+            async (
+              _entity: unknown,
+              id: string,
+              patch: Record<string, unknown>,
+            ) => {
+              calls.push({ op: 'update', id, patch });
+              return { affected: 1 };
+            },
+          ),
+        create: jest
+          .fn()
+          .mockImplementation((_e: unknown, d: Record<string, unknown>) => d),
+        save: jest
+          .fn()
+          .mockImplementation(
+            async (_e: unknown, d: Record<string, unknown>) => {
+              calls.push({ op: 'insert', data: d });
+              return d;
+            },
+          ),
+        delete: jest
+          .fn()
+          .mockImplementation(async (_e: unknown, ids: string[]) => {
+            calls.push({ op: 'delete', ids });
+            return { affected: ids.length };
+          }),
+        findOne: jest.fn().mockResolvedValue({ id: 'app-uuid-1' }),
+      } as unknown as EntityManager;
+      return { em, calls };
+    };
+
+    it('CRT-1 회귀: dto step.id 일치 → update만 (delete·cascade 없음 → checklist 보존)', async () => {
       const app = makeApp();
       appRepo.findOne.mockResolvedValue(app);
-
-      const savedSteps: any[] = [];
-      const em = {
-        delete: jest.fn().mockResolvedValue({}),
-        create: jest.fn().mockImplementation((_entity, data) => data),
-        save: jest.fn().mockImplementation(async (_entity: any, data: any) => {
-          if (Array.isArray(data)) savedSteps.push(...data);
-          return data;
-        }),
-        findOne: jest.fn().mockResolvedValue({ ...app, steps: savedSteps }),
-      } as unknown as EntityManager;
-      dataSource.transaction.mockImplementation((cb: any) => cb(em));
-
-      const newSteps = [
-        { orderIndex: 0, name: '서류', scheduledDate: null, location: null },
-        {
-          orderIndex: 1,
-          name: '면접',
-          scheduledDate: '2025-09-01T10:00:00Z',
-          location: '서울',
-        },
+      const existing = [
+        { id: 'step-1', orderIndex: 0, name: '서류' },
+        { id: 'step-2', orderIndex: 1, name: '면접' },
       ];
-
-      await service.updateSteps('user-uuid-1', 'app-uuid-1', {
-        steps: newSteps,
-      });
-
-      expect(em.delete).toHaveBeenCalledWith(ApplicationStep, {
-        applicationId: 'app-uuid-1',
-      });
-      expect(savedSteps).toHaveLength(2);
-      expect(savedSteps[1]).toMatchObject({
-        name: '면접',
-        scheduledDate: expect.any(Date),
-      });
-    });
-
-    it('scheduledDate가 null이면 null로 저장', async () => {
-      const app = makeApp();
-      appRepo.findOne.mockResolvedValue(app);
-      const savedSteps: any[] = [];
-
-      const em = {
-        delete: jest.fn().mockResolvedValue({}),
-        create: jest.fn().mockImplementation((_e: any, d: any) => d),
-        save: jest.fn().mockImplementation(async (_e: any, d: any) => {
-          if (Array.isArray(d)) savedSteps.push(...d);
-          return d;
-        }),
-        findOne: jest.fn().mockResolvedValue({ ...app, steps: savedSteps }),
-      } as unknown as EntityManager;
+      const { em, calls } = makeEm(existing);
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
       await service.updateSteps('user-uuid-1', 'app-uuid-1', {
         steps: [
-          { orderIndex: 0, name: '서류', scheduledDate: null, location: null },
+          { id: 'step-1', orderIndex: 0, name: '서류 (수정)' },
+          { id: 'step-2', orderIndex: 1, name: '면접' },
         ],
       });
 
-      expect(savedSteps[0].scheduledDate).toBeNull();
+      const deletes = calls.filter((c) => c.op === 'delete');
+      const inserts = calls.filter((c) => c.op === 'insert');
+      const updates = calls.filter((c) => c.op === 'update');
+      expect(deletes).toHaveLength(0);
+      expect(inserts).toHaveLength(0);
+      expect(updates).toHaveLength(2);
+      expect(updates[0]).toMatchObject({
+        op: 'update',
+        id: 'step-1',
+        patch: { name: '서류 (수정)' },
+      });
+    });
+
+    it('dto에 없는 기존 step만 삭제 (해당 step의 체크리스트만 cascade 삭제)', async () => {
+      const app = makeApp();
+      appRepo.findOne.mockResolvedValue(app);
+      const existing = [
+        { id: 'step-1', orderIndex: 0, name: '서류' },
+        { id: 'step-2', orderIndex: 1, name: '면접' },
+        { id: 'step-3', orderIndex: 2, name: '결과' },
+      ];
+      const { em, calls } = makeEm(existing);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      // step-3 제거
+      await service.updateSteps('user-uuid-1', 'app-uuid-1', {
+        steps: [
+          { id: 'step-1', orderIndex: 0, name: '서류' },
+          { id: 'step-2', orderIndex: 1, name: '면접' },
+        ],
+      });
+
+      const deletes = calls.filter((c) => c.op === 'delete');
+      expect(deletes).toHaveLength(1);
+      expect(deletes[0]).toMatchObject({ op: 'delete', ids: ['step-3'] });
+    });
+
+    it('dto에 id 없는 step → 신규 INSERT', async () => {
+      const app = makeApp();
+      appRepo.findOne.mockResolvedValue(app);
+      const existing = [{ id: 'step-1', orderIndex: 0, name: '서류' }];
+      const { em, calls } = makeEm(existing);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.updateSteps('user-uuid-1', 'app-uuid-1', {
+        steps: [
+          { id: 'step-1', orderIndex: 0, name: '서류' },
+          { orderIndex: 1, name: '새 면접' },
+        ],
+      });
+
+      const inserts = calls.filter((c) => c.op === 'insert');
+      expect(inserts).toHaveLength(1);
+      expect(inserts[0]).toMatchObject({
+        op: 'insert',
+        data: { name: '새 면접', applicationId: 'app-uuid-1' },
+      });
+    });
+
+    it('scheduledDate 문자열 → Date 변환 / null이면 null', async () => {
+      const app = makeApp();
+      appRepo.findOne.mockResolvedValue(app);
+      const existing = [{ id: 'step-1', orderIndex: 0, name: '서류' }];
+      const { em, calls } = makeEm(existing);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.updateSteps('user-uuid-1', 'app-uuid-1', {
+        steps: [
+          {
+            id: 'step-1',
+            orderIndex: 0,
+            name: '서류',
+            scheduledDate: '2025-09-01T10:00:00Z',
+          },
+          { orderIndex: 1, name: '면접' },
+        ],
+      });
+
+      const updates = calls.filter((c) => c.op === 'update');
+      const inserts = calls.filter((c) => c.op === 'insert');
+      expect(updates[0].patch.scheduledDate).toBeInstanceOf(Date);
+      expect(inserts[0].data.scheduledDate).toBeNull();
     });
 
     it('존재하지 않는 카드 → NotFoundException', async () => {
