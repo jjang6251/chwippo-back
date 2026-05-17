@@ -1,9 +1,11 @@
 /**
- * AdminController — 문의 close·답변 시 audit log 호출 검증
+ * AdminController — 문의 close·답변·조회 시 audit log 호출 검증
  *
  * 시나리오:
  * - closeInquiry 호출 → InquiriesService.closeInquiry + audit log 'close_inquiry'
  * - addComment 호출 → InquiriesService.addAdminComment + audit log 'reply_inquiry' (contentLength만, 본문 평문 저장 X)
+ * - getInquiry 호출 → InquiriesService.findOneAdmin + audit log 'view_inquiry' (LRR P1T3 PR J, 단건 상세만)
+ * - getInquiries(list) / getStats / getAnalytics는 audit 안 함 (정책: PII 부분 노출 + 빈도 높음 → 단건만)
  */
 import { Test } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
@@ -84,6 +86,62 @@ describe('AdminController — audit 호출', () => {
         'inquiry-1',
         {},
       );
+    });
+  });
+
+  describe('getInquiry (LRR P1T3 PR J — 단건 read audit)', () => {
+    it("상세 조회 후 auditService.log('view_inquiry') 호출", async () => {
+      const inquiry = { id: 'inquiry-1', content: '문의 본문', status: 'OPEN' };
+      inquiriesService.findOneAdmin.mockResolvedValue(inquiry);
+
+      const result = await controller.getInquiry(
+        { id: 'admin-1' },
+        'inquiry-1',
+      );
+
+      expect(inquiriesService.findOneAdmin).toHaveBeenCalledWith('inquiry-1');
+      expect(auditService.log).toHaveBeenCalledWith(
+        'admin-1',
+        'view_inquiry',
+        'inquiry',
+        'inquiry-1',
+        {},
+      );
+      // 응답은 그대로 반환 — audit는 부수 효과
+      expect(result).toEqual(inquiry);
+    });
+
+    it('audit detail에 inquiry 본문·PII 평문 저장 안 함 (privacy)', async () => {
+      inquiriesService.findOneAdmin.mockResolvedValue({
+        id: 'inquiry-1',
+        content: '비밀 문의',
+        user_email: 'private@test.com',
+      });
+      await controller.getInquiry({ id: 'admin-1' }, 'inquiry-1');
+      const auditCall = auditService.log.mock.calls[0] as unknown[];
+      const detail = auditCall[4] as Record<string, unknown>;
+      // 누가 무엇을 봤는지만 추적, 본문·PII 자체는 audit에 평문 보존 X
+      expect(detail).toEqual({});
+    });
+  });
+
+  describe('audit 안 하는 read (정책 검증 — getStats / getAnalytics / getInquiries)', () => {
+    it('getStats 호출 시 audit 미발생', async () => {
+      adminService.getStats.mockResolvedValue({ total: 100 });
+      await controller.getStats();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+
+    it('getAnalytics 호출 시 audit 미발생', async () => {
+      adminService.getAnalytics.mockResolvedValue([]);
+      await controller.getAnalytics('30');
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+
+    it('getInquiries(list) 호출 시 audit 미발생', async () => {
+      inquiriesService.findAll.mockResolvedValue({ items: [], total: 0 });
+      await controller.getInquiries('OPEN', undefined, '1', '30');
+      expect(auditService.log).not.toHaveBeenCalled();
     });
   });
 });
