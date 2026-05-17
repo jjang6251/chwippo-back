@@ -41,6 +41,19 @@ export class FilesService {
     // 끝에 / 있으면 제거 — 키 결합 시 // 방지
     const publicUrl = config.get<string>('R2_PUBLIC_URL', '');
     this.publicUrlPrefix = publicUrl.replace(/\/$/, '');
+
+    // LRR P2T1 PR M (C-1) — 운영에서 publicUrlPrefix 빈 값이면 즉시 부팅 실패.
+    // env.validation이 1차 차단(Joi when NODE_ENV)이지만 우회·로딩 실수 대비 defense-in-depth.
+    // 빈 값이면 assertOwnFileUrl가 silently skip → 모든 ownership 검증 무력화 (cross-user 파일 접근 가능).
+    if (
+      config.get<string>('NODE_ENV') === 'production' &&
+      !this.publicUrlPrefix
+    ) {
+      throw new Error(
+        'FilesService: R2_PUBLIC_URL is required in production for file ownership validation. ' +
+          'env validation should have caught this — failing fast as defense-in-depth.',
+      );
+    }
   }
 
   async createPresignedUrl(
@@ -84,7 +97,8 @@ export class FilesService {
   /**
    * fileUrl이 본인 R2 prefix (`{publicUrl}/users/{userId}/`)로 시작하는지 검증.
    * - dev에서 R2_PUBLIC_URL 미설정 (publicUrlPrefix 빈 값) → skip (가드가 dev 사용 막지 않음)
-   * - prod는 env.validation에서 R2_PUBLIC_URL required (Joi when NODE_ENV)
+   * - prod는 1차 env.validation에서 required (Joi when NODE_ENV) + 2차 constructor에서 fail-fast (PR M C-1)
+   *   → 여기 도달한 시점엔 prod면 반드시 publicUrlPrefix 있음. 빈 값이면 dev 환경 확정.
    *
    * LRR P1T2 M-2: myinfo CRUD에서 다른 사용자 파일 URL attach 차단용.
    * deleteOwnFile에서도 동일 검증 재사용.

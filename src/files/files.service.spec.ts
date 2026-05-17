@@ -330,6 +330,7 @@ describe('FilesService', () => {
               get: jest.fn((key: string) => {
                 if (key === 'R2_PUBLIC_URL') return '';
                 if (key === 'R2_BUCKET') return 'chwippo';
+                if (key === 'NODE_ENV') return 'development';
                 return '';
               }),
             },
@@ -341,6 +342,73 @@ describe('FilesService', () => {
       expect(() =>
         noPrefixService.assertOwnFileUrl('u1', 'https://anywhere.com/x.pdf'),
       ).not.toThrow();
+    });
+  });
+
+  // LRR P2T1 PR M (C-1) — 운영에서 publicUrlPrefix 누락 시 constructor fail-fast
+  describe('constructor — prod fail-fast (LRR P2T1 PR M C-1)', () => {
+    it('NODE_ENV=production + R2_PUBLIC_URL 빈 값 → constructor throw', async () => {
+      const buildModule = () =>
+        Test.createTestingModule({
+          providers: [
+            FilesService,
+            {
+              provide: ConfigService,
+              useValue: {
+                get: jest.fn((key: string, defaultVal?: string) => {
+                  if (key === 'R2_PUBLIC_URL') return '';
+                  if (key === 'NODE_ENV') return 'production';
+                  if (key === 'R2_BUCKET') return 'chwippo';
+                  return defaultVal ?? '';
+                }),
+              },
+            },
+          ],
+        }).compile();
+
+      await expect(buildModule()).rejects.toThrow(/R2_PUBLIC_URL is required/);
+    });
+
+    it('NODE_ENV=production + R2_PUBLIC_URL 유효 값 → 정상 부팅', async () => {
+      const okModule = await Test.createTestingModule({
+        providers: [
+          FilesService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string, defaultVal?: string) => {
+                if (key === 'R2_PUBLIC_URL')
+                  return 'https://files-prod.example.com';
+                if (key === 'NODE_ENV') return 'production';
+                if (key === 'R2_BUCKET') return 'chwippo-prod';
+                return defaultVal ?? '';
+              }),
+            },
+          },
+        ],
+      }).compile();
+      const okService = okModule.get(FilesService);
+      expect(okService).toBeDefined();
+    });
+
+    it('NODE_ENV=development + R2_PUBLIC_URL 빈 값 → 정상 부팅 (dev 편의)', async () => {
+      const devModule = await Test.createTestingModule({
+        providers: [
+          FilesService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string, defaultVal?: string) => {
+                if (key === 'R2_PUBLIC_URL') return '';
+                if (key === 'NODE_ENV') return 'development';
+                return defaultVal ?? '';
+              }),
+            },
+          },
+        ],
+      }).compile();
+      const devService = devModule.get(FilesService);
+      expect(devService).toBeDefined();
     });
   });
 });
