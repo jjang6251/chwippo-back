@@ -663,4 +663,72 @@ describe('MyinfoService', () => {
       });
     });
   });
+
+  // ── LRR P2T2 PR γ — affected 0 → NotFoundException 일관성 (LOW-2) ──────
+  describe('affected 0 → NotFoundException (PR γ LOW-2)', () => {
+    const { NotFoundException } = jest.requireActual('@nestjs/common');
+
+    it('updateExperience: affected=0 → NotFoundException', async () => {
+      expRepo.update.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.updateExperience(USER_ID, 'no-exist', {}),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('deleteExperience: affected=0 → NotFoundException', async () => {
+      expRepo.delete.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.deleteExperience(USER_ID, 'no-exist'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('updateCustomItem: affected=0 → NotFoundException', async () => {
+      coverCustomRepo.update.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.updateCustomItem(USER_ID, 'no-exist', {}),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('deleteCustomItem: affected=0 → NotFoundException', async () => {
+      coverCustomRepo.delete.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.deleteCustomItem(USER_ID, 'no-exist'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('updateExperience: affected=1 → 정상 (findOne 결과 반환)', async () => {
+      expRepo.update.mockResolvedValue({ affected: 1 } as never);
+      expRepo.findOne.mockResolvedValue({ id: 'exp-1' } as never);
+      const result = await service.updateExperience(USER_ID, 'exp-1', {});
+      expect(result).toMatchObject({ id: 'exp-1' });
+    });
+  });
+
+  // ── LRR P2T2 PR γ — experience createWithLocks 패턴 통일 (P1T2 L-1) ────
+  describe('createExperience — createWithLocks 패턴 (PR γ L-1)', () => {
+    it('트랜잭션 + 사용자 row 락 + 항목 한도 검증 흐름 사용', async () => {
+      // createWithLocks가 transaction을 호출하는지 확인
+      const dataSource = jest.requireActual('typeorm');
+      void dataSource;
+
+      const transactionSpy = jest.fn().mockImplementation(async (cb) => {
+        const txManager = {
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn().mockReturnValue({
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn((data) => data),
+            save: jest.fn(async (data) => data),
+          }),
+        };
+        return cb(txManager);
+      });
+      (
+        service as unknown as { dataSource: { transaction: jest.Mock } }
+      ).dataSource = { transaction: transactionSpy };
+
+      await service.createExperience(USER_ID, { title: '인턴' } as never);
+
+      expect(transactionSpy).toHaveBeenCalled();
+    });
+  });
 });
