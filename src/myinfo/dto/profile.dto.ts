@@ -1,5 +1,6 @@
 import {
   IsDateString,
+  IsEmail,
   IsInt,
   IsOptional,
   IsString,
@@ -21,7 +22,12 @@ export class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(10) gender?: string;
   @IsOptional() @EmptyToUndef() @IsDateString() birthdate?: string;
   @IsOptional() @IsString() @MaxLength(20) phone?: string;
-  @IsOptional() @IsString() @MaxLength(100) email_personal?: string;
+  // LRR P2T2 PR δ (DTO-8): IsEmail + EmptyToUndef (빈 문자열은 미입력으로 처리)
+  @IsOptional()
+  @EmptyToUndef()
+  @IsEmail()
+  @MaxLength(100)
+  email_personal?: string;
 
   @IsOptional() @IsString() @MaxLength(30) military_branch?: string;
   @IsOptional() @IsString() @MaxLength(30) military_type?: string;
