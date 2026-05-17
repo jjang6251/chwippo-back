@@ -1,0 +1,46 @@
+name: Health Monitor
+
+# LRR Phase 3-B (PR BB) — Uptime Robot 대신 GitHub Actions cron으로 자체 구축.
+# 5분마다 운영 /health 핑. HTTP 200 + body의 db:'ok' 확인.
+# 실패 시 workflow failure → GitHub Actions 기본 이메일 알림 (저장소 owner 수신).
+#
+# Secret 설정 (Settings → Secrets and variables → Actions):
+#   HEALTH_URL — 예: https://api.chwippo.com/health
+#                미설정 시 step 자체가 skip (workflow 실패 안 함, 출시 전 안전)
+
+on:
+  schedule:
+    # 5분마다 (UTC). GitHub Actions cron은 ±30초 jitter 있음 — 가용성 SLO에 비치명적
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # 수동 트리거 (UI에서 즉시 실행 가능)
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Skip if HEALTH_URL not configured
+        id: check
+        run: |
+          if [ -z "${{ secrets.HEALTH_URL }}" ]; then
+            echo "::notice::HEALTH_URL secret not set — skipping. Set in repo Settings to activate monitor."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ping /health
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -eo pipefail
+          response=$(curl -fsS --max-time 10 "${{ secrets.HEALTH_URL }}")
+          echo "Response: $response"
+
+          # status_code 별도 확인 — 200 외엔 curl -f가 이미 exit 22로 실패
+          # body의 db:'ok' 검증 (DB ping 실패 시 503이지만 방어적으로 한 번 더)
+          if ! echo "$response" | grep -q '"db":"ok"'; then
+            echo "::error::Health response missing db=ok: $response"
+            exit 1
+          fi
+
+          echo "✅ Health OK"
