@@ -143,43 +143,59 @@ export class ApplicationsService {
     return this.findOne(userId, id);
   }
 
+  /**
+   * LRR P2T2 PR α (CRT-1 fix): step 재구성 시 체크리스트 보존.
+   *
+   * 기존 구현은 `em.delete(ApplicationStep, ...)`로 step row를 전부 hard-delete →
+   * step-checklist-item FK가 `onDelete: 'CASCADE'`라 체크리스트도 모두 함께 삭제됐다
+   * (사용자가 step 순서·이름만 바꿔도 모든 체크리스트 손실).
+   *
+   * 새 구현: dto step에 id가 있으면 기존 row 재사용 (update). dto에 없는 기존 step만 삭제
+   * (그 step에 속한 체크리스트만 cascade로 삭제 — 의도된 동작). 신규 step은 INSERT.
+   * notes·pinnedContent는 기존 row 그대로 보존.
+   */
   async updateSteps(userId: string, id: string, dto: UpdateStepsDto) {
     await this.findEntity(userId, id);
 
     return this.dataSource.transaction(async (em) => {
-      // 기존 스텝의 notes/pinnedContent 보존: id가 전달된 경우 매핑
-      const notesMap = new Map<
-        string,
-        { notes: string | null; pinnedContent: string | null }
-      >();
-      if (dto.steps.some((s) => s.id)) {
-        const existing = await em.find(ApplicationStep, {
-          where: { applicationId: id },
-        });
-        for (const step of existing) {
-          notesMap.set(step.id, {
-            notes: step.notes,
-            pinnedContent: step.pinnedContent,
+      const existing = await em.find(ApplicationStep, {
+        where: { applicationId: id },
+      });
+      const existingById = new Map(existing.map((s) => [s.id, s]));
+      const incomingIds = new Set(
+        dto.steps.map((s) => s.id).filter((v): v is string => Boolean(v)),
+      );
+
+      // 1. dto에 없는 기존 step → 삭제 (cascade로 그 step의 체크리스트만 함께 삭제)
+      const toDelete = existing.filter((s) => !incomingIds.has(s.id));
+      if (toDelete.length > 0) {
+        await em.delete(
+          ApplicationStep,
+          toDelete.map((s) => s.id),
+        );
+      }
+
+      // 2. dto step 순회 — id 있으면 update, 없으면 INSERT
+      for (const s of dto.steps) {
+        if (s.id && existingById.has(s.id)) {
+          await em.update(ApplicationStep, s.id, {
+            orderIndex: s.orderIndex,
+            name: s.name,
+            scheduledDate: s.scheduledDate ? new Date(s.scheduledDate) : null,
+            location: s.location ?? null,
           });
+        } else {
+          const created = em.create(ApplicationStep, {
+            applicationId: id,
+            orderIndex: s.orderIndex,
+            name: s.name,
+            scheduledDate: s.scheduledDate ? new Date(s.scheduledDate) : null,
+            location: s.location ?? null,
+          });
+          await em.save(ApplicationStep, created);
         }
       }
 
-      await em.delete(ApplicationStep, { applicationId: id });
-
-      const steps = dto.steps.map((s) => {
-        const preserved = s.id ? notesMap.get(s.id) : undefined;
-        return em.create(ApplicationStep, {
-          applicationId: id,
-          orderIndex: s.orderIndex,
-          name: s.name,
-          scheduledDate: s.scheduledDate ? new Date(s.scheduledDate) : null,
-          location: s.location ?? null,
-          notes: preserved?.notes ?? null,
-          pinnedContent: preserved?.pinnedContent ?? null,
-        });
-      });
-
-      await em.save(ApplicationStep, steps);
       return em.findOne(Application, { where: { id }, relations: ['steps'] });
     });
   }
