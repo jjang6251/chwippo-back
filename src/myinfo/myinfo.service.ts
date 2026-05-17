@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, DeepPartial, Repository } from 'typeorm';
 import { UserProfile } from './entities/user-profile.entity';
@@ -333,20 +337,28 @@ export class MyinfoService {
     });
   }
   async createExperience(userId: string, dto: Partial<Experience>) {
-    const count = await this.expRepo.count({ where: { user_id: userId } });
-    if (count >= ITEM_LIMITS.experience) {
-      throw new BadRequestException(
-        `${ITEM_LABELS.experience}은(는) 최대 ${ITEM_LIMITS.experience}개까지 등록 가능합니다.`,
-      );
-    }
-    return this.expRepo.save(this.expRepo.create({ ...dto, user_id: userId }));
+    // LRR P1T2 L-1 / P2T2 PR γ: createWithLocks 패턴 통일 — count+save race 차단
+    // (experience는 file 필드 없음 → createWithLocks의 storage·ownership 분기 자동 skip)
+    return this.createWithLocks<Experience & FileBearing>({
+      userId,
+      entityClass: Experience,
+      data: dto,
+      limitKey: 'experience',
+    });
   }
   async updateExperience(userId: string, id: string, dto: Partial<Experience>) {
-    await this.expRepo.update({ id, user_id: userId }, dto);
+    const result = await this.expRepo.update({ id, user_id: userId }, dto);
+    // LRR P2T2 PR γ (LOW-2): affected 0 → 404 일관성
+    if (result.affected === 0) {
+      throw new NotFoundException('항목을 찾을 수 없습니다.');
+    }
     return this.expRepo.findOne({ where: { id, user_id: userId } });
   }
   async deleteExperience(userId: string, id: string) {
-    await this.expRepo.delete({ id, user_id: userId });
+    const result = await this.expRepo.delete({ id, user_id: userId });
+    if (result.affected === 0) {
+      throw new NotFoundException('항목을 찾을 수 없습니다.');
+    }
   }
 
   // ── Coverletter ───────────────────────────────────────────
@@ -388,12 +400,22 @@ export class MyinfoService {
     id: string,
     dto: Partial<CoverletterCustom>,
   ) {
-    await this.coverCustomRepo.update({ id, user_id: userId }, dto);
+    // LRR P2T2 PR γ (LOW-2): affected 0 → 404 일관성
+    const result = await this.coverCustomRepo.update(
+      { id, user_id: userId },
+      dto,
+    );
+    if (result.affected === 0) {
+      throw new NotFoundException('항목을 찾을 수 없습니다.');
+    }
     return this.coverCustomRepo.findOne({ where: { id, user_id: userId } });
   }
 
   async deleteCustomItem(userId: string, id: string) {
-    await this.coverCustomRepo.delete({ id, user_id: userId });
+    const result = await this.coverCustomRepo.delete({ id, user_id: userId });
+    if (result.affected === 0) {
+      throw new NotFoundException('항목을 찾을 수 없습니다.');
+    }
   }
 
   // ── Documents (file_url required) ─────────────────────────

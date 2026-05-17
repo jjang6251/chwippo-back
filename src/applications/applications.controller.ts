@@ -17,6 +17,7 @@ import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateStepsDto } from './dto/update-steps.dto';
 import { UpdateStepDetailDto } from './dto/update-step-detail.dto';
+import { UpdateCurrentStepDto } from './dto/update-current-step.dto';
 import {
   CreateChecklistItemDto,
   UpdateChecklistItemDto,
@@ -63,9 +64,9 @@ export class ApplicationsController {
   updateCurrentStep(
     @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body('stepIndex') stepIndex: number,
+    @Body() dto: UpdateCurrentStepDto,
   ) {
-    return this.service.updateCurrentStep(user.id, id, stepIndex);
+    return this.service.updateCurrentStep(user.id, id, dto.stepIndex);
   }
 
   @Put(':id/steps')
