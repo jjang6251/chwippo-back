@@ -29,12 +29,11 @@ describe('Infrastructure (e2e)', () => {
 
   // ── M-26 body size 256kb cap ──────────────────────────
   describe('Body size 256kb cap (M-26 INF-1·INF-2)', () => {
-    it('256kb 초과 body → 차단 (현재 AllExceptionsFilter 처리 한계로 500 반환)', async () => {
+    it('256kb 초과 body → 413 (M-32 fix 적용 후)', async () => {
       const { accessToken } = await signInAsUser(app);
 
-      // 약 260kb의 nickname 시도 — express bodyParser PayloadTooLargeError가
-      // HttpException 외라 AllExceptionsFilter가 500으로 변환 (개선 여지 — 별도 finding).
-      // 핵심은 "256kb 초과 요청은 차단된다" — 200/400 통과는 아님.
+      // 약 260kb의 nickname 시도 — express bodyParser PayloadTooLargeError(status 413)
+      // AllExceptionsFilter가 4xx err.status 보존하도록 PR T (M-32)에서 수정 → 정확히 413.
       const huge = 'x'.repeat(260 * 1024);
 
       const res = await request(app.getHttpServer())
@@ -42,9 +41,7 @@ describe('Infrastructure (e2e)', () => {
         .set(bearer(accessToken))
         .send({ nickname: huge });
 
-      expect(res.status).toBeGreaterThanOrEqual(400);
-      // 정상 200·DTO 400 둘 다 아니고, payload size로 차단됨
-      expect([413, 500]).toContain(res.status);
+      expect(res.status).toBe(413);
     });
 
     it('200kb body → bodyParser 통과 + DTO MaxLength로 400', async () => {

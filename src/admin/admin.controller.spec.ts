@@ -194,4 +194,46 @@ describe('AdminController — audit 호출', () => {
       );
     });
   });
+
+  // ── M-15 getAnalytics days cap·floor ─────────────────
+  describe('getAnalytics days param cap·floor (M-15, AD2-4·AD2-5)', () => {
+    beforeEach(() => {
+      adminService.getAnalytics.mockResolvedValue({
+        dailySignups: [],
+        dailyApplications: [],
+        weeklyRetention: { signups: 0, retained: 0, rate: 0 },
+      });
+    });
+
+    it('days=200 → 90으로 cap (Math.min)', async () => {
+      await controller.getAnalytics('200');
+      expect(adminService.getAnalytics).toHaveBeenCalledWith(90);
+    });
+
+    it('days=3 → 7로 floor (Math.max)', async () => {
+      await controller.getAnalytics('3');
+      expect(adminService.getAnalytics).toHaveBeenCalledWith(7);
+    });
+
+    it('days 미지정 → 기본 30', async () => {
+      await controller.getAnalytics(undefined);
+      expect(adminService.getAnalytics).toHaveBeenCalledWith(30);
+    });
+
+    it("days='abc' (NaN → 0 falsy) → 기본 30 후 cap·floor", async () => {
+      await controller.getAnalytics('abc');
+      // parseInt('abc')=NaN || 30 → 30 → min(90, max(7, 30)) = 30
+      expect(adminService.getAnalytics).toHaveBeenCalledWith(30);
+    });
+
+    it('days=90 (경계값 상한) → 90', async () => {
+      await controller.getAnalytics('90');
+      expect(adminService.getAnalytics).toHaveBeenCalledWith(90);
+    });
+
+    it('days=7 (경계값 하한) → 7', async () => {
+      await controller.getAnalytics('7');
+      expect(adminService.getAnalytics).toHaveBeenCalledWith(7);
+    });
+  });
 });
