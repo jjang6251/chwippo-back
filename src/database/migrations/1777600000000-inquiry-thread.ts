@@ -19,11 +19,15 @@ export class InquiryThread1777600000000 implements MigrationInterface {
       );
     `);
 
-    await qr.query(`CREATE INDEX IF NOT EXISTS idx_inq_comments_inquiry ON inquiry_comments(inquiry_id);`);
+    await qr.query(
+      `CREATE INDEX IF NOT EXISTS idx_inq_comments_inquiry ON inquiry_comments(inquiry_id);`,
+    );
   }
 
   async down(qr: QueryRunner) {
     await qr.query(`DROP TABLE IF EXISTS inquiry_comments`);
-    await qr.query(`ALTER TABLE inquiries DROP COLUMN IF EXISTS user_unread, DROP COLUMN IF EXISTS admin_unread`);
+    await qr.query(
+      `ALTER TABLE inquiries DROP COLUMN IF EXISTS user_unread, DROP COLUMN IF EXISTS admin_unread`,
+    );
   }
 }

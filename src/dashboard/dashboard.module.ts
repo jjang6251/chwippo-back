@@ -7,7 +7,9 @@ import { DashboardService } from './dashboard.service';
 import { DashboardController } from './dashboard.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Application, ApplicationStep, ExamSchedule])],
+  imports: [
+    TypeOrmModule.forFeature([Application, ApplicationStep, ExamSchedule]),
+  ],
   providers: [DashboardService],
   controllers: [DashboardController],
 })

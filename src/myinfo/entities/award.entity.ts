@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { BigIntTransformer } from '../../common/transformers/bigint.transformer';
 
 @Entity('myinfo_awards')
 export class Award {
@@ -10,4 +11,6 @@ export class Award {
   @Column({ type: 'date', nullable: true }) awarded_at: string;
   @Column({ length: 200, nullable: true }) content: string;
   @Column({ nullable: true }) file_url: string;
+  @Column({ type: 'bigint', nullable: true, transformer: BigIntTransformer })
+  file_size_bytes: number | null;
 }

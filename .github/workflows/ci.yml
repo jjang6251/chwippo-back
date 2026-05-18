@@ -3,10 +3,48 @@ name: CI
 on:
   pull_request:
     branches: [develop, main]
+  push:
+    branches: [develop, main]
 
 jobs:
   ci:
     runs-on: ubuntu-latest
+
+    # 실제 DB 연동 검증용 임시 PostgreSQL (prod와 동일한 메이저 버전)
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: chwippo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      # CI 전용 더미 값 — 실제 시크릿 아님
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE: chwippo_test
+      DB_SSL: 'false'
+      JWT_SECRET: ci-test-jwt-secret
+      JWT_EXPIRES_IN: 1h
+      JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret
+      JWT_REFRESH_EXPIRES_IN: 30d
+      KAKAO_CLIENT_ID: ci-dummy-client-id
+      KAKAO_CLIENT_SECRET: ci-dummy-client-secret
+      KAKAO_REDIRECT_URI: http://localhost:3000/auth/kakao/callback
+      FRONTEND_URL: http://localhost:5173
+      # R2: prod 외엔 optional이지만 files e2e의 ownership 검증을 위해 더미 prefix 주입 (실 R2 호출은 jest.mock으로 차단)
+      R2_PUBLIC_URL: https://file-test.example.com
 
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +63,43 @@ jobs:
       - name: Build (type-check + compile)
         run: npm run build
 
-      - name: Test
-        run: npm test
-        env:
-          NODE_ENV: test
+      - name: Test (unit, with coverage threshold)
+        run: npm run test:cov
+
+      # ── 마이그레이션 검증 ──────────────────────────────────
+      # 빈 DB에 전체 마이그레이션이 깨끗이 적용되는지 (syntax·FK·순서 오류 탐지)
+      - name: Run migrations (smoke test)
+        run: npm run migration:run
+
+      # 가장 최근 마이그레이션의 down() 이 정상 동작하는지 → 다시 올려서 스키마 복구
+      - name: Verify migration rollback (down → up)
+        run: |
+          npm run migration:revert
+          npm run migration:run
+
+      # ── 마이그레이션 안전성 advisory ───────────────────────
+      # 파괴적 DDL 사용 여부를 CI 로그에 경고로 노출 (CLAUDE.md: 파괴적 변경은 2단계 릴리즈)
+      # 실패시키지는 않음 — 리뷰어가 의식적으로 확인하도록 알리는 용도
+      - name: Migration safety advisory
+        run: |
+          PATTERN='DROP[[:space:]]+COLUMN|DROP[[:space:]]+TABLE|SET[[:space:]]+NOT[[:space:]]+NULL|ALTER[[:space:]]+COLUMN.*TYPE'
+          HITS=$(grep -rniE "$PATTERN" src/database/migrations/ || true)
+          if [ -n "$HITS" ]; then
+            echo "::warning::파괴적 DDL이 마이그레이션에 포함되어 있습니다. 운영 데이터 손실·테이블 락 여부를 확인하세요 (CLAUDE.md 2단계 릴리즈 규칙 참고)."
+            echo "$HITS"
+          else
+            echo "파괴적 DDL 패턴 없음."
+          fi
+
+      # ── E2E ────────────────────────────────────────────────
+      # AppModule 부팅(실 DB 연결) + /health 확인. 향후 실 DB 연동 e2e 작성 기반.
+      - name: E2E tests
+        run: npm run test:e2e
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage/
+          retention-days: 7

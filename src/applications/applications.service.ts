@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, EntityManager } from 'typeorm';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
@@ -8,14 +12,11 @@ import { CreateApplicationDto } from './dto/create-application.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateStepsDto } from './dto/update-steps.dto';
 import { UpdateStepDetailDto } from './dto/update-step-detail.dto';
-import { CreateChecklistItemDto, UpdateChecklistItemDto } from './dto/checklist-item.dto';
-
-const DEFAULT_STEPS = [
-  '서류 제출',
-  '1차 면접',
-  '2차 면접',
-  '최종 합격',
-];
+import {
+  CreateChecklistItemDto,
+  UpdateChecklistItemDto,
+} from './dto/checklist-item.dto';
+import { stepsForTemplate } from './application-templates';
 
 @Injectable()
 export class ApplicationsService {
@@ -66,12 +67,18 @@ export class ApplicationsService {
         status,
         deadline: dto.deadline ?? null,
         jobUrl: dto.jobUrl ?? null,
-        needsDetail: dto.needsDetail ?? (status === 'IN_PROGRESS' && !dto.jobTitle),
+        needsDetail:
+          dto.needsDetail ?? (status === 'IN_PROGRESS' && !dto.jobTitle),
       });
       const saved = await em.save(Application, app);
 
       if (status === 'IN_PROGRESS') {
-        await this.createDefaultSteps(em, saved.id, dto.deadline);
+        await this.createDefaultSteps(
+          em,
+          saved.id,
+          dto.deadline,
+          dto.templateId,
+        );
       }
 
       return em.findOne(Application, {
@@ -89,13 +96,25 @@ export class ApplicationsService {
     const becomesInProgress = dto.status === 'IN_PROGRESS';
 
     Object.assign(app, dto);
+    // needsDetail은 (status, jobTitle)에서 파생 — 명시적으로 보내지 않으면 재계산
+    // (IN_PROGRESS인데 직무명이 비어 있으면 "상세 입력 필요" 배지, 채우면 해제)
+    if (dto.needsDetail === undefined) {
+      app.needsDetail =
+        app.status === 'IN_PROGRESS' && !(app.jobTitle ?? '').trim();
+    }
     await this.appRepo.save(app);
 
     // 저장 완료 후 스텝 생성 (cascade 영향 없음)
     if (wasPlanned && becomesInProgress) {
-      const existingSteps = await this.stepRepo.count({ where: { applicationId: id } });
+      const existingSteps = await this.stepRepo.count({
+        where: { applicationId: id },
+      });
       if (existingSteps === 0) {
-        await this.createDefaultSteps(this.stepRepo.manager, id, app.deadline ?? null);
+        await this.createDefaultSteps(
+          this.stepRepo.manager,
+          id,
+          app.deadline ?? null,
+        );
       }
     }
 
@@ -124,35 +143,59 @@ export class ApplicationsService {
     return this.findOne(userId, id);
   }
 
+  /**
+   * LRR P2T2 PR α (CRT-1 fix): step 재구성 시 체크리스트 보존.
+   *
+   * 기존 구현은 `em.delete(ApplicationStep, ...)`로 step row를 전부 hard-delete →
+   * step-checklist-item FK가 `onDelete: 'CASCADE'`라 체크리스트도 모두 함께 삭제됐다
+   * (사용자가 step 순서·이름만 바꿔도 모든 체크리스트 손실).
+   *
+   * 새 구현: dto step에 id가 있으면 기존 row 재사용 (update). dto에 없는 기존 step만 삭제
+   * (그 step에 속한 체크리스트만 cascade로 삭제 — 의도된 동작). 신규 step은 INSERT.
+   * notes·pinnedContent는 기존 row 그대로 보존.
+   */
   async updateSteps(userId: string, id: string, dto: UpdateStepsDto) {
     await this.findEntity(userId, id);
 
     return this.dataSource.transaction(async (em) => {
-      // 기존 스텝의 notes/pinnedContent 보존: id가 전달된 경우 매핑
-      const notesMap = new Map<string, { notes: string | null; pinnedContent: string | null }>();
-      if (dto.steps.some((s) => s.id)) {
-        const existing = await em.find(ApplicationStep, { where: { applicationId: id } });
-        for (const step of existing) {
-          notesMap.set(step.id, { notes: step.notes, pinnedContent: step.pinnedContent });
+      const existing = await em.find(ApplicationStep, {
+        where: { applicationId: id },
+      });
+      const existingById = new Map(existing.map((s) => [s.id, s]));
+      const incomingIds = new Set(
+        dto.steps.map((s) => s.id).filter((v): v is string => Boolean(v)),
+      );
+
+      // 1. dto에 없는 기존 step → 삭제 (cascade로 그 step의 체크리스트만 함께 삭제)
+      const toDelete = existing.filter((s) => !incomingIds.has(s.id));
+      if (toDelete.length > 0) {
+        await em.delete(
+          ApplicationStep,
+          toDelete.map((s) => s.id),
+        );
+      }
+
+      // 2. dto step 순회 — id 있으면 update, 없으면 INSERT
+      for (const s of dto.steps) {
+        if (s.id && existingById.has(s.id)) {
+          await em.update(ApplicationStep, s.id, {
+            orderIndex: s.orderIndex,
+            name: s.name,
+            scheduledDate: s.scheduledDate ? new Date(s.scheduledDate) : null,
+            location: s.location ?? null,
+          });
+        } else {
+          const created = em.create(ApplicationStep, {
+            applicationId: id,
+            orderIndex: s.orderIndex,
+            name: s.name,
+            scheduledDate: s.scheduledDate ? new Date(s.scheduledDate) : null,
+            location: s.location ?? null,
+          });
+          await em.save(ApplicationStep, created);
         }
       }
 
-      await em.delete(ApplicationStep, { applicationId: id });
-
-      const steps = dto.steps.map((s) => {
-        const preserved = s.id ? notesMap.get(s.id) : undefined;
-        return em.create(ApplicationStep, {
-          applicationId: id,
-          orderIndex: s.orderIndex,
-          name: s.name,
-          scheduledDate: s.scheduledDate ? new Date(s.scheduledDate) : null,
-          location: s.location ?? null,
-          notes: preserved?.notes ?? null,
-          pinnedContent: preserved?.pinnedContent ?? null,
-        });
-      });
-
-      await em.save(ApplicationStep, steps);
       return em.findOne(Application, { where: { id }, relations: ['steps'] });
     });
   }
@@ -162,8 +205,13 @@ export class ApplicationsService {
     await this.appRepo.softRemove(app);
   }
 
-  private async createDefaultSteps(em: any, applicationId: string, deadline?: string | null) {
-    const steps = DEFAULT_STEPS.map((name, i) =>
+  private async createDefaultSteps(
+    em: EntityManager,
+    applicationId: string,
+    deadline?: string | null,
+    templateId?: string | null,
+  ) {
+    const steps = stepsForTemplate(templateId).map((name, i) =>
       em.create(ApplicationStep, {
         applicationId,
         orderIndex: i,
@@ -176,13 +224,22 @@ export class ApplicationsService {
 
   // --- Step detail (date/location) ---
 
-  async updateStep(userId: string, appId: string, stepId: string, dto: UpdateStepDetailDto) {
+  async updateStep(
+    userId: string,
+    appId: string,
+    stepId: string,
+    dto: UpdateStepDetailDto,
+  ) {
     await this.findEntity(userId, appId);
-    const step = await this.stepRepo.findOne({ where: { id: stepId, applicationId: appId } });
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId: appId },
+    });
     if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
 
     if (dto.scheduledDate !== undefined) {
-      step.scheduledDate = dto.scheduledDate ? new Date(dto.scheduledDate) : null;
+      step.scheduledDate = dto.scheduledDate
+        ? new Date(dto.scheduledDate)
+        : null;
     }
     if (dto.location !== undefined) {
       step.location = dto.location || null;
@@ -200,7 +257,9 @@ export class ApplicationsService {
 
   async getChecklist(userId: string, appId: string, stepId: string) {
     await this.findEntity(userId, appId);
-    const step = await this.stepRepo.findOne({ where: { id: stepId, applicationId: appId } });
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId: appId },
+    });
     if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
 
     return this.checklistRepo.find({
@@ -209,21 +268,28 @@ export class ApplicationsService {
     });
   }
 
-  async createChecklistItem(userId: string, appId: string, stepId: string, dto: CreateChecklistItemDto) {
+  async createChecklistItem(
+    userId: string,
+    appId: string,
+    stepId: string,
+    dto: CreateChecklistItemDto,
+  ) {
     await this.findEntity(userId, appId);
-    const step = await this.stepRepo.findOne({ where: { id: stepId, applicationId: appId } });
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId: appId },
+    });
     if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
 
     const maxOrder = await this.checklistRepo
       .createQueryBuilder('item')
       .select('MAX(item.orderIndex)', 'max')
       .where('item.stepId = :stepId', { stepId })
-      .getRawOne();
+      .getRawOne<{ max: number | null }>();
 
     const item = this.checklistRepo.create({
       stepId,
       content: dto.content,
-      orderIndex: dto.orderIndex ?? ((maxOrder?.max ?? -1) + 1),
+      orderIndex: dto.orderIndex ?? (maxOrder?.max ?? -1) + 1,
     });
     return this.checklistRepo.save(item);
   }
@@ -235,17 +301,38 @@ export class ApplicationsService {
     itemId: string,
     dto: UpdateChecklistItemDto,
   ) {
+    // LRR P2T2 PR β (HI-1): stepId가 appId 소속인지 검증 (createChecklistItem 패턴과 일치)
     await this.findEntity(userId, appId);
-    const item = await this.checklistRepo.findOne({ where: { id: itemId, stepId } });
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId: appId },
+    });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+
+    const item = await this.checklistRepo.findOne({
+      where: { id: itemId, stepId },
+    });
     if (!item) throw new NotFoundException('항목을 찾을 수 없습니다.');
 
     Object.assign(item, dto);
     return this.checklistRepo.save(item);
   }
 
-  async deleteChecklistItem(userId: string, appId: string, stepId: string, itemId: string) {
+  async deleteChecklistItem(
+    userId: string,
+    appId: string,
+    stepId: string,
+    itemId: string,
+  ) {
+    // LRR P2T2 PR β (HI-1): stepId가 appId 소속인지 검증
     await this.findEntity(userId, appId);
-    const item = await this.checklistRepo.findOne({ where: { id: itemId, stepId } });
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId: appId },
+    });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+
+    const item = await this.checklistRepo.findOne({
+      where: { id: itemId, stepId },
+    });
     if (!item) throw new NotFoundException('항목을 찾을 수 없습니다.');
     await this.checklistRepo.remove(item);
   }

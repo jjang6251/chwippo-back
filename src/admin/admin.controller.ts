@@ -1,12 +1,24 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AdminService } from './admin.service';
+import { AdminAuditService } from './admin-audit.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { IsString, MinLength, MaxLength } from 'class-validator';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 class AdminCommentDto {
   @IsString()
@@ -22,6 +34,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly inquiriesService: InquiriesService,
+    private readonly auditService: AdminAuditService,
   ) {}
 
   @Get('stats')
@@ -42,30 +55,48 @@ export class AdminController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    // LRR P1T3 PR K L-1 — page≥1, limit 1~100 cap (어드민 1명도 limit=999999 자기 부하 차단)
+    const pageNum = Math.max(parseInt(page ?? '1') || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit ?? '30') || 30, 1), 100);
     return this.inquiriesService.findAll({
       status,
       category,
-      page: page ? parseInt(page) : 1,
-      limit: limit ? parseInt(limit) : 30,
+      page: pageNum,
+      limit: limitNum,
     });
   }
 
   @Get('inquiries/:id')
-  getInquiry(@Param('id') id: string) {
-    return this.inquiriesService.findOneAdmin(id);
+  async getInquiry(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    // LRR P1T3 PR J — 어드민이 어떤 사용자의 문의 본문·PII context를 봤는지 추적.
+    // List 조회는 빈도 높고 PII 부분 노출이라 skip, 단건 상세만 audit (정책 트레이드오프).
+    const inquiry = await this.inquiriesService.findOneAdmin(id);
+    await this.auditService.log(user.id, 'view_inquiry', 'inquiry', id, {});
+    return inquiry;
   }
 
   @Post('inquiries/:id/comments')
-  addComment(
+  async addComment(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: AdminCommentDto,
   ) {
-    return this.inquiriesService.addAdminComment(id, user.id, dto.content);
+    const comment = await this.inquiriesService.addAdminComment(
+      id,
+      user.id,
+      dto.content,
+    );
+    // 본문은 audit log에 평문 저장하지 않음 (privacy) — 길이만 기록
+    await this.auditService.log(user.id, 'reply_inquiry', 'inquiry', id, {
+      contentLength: dto.content.length,
+    });
+    return comment;
   }
 
   @Patch('inquiries/:id/close')
-  closeInquiry(@Param('id') id: string) {
-    return this.inquiriesService.closeInquiry(id);
+  async closeInquiry(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    const result = await this.inquiriesService.closeInquiry(id);
+    await this.auditService.log(user.id, 'close_inquiry', 'inquiry', id, {});
+    return result;
   }
 }

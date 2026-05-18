@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Application } from '../applications/application.entity';
@@ -32,14 +32,25 @@ export class CalendarService {
     private readonly examRepo: Repository<ExamSchedule>,
   ) {}
 
-  async getMonthEvents(userId: string, year: number, month: number): Promise<CalendarEvent[]> {
+  async getMonthEvents(
+    userId: string,
+    year: number,
+    month: number,
+  ): Promise<CalendarEvent[]> {
     const monthStr = String(month).padStart(2, '0');
     const startDate = `${year}-${monthStr}-01`;
-    const nextMonth = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const nextMonth =
+      month === 12
+        ? `${year + 1}-01-01`
+        : `${year}-${String(month + 1).padStart(2, '0')}-01`;
 
     const deadlines = await this.appRepo
       .createQueryBuilder('a')
-      .select(['a.id AS id', 'a.company_name AS company_name', 'a.deadline AS deadline'])
+      .select([
+        'a.id AS id',
+        'a.company_name AS company_name',
+        'a.deadline AS deadline',
+      ])
       .where('a.user_id = :userId', { userId })
       .andWhere('a.deleted_at IS NULL')
       .andWhere("a.status != 'FAILED'")
@@ -49,7 +60,12 @@ export class CalendarService {
 
     const interviews = await this.stepRepo
       .createQueryBuilder('s')
-      .innerJoin('applications', 'a', 'a.id = s.application_id AND a.user_id = :userId AND a.deleted_at IS NULL', { userId })
+      .innerJoin(
+        'applications',
+        'a',
+        'a.id = s.application_id AND a.user_id = :userId AND a.deleted_at IS NULL',
+        { userId },
+      )
       .select([
         'a.id AS application_id',
         's.id AS step_id',
@@ -60,9 +76,21 @@ export class CalendarService {
         "TO_CHAR(s.scheduled_date AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS time",
       ])
       .where('s.scheduled_date IS NOT NULL')
-      .andWhere('s.scheduled_date >= :start', { start: new Date(`${year}-${monthStr}-01T00:00:00+09:00`) })
-      .andWhere('s.scheduled_date < :end', { end: new Date(nextMonth + 'T00:00:00+09:00') })
-      .getRawMany<{ application_id: string; step_id: string; company_name: string; step_name: string; location: string | null; date: string; time: string }>();
+      .andWhere('s.scheduled_date >= :start', {
+        start: new Date(`${year}-${monthStr}-01T00:00:00+09:00`),
+      })
+      .andWhere('s.scheduled_date < :end', {
+        end: new Date(nextMonth + 'T00:00:00+09:00'),
+      })
+      .getRawMany<{
+        application_id: string;
+        step_id: string;
+        company_name: string;
+        step_name: string;
+        location: string | null;
+        date: string;
+        time: string;
+      }>();
 
     const exams = await this.examRepo
       .createQueryBuilder('e')
@@ -74,12 +102,25 @@ export class CalendarService {
         "TO_CHAR(e.exam_date AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS time",
       ])
       .where('e.user_id = :userId', { userId })
-      .andWhere('e.exam_date >= :start', { start: new Date(`${year}-${monthStr}-01T00:00:00+09:00`) })
-      .andWhere('e.exam_date < :end', { end: new Date(nextMonth + 'T00:00:00+09:00') })
-      .getRawMany<{ id: string; name: string; location: string | null; date: string; time: string }>();
+      .andWhere('e.exam_date >= :start', {
+        start: new Date(`${year}-${monthStr}-01T00:00:00+09:00`),
+      })
+      .andWhere('e.exam_date < :end', {
+        end: new Date(nextMonth + 'T00:00:00+09:00'),
+      })
+      .getRawMany<{
+        id: string;
+        name: string;
+        location: string | null;
+        date: string;
+        time: string;
+      }>();
 
     const deadlineEvents: CalendarEvent[] = deadlines.map((d) => ({
-      date: typeof d.deadline === 'string' ? d.deadline : (d.deadline as Date).toISOString().slice(0, 10),
+      date:
+        typeof d.deadline === 'string'
+          ? d.deadline
+          : (d.deadline as Date).toISOString().slice(0, 10),
       time: null,
       type: 'deadline',
       applicationId: d.id,
@@ -114,7 +155,9 @@ export class CalendarService {
       location: e.location,
     }));
 
-    return [...deadlineEvents, ...interviewEvents, ...examEvents].sort((a, b) => a.date.localeCompare(b.date));
+    return [...deadlineEvents, ...interviewEvents, ...examEvents].sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
   }
 
   async getDailyNotes(
@@ -141,30 +184,40 @@ export class CalendarService {
   }
 
   async carryOverDailyNote(userId: string, id: string): Promise<DailyNote> {
-    const note = await this.noteRepo.findOne({ where: { id } });
-    if (!note) throw new NotFoundException();
-    if (note.userId !== userId) throw new ForbiddenException();
-    note.date = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
+    // LRR P1T3 PR H — IDOR 정보 누수 차단: userId where 조건에 포함 → 다른 사용자 일정이거나
+    // 존재 안 하거나 모두 NotFound로 동일 응답 (security.md §2.2 정식 패턴)
+    const note = await this.noteRepo.findOne({ where: { id, userId } });
+    if (!note) throw new NotFoundException('일정을 찾을 수 없습니다.');
+    note.date = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Asia/Seoul',
+    });
     return this.noteRepo.save(note);
   }
 
-  async createDailyNote(userId: string, dto: CreateDailyNoteDto): Promise<DailyNote> {
-    const note = this.noteRepo.create({ userId, ...dto });
+  async createDailyNote(
+    userId: string,
+    dto: CreateDailyNoteDto,
+  ): Promise<DailyNote> {
+    // LRR P1T3 PR K L-5 — userId가 spread 뒤에 와야 dto에 userId가 섞여 들어와도 override됨
+    // (forbidNonWhitelisted가 차단하지만 defense-in-depth)
+    const note = this.noteRepo.create({ ...dto, userId });
     return this.noteRepo.save(note);
   }
 
-  async updateDailyNote(userId: string, id: string, dto: UpdateDailyNoteDto): Promise<DailyNote> {
-    const note = await this.noteRepo.findOne({ where: { id } });
-    if (!note) throw new NotFoundException();
-    if (note.userId !== userId) throw new ForbiddenException();
+  async updateDailyNote(
+    userId: string,
+    id: string,
+    dto: UpdateDailyNoteDto,
+  ): Promise<DailyNote> {
+    const note = await this.noteRepo.findOne({ where: { id, userId } });
+    if (!note) throw new NotFoundException('일정을 찾을 수 없습니다.');
     Object.assign(note, dto);
     return this.noteRepo.save(note);
   }
 
   async deleteDailyNote(userId: string, id: string): Promise<void> {
-    const note = await this.noteRepo.findOne({ where: { id } });
-    if (!note) throw new NotFoundException();
-    if (note.userId !== userId) throw new ForbiddenException();
+    const note = await this.noteRepo.findOne({ where: { id, userId } });
+    if (!note) throw new NotFoundException('일정을 찾을 수 없습니다.');
     await this.noteRepo.remove(note);
   }
 }

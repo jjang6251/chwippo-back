@@ -1,12 +1,38 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { MyinfoService } from './myinfo.service';
+import { StorageUsageService } from './storage-usage.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { UpdateProfileDto } from './dto/profile.dto';
+import {
+  CreateCoverletterCustomDto,
+  UpdateCoverletterCustomDto,
+  UpdateCoverletterDto,
+} from './dto/coverletter.dto';
 
-interface AuthUser { id: string }
+interface AuthUser {
+  id: string;
+}
 
 @Controller('myinfo')
 export class MyinfoController {
-  constructor(private readonly myinfoService: MyinfoService) {}
+  constructor(
+    private readonly myinfoService: MyinfoService,
+    private readonly storageUsage: StorageUsageService,
+  ) {}
+
+  // ── Storage Usage ─────────────────────────────────────────
+  @Get('storage-usage')
+  getStorageUsage(@CurrentUser() user: AuthUser) {
+    return this.storageUsage.getUsage(user.id);
+  }
 
   // ── Profile ───────────────────────────────────────────────
   @Get('profile')
@@ -15,7 +41,7 @@ export class MyinfoController {
   }
 
   @Patch('profile')
-  updateProfile(@CurrentUser() user: AuthUser, @Body() dto: Record<string, any>) {
+  updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
     return this.myinfoService.updateProfile(user.id, dto);
   }
 
@@ -26,20 +52,30 @@ export class MyinfoController {
   }
 
   @Patch('coverletter')
-  updateCoverletter(@CurrentUser() user: AuthUser, @Body() dto: Record<string, any>) {
+  updateCoverletter(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UpdateCoverletterDto,
+  ) {
     return this.myinfoService.updateCoverletter(user.id, dto);
   }
 
   @Post('coverletter/custom')
-  createCustom(@CurrentUser() user: AuthUser, @Body() body: { label: string; order_index: number }) {
-    return this.myinfoService.createCustomItem(user.id, body.label, body.order_index ?? 0);
+  createCustom(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateCoverletterCustomDto,
+  ) {
+    return this.myinfoService.createCustomItem(
+      user.id,
+      dto.label,
+      dto.order_index ?? 0,
+    );
   }
 
   @Patch('coverletter/custom/:id')
   updateCustom(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @Body() dto: Record<string, any>,
+    @Body() dto: UpdateCoverletterCustomDto,
   ) {
     return this.myinfoService.updateCustomItem(user.id, id, dto);
   }

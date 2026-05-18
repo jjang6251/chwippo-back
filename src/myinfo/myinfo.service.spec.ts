@@ -1,8 +1,10 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { MyinfoService } from './myinfo.service';
+import { StorageUsageService } from './storage-usage.service';
 import { UserProfile } from './entities/user-profile.entity';
 import { LanguageCert } from './entities/language-cert.entity';
 import { Cert } from './entities/cert.entity';
@@ -11,6 +13,8 @@ import { Experience } from './entities/experience.entity';
 import { Coverletter } from './entities/coverletter.entity';
 import { CoverletterCustom } from './entities/coverletter-custom.entity';
 import { Document } from './entities/document.entity';
+import { Education } from './entities/education.entity';
+import { FilesService } from '../files/files.service';
 
 describe('MyinfoService', () => {
   let service: MyinfoService;
@@ -22,33 +26,89 @@ describe('MyinfoService', () => {
   let coverRepo: jest.Mocked<Repository<Coverletter>>;
   let documentRepo: jest.Mocked<Repository<Document>>;
   let coverCustomRepo: jest.Mocked<Repository<CoverletterCustom>>;
+  let educationRepo: jest.Mocked<Repository<Education>>;
+  let storageUsage: jest.Mocked<StorageUsageService>;
+  let filesService: jest.Mocked<FilesService>;
+  let mockManager: jest.Mocked<EntityManager>;
 
   const USER_ID = 'user-uuid-1';
 
   beforeEach(async () => {
+    profileRepo = mock<Repository<UserProfile>>();
+    langCertRepo = mock<Repository<LanguageCert>>();
+    certRepo = mock<Repository<Cert>>();
+    awardRepo = mock<Repository<Award>>();
+    expRepo = mock<Repository<Experience>>();
+    coverRepo = mock<Repository<Coverletter>>();
+    documentRepo = mock<Repository<Document>>();
+    coverCustomRepo = mock<Repository<CoverletterCustom>>();
+    educationRepo = mock<Repository<Education>>();
+    storageUsage = mock<StorageUsageService>();
+    filesService = mock<FilesService>();
+
+    // 트랜잭션 내 manager가 동일한 mock repo들을 반환하도록 — 외부 mock 설정이 transaction 안에서도 그대로 적용됨
+    mockManager = mock<EntityManager>();
+    mockManager.query.mockResolvedValue([]);
+    mockManager.getRepository.mockImplementation((entity: unknown) => {
+      if (entity === Cert) return certRepo;
+      if (entity === Award) return awardRepo;
+      if (entity === LanguageCert) return langCertRepo;
+      if (entity === Document) return documentRepo;
+      if (entity === Education) return educationRepo;
+      if (entity === Experience) return expRepo;
+      if (entity === Coverletter) return coverRepo;
+      if (entity === CoverletterCustom) return coverCustomRepo;
+      return mock<Repository<unknown>>();
+    });
+    storageUsage.assertWithinLimit.mockResolvedValue(undefined);
+
+    const mockDataSource = mock<DataSource>();
+    mockDataSource.transaction.mockImplementation(
+      // overload: callback first
+      async (...args: unknown[]) => {
+        const cb = (typeof args[0] === 'function' ? args[0] : args[1]) as (
+          m: EntityManager,
+        ) => Promise<unknown>;
+        return cb(mockManager);
+      },
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MyinfoService,
-        { provide: getRepositoryToken(UserProfile), useValue: mock<Repository<UserProfile>>() },
-        { provide: getRepositoryToken(LanguageCert), useValue: mock<Repository<LanguageCert>>() },
-        { provide: getRepositoryToken(Cert), useValue: mock<Repository<Cert>>() },
-        { provide: getRepositoryToken(Award), useValue: mock<Repository<Award>>() },
-        { provide: getRepositoryToken(Experience), useValue: mock<Repository<Experience>>() },
-        { provide: getRepositoryToken(Coverletter), useValue: mock<Repository<Coverletter>>() },
-        { provide: getRepositoryToken(Document), useValue: mock<Repository<Document>>() },
-        { provide: getRepositoryToken(CoverletterCustom), useValue: mock<Repository<CoverletterCustom>>() },
+        { provide: getRepositoryToken(UserProfile), useValue: profileRepo },
+        { provide: getRepositoryToken(LanguageCert), useValue: langCertRepo },
+        { provide: getRepositoryToken(Cert), useValue: certRepo },
+        { provide: getRepositoryToken(Award), useValue: awardRepo },
+        { provide: getRepositoryToken(Experience), useValue: expRepo },
+        { provide: getRepositoryToken(Coverletter), useValue: coverRepo },
+        { provide: getRepositoryToken(Document), useValue: documentRepo },
+        {
+          provide: getRepositoryToken(CoverletterCustom),
+          useValue: coverCustomRepo,
+        },
+        { provide: getRepositoryToken(Education), useValue: educationRepo },
+        { provide: getDataSourceToken(), useValue: mockDataSource },
+        { provide: StorageUsageService, useValue: storageUsage },
+        { provide: FilesService, useValue: filesService },
       ],
     }).compile();
 
     service = module.get<MyinfoService>(MyinfoService);
-    profileRepo = module.get(getRepositoryToken(UserProfile));
-    langCertRepo = module.get(getRepositoryToken(LanguageCert));
-    certRepo = module.get(getRepositoryToken(Cert));
-    awardRepo = module.get(getRepositoryToken(Award));
-    expRepo = module.get(getRepositoryToken(Experience));
-    coverRepo = module.get(getRepositoryToken(Coverletter));
-    documentRepo = module.get(getRepositoryToken(Document));
-    coverCustomRepo = module.get(getRepositoryToken(CoverletterCustom));
+    // 기본값: count 0으로 한도 미달, save는 입력 그대로 반환, findOne은 null
+    for (const repo of [
+      certRepo,
+      awardRepo,
+      langCertRepo,
+      documentRepo,
+      educationRepo,
+      expRepo,
+      coverCustomRepo,
+    ]) {
+      (repo.count as jest.Mock).mockResolvedValue(0);
+      (repo.save as jest.Mock).mockImplementation(async (e) => e);
+      (repo.create as jest.Mock).mockImplementation((e) => e);
+    }
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -68,8 +128,8 @@ describe('MyinfoService', () => {
     it('프로필 없음 → create + save로 새 프로필 생성 반환', async () => {
       const fresh = { user_id: USER_ID } as UserProfile;
       profileRepo.findOne
-        .mockResolvedValueOnce(null)  // 최초 조회
-        .mockResolvedValue(fresh);    // save 후 getProfile 재조회
+        .mockResolvedValueOnce(null) // 최초 조회
+        .mockResolvedValue(fresh); // save 후 getProfile 재조회
       profileRepo.create.mockReturnValue(fresh);
       profileRepo.save.mockResolvedValue(fresh);
 
@@ -105,7 +165,9 @@ describe('MyinfoService', () => {
 
       const result = await service.updateProfile(USER_ID, {});
 
-      expect(profileRepo.findOne).toHaveBeenCalledWith({ where: { user_id: USER_ID } });
+      expect(profileRepo.findOne).toHaveBeenCalledWith({
+        where: { user_id: USER_ID },
+      });
       expect(result).toBeDefined();
     });
   });
@@ -123,7 +185,11 @@ describe('MyinfoService', () => {
     });
 
     it('createLangCert → create + save, user_id 포함', async () => {
-      const cert = { id: 'lc-1', user_id: USER_ID, cert_type: 'TOEIC' } as LanguageCert;
+      const cert = {
+        id: 'lc-1',
+        user_id: USER_ID,
+        cert_type: 'TOEIC',
+      } as LanguageCert;
       langCertRepo.create.mockReturnValue(cert);
       langCertRepo.save.mockResolvedValue(cert);
 
@@ -153,7 +219,10 @@ describe('MyinfoService', () => {
 
       await service.deleteLangCert('other-user', 'lc-1');
 
-      expect(langCertRepo.delete).toHaveBeenCalledWith({ id: 'lc-1', user_id: 'other-user' });
+      expect(langCertRepo.delete).toHaveBeenCalledWith({
+        id: 'lc-1',
+        user_id: 'other-user',
+      });
     });
   });
 
@@ -195,7 +264,10 @@ describe('MyinfoService', () => {
     it('deleteAward → { id, user_id } 조건', async () => {
       awardRepo.delete.mockResolvedValue({} as any);
       await service.deleteAward(USER_ID, 'award-1');
-      expect(awardRepo.delete).toHaveBeenCalledWith({ id: 'award-1', user_id: USER_ID });
+      expect(awardRepo.delete).toHaveBeenCalledWith({
+        id: 'award-1',
+        user_id: USER_ID,
+      });
     });
   });
 
@@ -208,6 +280,75 @@ describe('MyinfoService', () => {
         where: { user_id: USER_ID },
         order: { start_at: 'DESC' },
       });
+    });
+  });
+
+  // ── Education CRUD ────────────────────────────────────
+  describe('Education CRUD', () => {
+    it('getEducations → userId 필터 + start_at DESC 정렬', async () => {
+      educationRepo.find.mockResolvedValue([]);
+      await service.getEducations(USER_ID);
+      expect(educationRepo.find).toHaveBeenCalledWith({
+        where: { user_id: USER_ID },
+        order: { start_at: 'DESC' },
+      });
+    });
+
+    it('createEducation → dto에 user_id 자동 주입', async () => {
+      const dto = { school_name: '서울대학교', degree: '대학교 (학사)' };
+      const created = { id: 'edu-1', ...dto, user_id: USER_ID } as Education;
+      educationRepo.create.mockReturnValue(created);
+      educationRepo.save.mockResolvedValue(created);
+
+      await service.createEducation(USER_ID, dto);
+
+      expect(educationRepo.create).toHaveBeenCalledWith({
+        ...dto,
+        user_id: USER_ID,
+      });
+      expect(educationRepo.save).toHaveBeenCalledWith(created);
+    });
+
+    it('updateEducation → id + user_id 조건으로 update (IDOR 방어)', async () => {
+      const dto = { major: '컴퓨터공학' };
+      await service.updateEducation(USER_ID, 'edu-1', dto);
+      expect(educationRepo.update).toHaveBeenCalledWith(
+        { id: 'edu-1', user_id: USER_ID },
+        dto,
+      );
+    });
+
+    it('updateEducation → 갱신 후 본인 row만 조회해 반환', async () => {
+      const updated = {
+        id: 'edu-1',
+        school_name: '서울대',
+        user_id: USER_ID,
+      } as Education;
+      educationRepo.findOne.mockResolvedValue(updated);
+      const result = await service.updateEducation(USER_ID, 'edu-1', {});
+      expect(educationRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'edu-1', user_id: USER_ID },
+      });
+      expect(result).toEqual(updated);
+    });
+
+    it('deleteEducation → id + user_id 조건으로 delete (IDOR 방어)', async () => {
+      await service.deleteEducation(USER_ID, 'edu-1');
+      expect(educationRepo.delete).toHaveBeenCalledWith({
+        id: 'edu-1',
+        user_id: USER_ID,
+      });
+    });
+
+    it('타인 학력 update 시도 → user_id 조건으로 막힘 (where 조건 검증)', async () => {
+      await service.updateEducation('attacker-uid', 'edu-1', {
+        school_name: 'hack',
+      });
+      // 공격자 userId가 들어가지만 where 조건에 user_id 포함되어 row 매칭 안 됨
+      expect(educationRepo.update).toHaveBeenCalledWith(
+        { id: 'edu-1', user_id: 'attacker-uid' },
+        { school_name: 'hack' },
+      );
     });
   });
 
@@ -242,7 +383,9 @@ describe('MyinfoService', () => {
       coverRepo.upsert.mockResolvedValue({} as any);
       coverRepo.findOne.mockResolvedValue(cl);
 
-      const result = await service.updateCoverletter(USER_ID, { personality_strength: '성실함' });
+      const result = await service.updateCoverletter(USER_ID, {
+        personality: '성실하고 꼼꼼함',
+      });
 
       expect(coverRepo.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ user_id: USER_ID }),
@@ -255,14 +398,25 @@ describe('MyinfoService', () => {
   // ── CoverletterCustom ──────────────────────────────────
   describe('CoverletterCustom CRUD', () => {
     it('createCustomItem → label, order_index, content 빈 문자열로 생성', async () => {
-      const item = { id: 'cc-1', user_id: USER_ID, label: '해외 경험', order_index: 0, content: '' } as CoverletterCustom;
+      const item = {
+        id: 'cc-1',
+        user_id: USER_ID,
+        label: '해외 경험',
+        order_index: 0,
+        content: '',
+      };
       coverCustomRepo.create.mockReturnValue(item);
       coverCustomRepo.save.mockResolvedValue(item);
 
       await service.createCustomItem(USER_ID, '해외 경험', 0);
 
       expect(coverCustomRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ user_id: USER_ID, label: '해외 경험', order_index: 0, content: '' }),
+        expect.objectContaining({
+          user_id: USER_ID,
+          label: '해외 경험',
+          order_index: 0,
+          content: '',
+        }),
       );
     });
 
@@ -281,11 +435,195 @@ describe('MyinfoService', () => {
     it('deleteCustomItem → { id, user_id } 조건', async () => {
       coverCustomRepo.delete.mockResolvedValue({} as any);
       await service.deleteCustomItem(USER_ID, 'cc-1');
-      expect(coverCustomRepo.delete).toHaveBeenCalledWith({ id: 'cc-1', user_id: USER_ID });
+      expect(coverCustomRepo.delete).toHaveBeenCalledWith({
+        id: 'cc-1',
+        user_id: USER_ID,
+      });
     });
   });
 
   // ── Documents ──────────────────────────────────────────
+  // ── 시나리오 기반: 항목 수 한도 + storage cap + R2 cascade ──
+  describe('시나리오 기반 보안·운영', () => {
+    describe('항목 수 한도 (FB-11)', () => {
+      it('자격증 30개 도달한 상태에서 31번째 createCert → BadRequestException', async () => {
+        (certRepo.count as jest.Mock).mockResolvedValue(30);
+        await expect(
+          service.createCert(USER_ID, { name: '신규자격증' }),
+        ).rejects.toThrow(/자격증.*최대 30개/);
+        expect(certRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('어학 10개 도달 → 11번째 차단', async () => {
+        (langCertRepo.count as jest.Mock).mockResolvedValue(10);
+        await expect(
+          service.createLangCert(USER_ID, { cert_type: 'TOEIC' }),
+        ).rejects.toThrow(/어학.*최대 10개/);
+      });
+
+      it('한도 미달 → 정상 INSERT (29개 → 30번째 등록 가능, E-9)', async () => {
+        (certRepo.count as jest.Mock).mockResolvedValue(29);
+        const result = await service.createCert(USER_ID, { name: '자격증' });
+        expect(certRepo.save).toHaveBeenCalled();
+        expect(result).toBeDefined();
+      });
+    });
+
+    describe('storage cap (FB-6, FB-7)', () => {
+      it('createCert with file_size_bytes — assertWithinLimit 호출됨', async () => {
+        await service.createCert(USER_ID, {
+          name: '자격증',
+          file_url: 'r2://new.pdf',
+          file_size_bytes: 5 * 1024 * 1024,
+        });
+        expect(storageUsage.assertWithinLimit).toHaveBeenCalledWith(
+          USER_ID,
+          5 * 1024 * 1024,
+          mockManager,
+        );
+      });
+
+      it('파일 없는 createCert — storage cap 검증 스킵 (H-7)', async () => {
+        await service.createCert(USER_ID, { name: '자격증' });
+        expect(storageUsage.assertWithinLimit).not.toHaveBeenCalled();
+      });
+
+      it('cap 초과 시 R2 파일 cleanup 후 throw (FI-3)', async () => {
+        storageUsage.assertWithinLimit.mockRejectedValueOnce(
+          new BadRequestException('저장 공간 부족'),
+        );
+        await expect(
+          service.createCert(USER_ID, {
+            name: 'X',
+            file_url: 'r2://orphan.pdf',
+            file_size_bytes: 5 * 1024 * 1024,
+          }),
+        ).rejects.toThrow(BadRequestException);
+        expect(filesService.deleteFile).toHaveBeenCalledWith('r2://orphan.pdf');
+      });
+    });
+
+    describe('R2 cascade 삭제', () => {
+      it('deleteCert가 R2 파일도 함께 삭제 (H-3)', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://cert.pdf',
+        } as unknown as Cert);
+
+        await service.deleteCert(USER_ID, 'c-1');
+
+        expect(certRepo.delete).toHaveBeenCalledWith({
+          id: 'c-1',
+          user_id: USER_ID,
+        });
+        expect(filesService.deleteFile).toHaveBeenCalledWith('r2://cert.pdf');
+      });
+
+      it('파일 없는 항목 삭제 시 filesService.deleteFile 미호출', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: null,
+        } as unknown as Cert);
+
+        await service.deleteCert(USER_ID, 'c-1');
+
+        expect(certRepo.delete).toHaveBeenCalled();
+        expect(filesService.deleteFile).not.toHaveBeenCalled();
+      });
+
+      it('updateCert 파일 교체 시 이전 R2 파일 삭제 (H-4)', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://old.pdf',
+          file_size_bytes: 1024,
+        } as unknown as Cert);
+
+        await service.updateCert(USER_ID, 'c-1', {
+          file_url: 'r2://new.pdf',
+          file_size_bytes: 2048,
+        });
+
+        expect(filesService.deleteFile).toHaveBeenCalledWith('r2://old.pdf');
+      });
+    });
+
+    // LRR P1T2 M-2: file_url ownership 검증
+    describe('file_url ownership 검증 (M-2)', () => {
+      it('createCert에 file_url 있으면 filesService.assertOwnFileUrl 호출', async () => {
+        await service.createCert(USER_ID, {
+          name: '자격증',
+          file_url: 'r2://own.pdf',
+          file_size_bytes: 1024,
+        });
+        expect(filesService.assertOwnFileUrl).toHaveBeenCalledWith(
+          USER_ID,
+          'r2://own.pdf',
+        );
+      });
+
+      it('createCert에 file_url 없으면 assertOwnFileUrl 미호출 (skip)', async () => {
+        await service.createCert(USER_ID, { name: '자격증' });
+        expect(filesService.assertOwnFileUrl).not.toHaveBeenCalled();
+      });
+
+      it('assertOwnFileUrl이 ForbiddenException throw → createCert 전파 + storage cap 검증 미진입', async () => {
+        filesService.assertOwnFileUrl.mockImplementationOnce(() => {
+          throw new ForbiddenException(
+            '본인이 업로드한 파일만 사용할 수 있습니다.',
+          );
+        });
+        await expect(
+          service.createCert(USER_ID, {
+            name: '자격증',
+            file_url: 'r2://other-user.pdf',
+            file_size_bytes: 1024,
+          }),
+        ).rejects.toThrow(ForbiddenException);
+        // 검증 실패 → 트랜잭션 진입 안 함 → assertWithinLimit 미호출
+        expect(storageUsage.assertWithinLimit).not.toHaveBeenCalled();
+      });
+
+      it('updateCert 새 file_url → assertOwnFileUrl 호출', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://old.pdf',
+          file_size_bytes: 1024,
+        } as unknown as Cert);
+
+        await service.updateCert(USER_ID, 'c-1', {
+          file_url: 'r2://new.pdf',
+          file_size_bytes: 2048,
+        });
+
+        expect(filesService.assertOwnFileUrl).toHaveBeenCalledWith(
+          USER_ID,
+          'r2://new.pdf',
+        );
+      });
+
+      it('updateCert에서 file_url=null (파일 제거 의도) → assertOwnFileUrl skip', async () => {
+        certRepo.findOne.mockResolvedValue({
+          id: 'c-1',
+          user_id: USER_ID,
+          file_url: 'r2://old.pdf',
+          file_size_bytes: 1024,
+        } as unknown as Cert);
+
+        await service.updateCert(USER_ID, 'c-1', {
+          file_url: null,
+          file_size_bytes: 0,
+        });
+
+        // null은 truthy 아니라 검증 skip
+        expect(filesService.assertOwnFileUrl).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('Documents', () => {
     it('getDocuments → user_id 조건, created_at DESC 정렬', async () => {
       documentRepo.find.mockResolvedValue([]);
@@ -319,7 +657,78 @@ describe('MyinfoService', () => {
     it('deleteDocument → { id, user_id } 조건 (IDOR silently no-op)', async () => {
       documentRepo.delete.mockResolvedValue({} as any);
       await service.deleteDocument('other-user', 'doc-1');
-      expect(documentRepo.delete).toHaveBeenCalledWith({ id: 'doc-1', user_id: 'other-user' });
+      expect(documentRepo.delete).toHaveBeenCalledWith({
+        id: 'doc-1',
+        user_id: 'other-user',
+      });
+    });
+  });
+
+  // ── LRR P2T2 PR γ — affected 0 → NotFoundException 일관성 (LOW-2) ──────
+  describe('affected 0 → NotFoundException (PR γ LOW-2)', () => {
+    const { NotFoundException } = jest.requireActual('@nestjs/common');
+
+    it('updateExperience: affected=0 → NotFoundException', async () => {
+      expRepo.update.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.updateExperience(USER_ID, 'no-exist', {}),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('deleteExperience: affected=0 → NotFoundException', async () => {
+      expRepo.delete.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.deleteExperience(USER_ID, 'no-exist'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('updateCustomItem: affected=0 → NotFoundException', async () => {
+      coverCustomRepo.update.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.updateCustomItem(USER_ID, 'no-exist', {}),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('deleteCustomItem: affected=0 → NotFoundException', async () => {
+      coverCustomRepo.delete.mockResolvedValue({ affected: 0 } as never);
+      await expect(
+        service.deleteCustomItem(USER_ID, 'no-exist'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('updateExperience: affected=1 → 정상 (findOne 결과 반환)', async () => {
+      expRepo.update.mockResolvedValue({ affected: 1 } as never);
+      expRepo.findOne.mockResolvedValue({ id: 'exp-1' } as never);
+      const result = await service.updateExperience(USER_ID, 'exp-1', {});
+      expect(result).toMatchObject({ id: 'exp-1' });
+    });
+  });
+
+  // ── LRR P2T2 PR γ — experience createWithLocks 패턴 통일 (P1T2 L-1) ────
+  describe('createExperience — createWithLocks 패턴 (PR γ L-1)', () => {
+    it('트랜잭션 + 사용자 row 락 + 항목 한도 검증 흐름 사용', async () => {
+      // createWithLocks가 transaction을 호출하는지 확인
+      const dataSource = jest.requireActual('typeorm');
+      void dataSource;
+
+      const transactionSpy = jest.fn().mockImplementation(async (cb) => {
+        const txManager = {
+          query: jest.fn().mockResolvedValue([]),
+          getRepository: jest.fn().mockReturnValue({
+            count: jest.fn().mockResolvedValue(0),
+            create: jest.fn((data) => data),
+            save: jest.fn(async (data) => data),
+          }),
+        };
+        return cb(txManager);
+      });
+      (
+        service as unknown as { dataSource: { transaction: jest.Mock } }
+      ).dataSource = { transaction: transactionSpy };
+
+      await service.createExperience(USER_ID, { title: '인턴' } as never);
+
+      expect(transactionSpy).toHaveBeenCalled();
     });
   });
 });

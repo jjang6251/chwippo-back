@@ -8,7 +8,14 @@ import { CalendarController } from './calendar.controller';
 import { CalendarService } from './calendar.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Application, ApplicationStep, DailyNote, ExamSchedule])],
+  imports: [
+    TypeOrmModule.forFeature([
+      Application,
+      ApplicationStep,
+      DailyNote,
+      ExamSchedule,
+    ]),
+  ],
   controllers: [CalendarController],
   providers: [CalendarService],
 })

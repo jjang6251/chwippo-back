@@ -1,0 +1,47 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { Application } from './application.entity';
+
+// 회사별 자소서 문항-답변 (재활용·AI 컨텍스트용)
+@Entity('application_coverletters')
+export class ApplicationCoverletter {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column({ name: 'application_id', type: 'uuid' })
+  applicationId: string;
+
+  @ManyToOne(() => Application, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'application_id' })
+  application: Application;
+
+  @Column({ type: 'text' })
+  question: string;
+
+  // 지원동기/성장과정·가치관/입사후포부/직무역량·핵심경험/협업·갈등경험/도전·실패경험/기타
+  @Column({ type: 'varchar', nullable: true })
+  category: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  answer: string | null;
+
+  // 사용자가 공고 보고 입력하는 글자수 제한 (없으면 무제한)
+  @Column({ name: 'char_limit', type: 'int', nullable: true })
+  charLimit: number | null;
+
+  @Column({ name: 'order_index', default: 0 })
+  orderIndex: number;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
+}

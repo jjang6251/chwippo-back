@@ -1,4 +1,9 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 
 @Entity('users')
 export class User {
@@ -31,4 +36,10 @@ export class User {
 
   @Column({ name: 'dashboard_config', type: 'jsonb', nullable: true })
   dashboardConfig: { sections: { id: string; visible: boolean }[] } | null;
+
+  @Column({ name: 'onboarded_at', type: 'timestamptz', nullable: true })
+  onboardedAt: Date | null;
+
+  @Column({ name: 'suspended_at', type: 'timestamptz', nullable: true })
+  suspendedAt: Date | null;
 }
