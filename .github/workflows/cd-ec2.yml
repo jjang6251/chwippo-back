@@ -1,8 +1,12 @@
 name: CD
 
+# LRR 출시 작업 (2026-05-18): self-hosted runner 미등록 상태라 main push 시 영원히 queued.
+# Railway "Wait for CI" 옵션과 결합되면 deploy 무한 대기 — push trigger 일시 비활성.
+# Phase 2 EC2 전환 시점에 main push trigger 복원 + self-hosted runner 등록 (deployment.md §2).
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
 
 jobs:
   deploy:
