@@ -46,6 +46,14 @@ describe('CalendarService', () => {
     const mockExamRepo = mock<Repository<ExamSchedule>>();
     // exam query builder는 항상 빈 배열 반환 (시험 일정 없음)
     (mockExamRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb([]));
+    // note query builder도 기본은 빈 배열 (getMonthEvents가 호출, 각 테스트에서 필요시 override)
+    (mockNoteRepo.createQueryBuilder as jest.Mock).mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
