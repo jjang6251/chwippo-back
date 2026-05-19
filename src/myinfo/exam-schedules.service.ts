@@ -2,6 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 import { ExamSchedule } from './entities/exam-schedule.entity';
 import { Cert } from './entities/cert.entity';
 import { LanguageCert } from './entities/language-cert.entity';
@@ -76,7 +81,9 @@ export class ExamSchedulesService {
       });
       if (!exam) throw new NotFoundException('시험 일정을 찾을 수 없습니다');
 
-      const acquiredAt = dayjs(exam.exam_date).format('YYYY-MM-DD');
+      const acquiredAt = dayjs(exam.exam_date)
+        .tz('Asia/Seoul')
+        .format('YYYY-MM-DD');
 
       if (exam.exam_type === 'language') {
         await manager.save(
