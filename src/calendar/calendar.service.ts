@@ -10,7 +10,7 @@ import { CreateDailyNoteDto, UpdateDailyNoteDto } from './dto/daily-note.dto';
 export interface CalendarEvent {
   date: string;
   time: string | null;
-  type: 'deadline' | 'step' | 'exam' | 'note';
+  type: 'step' | 'exam' | 'note';
   applicationId: string | null;
   stepId: string | null;
   examId: string | null;
@@ -53,20 +53,6 @@ export class CalendarService {
       month === 12
         ? `${year + 1}-01-01`
         : `${year}-${String(month + 1).padStart(2, '0')}-01`;
-
-    const deadlines = await this.appRepo
-      .createQueryBuilder('a')
-      .select([
-        'a.id AS id',
-        'a.company_name AS company_name',
-        "TO_CHAR(a.deadline, 'YYYY-MM-DD') AS deadline",
-      ])
-      .where('a.user_id = :userId', { userId })
-      .andWhere('a.deleted_at IS NULL')
-      .andWhere("a.status NOT IN ('FAILED', 'PASSED')")
-      .andWhere('a.deadline >= :start', { start: startDate })
-      .andWhere('a.deadline < :end', { end: nextMonth })
-      .getRawMany<{ id: string; company_name: string; deadline: string }>();
 
     const interviews = await this.stepRepo
       .createQueryBuilder('s')
@@ -135,20 +121,6 @@ export class CalendarService {
       .addOrderBy('n.created_at', 'ASC')
       .getMany();
 
-    const deadlineEvents: CalendarEvent[] = deadlines.map((d) => ({
-      date: d.deadline,
-      time: null,
-      type: 'deadline',
-      applicationId: d.id,
-      stepId: null,
-      examId: null,
-      noteId: null,
-      companyName: d.company_name,
-      stepName: null,
-      location: null,
-      content: null,
-    }));
-
     const stepEvents: CalendarEvent[] = interviews.map((i) => ({
       date: i.date,
       time: i.time,
@@ -191,12 +163,9 @@ export class CalendarService {
       content: n.content,
     }));
 
-    return [
-      ...deadlineEvents,
-      ...stepEvents,
-      ...examEvents,
-      ...noteEvents,
-    ].sort((a, b) => a.date.localeCompare(b.date));
+    return [...stepEvents, ...examEvents, ...noteEvents].sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
   }
 
   async getDailyNotes(

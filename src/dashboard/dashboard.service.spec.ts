@@ -137,12 +137,12 @@ describe('DashboardService', () => {
     };
 
     it('최대 5개로 제한 (6개 항목 있어도 5개만 반환)', async () => {
-      const apps = [0, 1, 2, 3, 4, 5].map((d) =>
-        makeDeadlineApp(`app-${d}`, `회사${d}`, d),
+      const steps = [0, 1, 2, 3, 4, 5].map((d) =>
+        makeStepWithDate(`step-${d}`, `면접${d}`, `app-${d}`, d),
       );
 
-      const appQb = makeQb(apps);
-      const stepQb = makeQb([]);
+      const appQb = makeQb([]);
+      const stepQb = makeQb(steps);
       appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
       stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
 
@@ -153,14 +153,14 @@ describe('DashboardService', () => {
     });
 
     it('D-day 오름차순 정렬 (임박한 순서로)', async () => {
-      const apps = [
-        makeDeadlineApp('a3', '회사C', 3),
-        makeDeadlineApp('a1', '회사A', 1),
-        makeDeadlineApp('a2', '회사B', 2),
+      const steps = [
+        makeStepWithDate('s3', '회사C', 'a3', 3),
+        makeStepWithDate('s1', '회사A', 'a1', 1),
+        makeStepWithDate('s2', '회사B', 'a2', 2),
       ];
 
-      const appQb = makeQb(apps);
-      const stepQb = makeQb([]);
+      const appQb = makeQb([]);
+      const stepQb = makeQb(steps);
       appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
       stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
 
@@ -169,21 +169,6 @@ describe('DashboardService', () => {
       expect(result[0].dday).toBe(1);
       expect(result[1].dday).toBe(2);
       expect(result[2].dday).toBe(3);
-    });
-
-    it('서류 마감 항목은 type="deadline"으로 반환', async () => {
-      const apps = [makeDeadlineApp('app-1', '네이버', 3)];
-
-      const appQb = makeQb(apps);
-      const stepQb = makeQb([]);
-      appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
-      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
-
-      const result = await service.getDdayList(USER_ID);
-
-      expect(result[0].type).toBe('deadline');
-      expect(result[0].companyName).toBe('네이버');
-      expect(result[0].dday).toBe(3);
     });
 
     it('스텝 일정 항목은 type="step"으로 반환', async () => {
@@ -211,11 +196,11 @@ describe('DashboardService', () => {
       expect(result).toEqual([]);
     });
 
-    it('dday=0 (오늘 마감) 항목 포함, dday 값이 0', async () => {
-      const apps = [makeDeadlineApp('app-today', '오늘마감회사', 0)];
+    it('dday=0 (오늘 일정) 항목 포함, dday 값이 0', async () => {
+      const steps = [makeStepWithDate('step-today', '오늘 일정', 'app-1', 0)];
 
-      const appQb = makeQb(apps);
-      const stepQb = makeQb([]);
+      const appQb = makeQb([]);
+      const stepQb = makeQb(steps);
       appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
       stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
 
@@ -223,36 +208,15 @@ describe('DashboardService', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0].dday).toBe(0);
-      expect(result[0].type).toBe('deadline');
+      expect(result[0].type).toBe('step');
     });
 
-    it('서류 마감과 면접 일정이 섞여 있으면 dday 기준으로 함께 정렬', async () => {
-      const apps = [makeDeadlineApp('app-1', '서류회사', 4)];
-      const steps = [makeStepWithDate('step-1', '1차 면접', 'app-2', 2)];
-
-      const appQb = makeQb(apps);
-      const stepQb = makeQb(steps);
-      appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
-      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
-
-      const result = await service.getDdayList(USER_ID);
-
-      expect(result).toHaveLength(2);
-      expect(result[0].type).toBe('step'); // dday=2가 먼저
-      expect(result[0].dday).toBe(2);
-      expect(result[1].type).toBe('deadline'); // dday=4가 나중
-      expect(result[1].dday).toBe(4);
-    });
-
-    it('6개 항목 중 dday 오름차순 상위 5개만 반환 (deadline+step 혼합)', async () => {
-      const apps = [0, 2, 4].map((d) =>
-        makeDeadlineApp(`app-${d}`, `서류${d}`, d),
-      );
-      const steps = [1, 3, 5].map((d) =>
-        makeStepWithDate(`step-${d}`, '면접', `app-s${d}`, d),
+    it('6개 step 중 dday 오름차순 상위 5개만 반환', async () => {
+      const steps = [0, 1, 2, 3, 4, 5].map((d) =>
+        makeStepWithDate(`step-${d}`, '면접', `app-${d}`, d),
       );
 
-      const appQb = makeQb(apps);
+      const appQb = makeQb([]);
       const stepQb = makeQb(steps);
       appRepo.createQueryBuilder = jest.fn().mockReturnValue(appQb);
       stepRepo.createQueryBuilder = jest.fn().mockReturnValue(stepQb);
@@ -260,7 +224,7 @@ describe('DashboardService', () => {
       const result = await service.getDdayList(USER_ID);
 
       expect(result).toHaveLength(5);
-      // 상위 5개: dday 0,1,2,3,4 (dday=5인 면접 제외)
+      // 상위 5개: dday 0,1,2,3,4 (dday=5 제외)
       expect(result.map((r) => r.dday)).toEqual([0, 1, 2, 3, 4]);
     });
 
@@ -290,8 +254,7 @@ describe('DashboardService', () => {
       expect(result[0].applicationId).toBeUndefined();
     });
 
-    it('deadline·interview·exam 혼합 시 dday 오름차순 + 5개 제한', async () => {
-      const apps = [makeDeadlineApp('a1', '회사A', 1)];
+    it('step·exam 혼합 시 dday 오름차순 + 5개 제한', async () => {
       const steps = [makeStepWithDate('s1', '1차 면접', 'app-1', 2)];
       const exam = {
         id: 'exam-1',
@@ -301,18 +264,14 @@ describe('DashboardService', () => {
         exam_date: new Date(todayMs + 3 * 86400000),
       } as any;
 
-      appRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(apps));
+      appRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([]));
       stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(steps));
       examRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([exam]));
 
       const result = await service.getDdayList(USER_ID);
 
-      expect(result.map((r) => r.type)).toEqual([
-        'deadline',
-        'step',
-        'exam',
-      ]);
-      expect(result.map((r) => r.dday)).toEqual([1, 2, 3]);
+      expect(result.map((r) => r.type)).toEqual(['step', 'exam']);
+      expect(result.map((r) => r.dday)).toEqual([2, 3]);
     });
   });
 

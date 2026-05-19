@@ -94,6 +94,7 @@ export class ApplicationsService {
 
     const wasPlanned = app.status === 'PLANNED';
     const becomesInProgress = dto.status === 'IN_PROGRESS';
+    const deadlineSent = dto.deadline !== undefined;
 
     Object.assign(app, dto);
     // needsDetail은 (status, jobTitle)에서 파생 — 명시적으로 보내지 않으면 재계산
@@ -115,6 +116,20 @@ export class ApplicationsService {
           id,
           app.deadline ?? null,
         );
+      }
+    }
+
+    // 데이터 모델 통합 — deadline 변경 시 첫 step.scheduled_date에도 반영
+    // (단일 진실: 첫 step.scheduled_date. application.deadline은 호환을 위해 유지)
+    if (deadlineSent) {
+      const firstStep = await this.stepRepo.findOne({
+        where: { applicationId: id, orderIndex: 0 },
+      });
+      if (firstStep) {
+        firstStep.scheduledDate = app.deadline
+          ? new Date(`${app.deadline}T00:00:00+09:00`)
+          : null;
+        await this.stepRepo.save(firstStep);
       }
     }
 
