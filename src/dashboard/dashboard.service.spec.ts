@@ -110,16 +110,6 @@ describe('DashboardService', () => {
     });
     const todayMs = new Date(today).getTime();
 
-    const makeDeadlineApp = (
-      id: string,
-      companyName: string,
-      daysFromNow: number,
-    ): Application => {
-      const date = new Date(todayMs + daysFromNow * 86400000);
-      const deadline = date.toISOString().split('T')[0];
-      return { id, companyName, deadline } as Application;
-    };
-
     const makeStepWithDate = (
       id: string,
       name: string,

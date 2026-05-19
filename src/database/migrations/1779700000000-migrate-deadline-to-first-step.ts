@@ -17,9 +17,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * 멱등성: IS NULL·HAVING COUNT 조건이라 재실행 안전. down은 noop (역방향 복원 불가능 —
  * 첫 step.scheduled_date가 마이그레이션으로 생긴 건지 사용자가 직접 입력한 건지 구분 불가).
  */
-export class MigrateDeadlineToFirstStep1779700000000
-  implements MigrationInterface
-{
+export class MigrateDeadlineToFirstStep1779700000000 implements MigrationInterface {
   name = 'MigrateDeadlineToFirstStep1779700000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
