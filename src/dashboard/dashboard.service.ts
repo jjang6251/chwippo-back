@@ -105,7 +105,7 @@ export class DashboardService {
     const todayMs = new Date(today).getTime();
 
     const items: {
-      type: 'deadline' | 'interview' | 'exam';
+      type: 'deadline' | 'step' | 'exam';
       applicationId?: string;
       stepId?: string;
       examId?: string;
@@ -139,7 +139,7 @@ export class DashboardService {
       const hours = kstDate.getUTCHours().toString().padStart(2, '0');
       const minutes = kstDate.getUTCMinutes().toString().padStart(2, '0');
       items.push({
-        type: 'interview',
+        type: 'step',
         applicationId: step.applicationId,
         stepId: step.id,
         companyName:

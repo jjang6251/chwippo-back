@@ -46,6 +46,14 @@ describe('CalendarService', () => {
     const mockExamRepo = mock<Repository<ExamSchedule>>();
     // exam query builder는 항상 빈 배열 반환 (시험 일정 없음)
     (mockExamRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb([]));
+    // note query builder도 기본은 빈 배열 (getMonthEvents가 호출, 각 테스트에서 필요시 override)
+    (mockNoteRepo.createQueryBuilder as jest.Mock).mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -107,7 +115,7 @@ describe('CalendarService', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
-        type: 'interview',
+        type: 'step',
         applicationId: 'app-2',
         companyName: '카카오',
         stepName: '1차 면접',
@@ -238,7 +246,7 @@ describe('CalendarService', () => {
       });
     });
 
-    it('deadline·interview·exam 혼합 시 날짜 ASC 정렬', async () => {
+    it('deadline·step·exam 혼합 시 날짜 ASC 정렬', async () => {
       appRepo.createQueryBuilder.mockReturnValue(
         makeQb([
           { id: 'app-1', company_name: '네이버', deadline: '2026-05-10' },
@@ -273,7 +281,7 @@ describe('CalendarService', () => {
       expect(result.map((r) => r.type)).toEqual([
         'deadline',
         'exam',
-        'interview',
+        'step',
       ]);
     });
   });
