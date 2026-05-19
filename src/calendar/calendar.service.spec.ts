@@ -107,7 +107,7 @@ describe('CalendarService', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
-        type: 'interview',
+        type: 'step',
         applicationId: 'app-2',
         companyName: '카카오',
         stepName: '1차 면접',
@@ -238,7 +238,7 @@ describe('CalendarService', () => {
       });
     });
 
-    it('deadline·interview·exam 혼합 시 날짜 ASC 정렬', async () => {
+    it('deadline·step·exam 혼합 시 날짜 ASC 정렬', async () => {
       appRepo.createQueryBuilder.mockReturnValue(
         makeQb([
           { id: 'app-1', company_name: '네이버', deadline: '2026-05-10' },
@@ -273,7 +273,7 @@ describe('CalendarService', () => {
       expect(result.map((r) => r.type)).toEqual([
         'deadline',
         'exam',
-        'interview',
+        'step',
       ]);
     });
   });

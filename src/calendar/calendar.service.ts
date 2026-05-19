@@ -10,13 +10,23 @@ import { CreateDailyNoteDto, UpdateDailyNoteDto } from './dto/daily-note.dto';
 export interface CalendarEvent {
   date: string;
   time: string | null;
-  type: 'deadline' | 'interview' | 'exam';
+  type: 'deadline' | 'step' | 'exam' | 'note';
   applicationId: string | null;
   stepId: string | null;
   examId: string | null;
-  companyName: string;
+  noteId: string | null;
+  companyName: string | null;
   stepName: string | null;
   location: string | null;
+  content: string | null;
+}
+
+function hourSlotToTime(slot: number | null): string | null {
+  if (slot === null || slot === undefined) return null;
+  const minutes = 360 + slot * 30;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 @Injectable()
@@ -49,11 +59,11 @@ export class CalendarService {
       .select([
         'a.id AS id',
         'a.company_name AS company_name',
-        'a.deadline AS deadline',
+        "TO_CHAR(a.deadline, 'YYYY-MM-DD') AS deadline",
       ])
       .where('a.user_id = :userId', { userId })
       .andWhere('a.deleted_at IS NULL')
-      .andWhere("a.status != 'FAILED'")
+      .andWhere("a.status NOT IN ('FAILED', 'PASSED')")
       .andWhere('a.deadline >= :start', { start: startDate })
       .andWhere('a.deadline < :end', { end: nextMonth })
       .getRawMany<{ id: string; company_name: string; deadline: string }>();
@@ -63,7 +73,7 @@ export class CalendarService {
       .innerJoin(
         'applications',
         'a',
-        'a.id = s.application_id AND a.user_id = :userId AND a.deleted_at IS NULL',
+        "a.id = s.application_id AND a.user_id = :userId AND a.deleted_at IS NULL AND a.status NOT IN ('FAILED', 'PASSED')",
         { userId },
       )
       .select([
@@ -116,31 +126,41 @@ export class CalendarService {
         time: string;
       }>();
 
+    const notes = await this.noteRepo
+      .createQueryBuilder('n')
+      .where('n.user_id = :userId', { userId })
+      .andWhere('n.date >= :start', { start: startDate })
+      .andWhere('n.date < :end', { end: nextMonth })
+      .orderBy('n.hour_slot', 'ASC', 'NULLS FIRST')
+      .addOrderBy('n.created_at', 'ASC')
+      .getMany();
+
     const deadlineEvents: CalendarEvent[] = deadlines.map((d) => ({
-      date:
-        typeof d.deadline === 'string'
-          ? d.deadline
-          : (d.deadline as Date).toISOString().slice(0, 10),
+      date: d.deadline,
       time: null,
       type: 'deadline',
       applicationId: d.id,
       stepId: null,
       examId: null,
+      noteId: null,
       companyName: d.company_name,
       stepName: null,
       location: null,
+      content: null,
     }));
 
-    const interviewEvents: CalendarEvent[] = interviews.map((i) => ({
+    const stepEvents: CalendarEvent[] = interviews.map((i) => ({
       date: i.date,
       time: i.time,
-      type: 'interview',
+      type: 'step',
       applicationId: i.application_id,
       stepId: i.step_id,
       examId: null,
+      noteId: null,
       companyName: i.company_name,
       stepName: i.step_name,
       location: i.location,
+      content: null,
     }));
 
     const examEvents: CalendarEvent[] = exams.map((e) => ({
@@ -150,14 +170,33 @@ export class CalendarService {
       applicationId: null,
       stepId: null,
       examId: e.id,
+      noteId: null,
       companyName: e.name,
       stepName: null,
       location: e.location,
+      content: null,
     }));
 
-    return [...deadlineEvents, ...interviewEvents, ...examEvents].sort((a, b) =>
-      a.date.localeCompare(b.date),
-    );
+    const noteEvents: CalendarEvent[] = notes.map((n) => ({
+      date: n.date,
+      time: hourSlotToTime(n.hourSlot),
+      type: 'note',
+      applicationId: null,
+      stepId: null,
+      examId: null,
+      noteId: n.id,
+      companyName: null,
+      stepName: null,
+      location: null,
+      content: n.content,
+    }));
+
+    return [
+      ...deadlineEvents,
+      ...stepEvents,
+      ...examEvents,
+      ...noteEvents,
+    ].sort((a, b) => a.date.localeCompare(b.date));
   }
 
   async getDailyNotes(

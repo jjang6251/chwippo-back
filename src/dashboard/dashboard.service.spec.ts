@@ -186,7 +186,7 @@ describe('DashboardService', () => {
       expect(result[0].dday).toBe(3);
     });
 
-    it('면접 일정 항목은 type="interview"로 반환', async () => {
+    it('스텝 일정 항목은 type="step"으로 반환', async () => {
       const appQb = makeQb([]);
       const steps = [makeStepWithDate('step-1', '1차 면접', 'app-1', 5)];
       const stepQb = makeQb(steps);
@@ -195,7 +195,7 @@ describe('DashboardService', () => {
 
       const result = await service.getDdayList(USER_ID);
 
-      expect(result[0].type).toBe('interview');
+      expect(result[0].type).toBe('step');
       expect(result[0].stepName).toBe('1차 면접');
       expect(result[0].dday).toBe(5);
     });
@@ -238,13 +238,13 @@ describe('DashboardService', () => {
       const result = await service.getDdayList(USER_ID);
 
       expect(result).toHaveLength(2);
-      expect(result[0].type).toBe('interview'); // dday=2가 먼저
+      expect(result[0].type).toBe('step'); // dday=2가 먼저
       expect(result[0].dday).toBe(2);
       expect(result[1].type).toBe('deadline'); // dday=4가 나중
       expect(result[1].dday).toBe(4);
     });
 
-    it('6개 항목 중 dday 오름차순 상위 5개만 반환 (deadline+interview 혼합)', async () => {
+    it('6개 항목 중 dday 오름차순 상위 5개만 반환 (deadline+step 혼합)', async () => {
       const apps = [0, 2, 4].map((d) =>
         makeDeadlineApp(`app-${d}`, `서류${d}`, d),
       );
@@ -309,7 +309,7 @@ describe('DashboardService', () => {
 
       expect(result.map((r) => r.type)).toEqual([
         'deadline',
-        'interview',
+        'step',
         'exam',
       ]);
       expect(result.map((r) => r.dday)).toEqual([1, 2, 3]);
