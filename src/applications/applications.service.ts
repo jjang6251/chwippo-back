@@ -34,7 +34,7 @@ export class ApplicationsService {
     return this.appRepo.find({
       where: { userId },
       relations: ['steps'],
-      order: { deadline: 'ASC', createdAt: 'DESC' },
+      order: { createdAt: 'DESC' },
     });
   }
 
@@ -65,7 +65,6 @@ export class ApplicationsService {
         jobTitle: dto.jobTitle ?? null,
         jobCategory: dto.jobCategory ?? null,
         status,
-        deadline: dto.deadline ?? null,
         jobUrl: dto.jobUrl ?? null,
         needsDetail:
           dto.needsDetail ?? (status === 'IN_PROGRESS' && !dto.jobTitle),
@@ -94,11 +93,14 @@ export class ApplicationsService {
 
     const wasPlanned = app.status === 'PLANNED';
     const becomesInProgress = dto.status === 'IN_PROGRESS';
+    // 데이터 모델 통합 — deadline은 application 컬럼에 저장하지 않음.
+    // dto.deadline 받으면 첫 step.scheduled_date에만 저장 (호환).
     const deadlineSent = dto.deadline !== undefined;
+    const dtoWithoutDeadline = { ...dto };
+    delete dtoWithoutDeadline.deadline;
 
-    Object.assign(app, dto);
+    Object.assign(app, dtoWithoutDeadline);
     // needsDetail은 (status, jobTitle)에서 파생 — 명시적으로 보내지 않으면 재계산
-    // (IN_PROGRESS인데 직무명이 비어 있으면 "상세 입력 필요" 배지, 채우면 해제)
     if (dto.needsDetail === undefined) {
       app.needsDetail =
         app.status === 'IN_PROGRESS' && !(app.jobTitle ?? '').trim();
@@ -111,23 +113,18 @@ export class ApplicationsService {
         where: { applicationId: id },
       });
       if (existingSteps === 0) {
-        await this.createDefaultSteps(
-          this.stepRepo.manager,
-          id,
-          app.deadline ?? null,
-        );
+        await this.createDefaultSteps(this.stepRepo.manager, id, null);
       }
     }
 
-    // 데이터 모델 통합 — deadline 변경 시 첫 step.scheduled_date에도 반영
-    // (단일 진실: 첫 step.scheduled_date. application.deadline은 호환을 위해 유지)
+    // dto.deadline 받으면 첫 step.scheduled_date에 저장 (호환)
     if (deadlineSent) {
       const firstStep = await this.stepRepo.findOne({
         where: { applicationId: id, orderIndex: 0 },
       });
       if (firstStep) {
-        firstStep.scheduledDate = app.deadline
-          ? new Date(`${app.deadline}T00:00:00+09:00`)
+        firstStep.scheduledDate = dto.deadline
+          ? new Date(`${dto.deadline}T00:00:00+09:00`)
           : null;
         await this.stepRepo.save(firstStep);
       }
