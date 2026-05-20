@@ -113,14 +113,14 @@ describe('ApplicationsService', () => {
 
   // ── findAll ────────────────────────────────────────────
   describe('findAll', () => {
-    it('userId 조건으로 find 호출, relations steps, deadline 오름차순 정렬', async () => {
+    it('userId 조건으로 find 호출, relations steps, createdAt 내림차순 정렬', async () => {
       appRepo.find.mockResolvedValue([makeApp()]);
       const result = await service.findAll('user-uuid-1');
 
       expect(appRepo.find).toHaveBeenCalledWith({
         where: { userId: 'user-uuid-1' },
         relations: ['steps'],
-        order: { deadline: 'ASC', createdAt: 'DESC' },
+        order: { createdAt: 'DESC' },
       });
       expect(result).toHaveLength(1);
     });
@@ -248,7 +248,7 @@ describe('ApplicationsService', () => {
     });
 
     it('deadline 전달 시 첫 스텝(서류 제출) scheduledDate에 자동 설정', async () => {
-      const app = makeApp({ status: 'IN_PROGRESS', deadline: '2025-12-31' });
+      const app = makeApp({ status: 'IN_PROGRESS' });
       const { em, savedSteps } = makeEntityManager(app);
       dataSource.transaction.mockImplementation((cb: any) => cb(em));
 
