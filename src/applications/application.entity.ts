@@ -44,9 +44,6 @@ export class Application {
   @Column({ default: 'IN_PROGRESS' })
   status: ApplicationStatus;
 
-  @Column({ type: 'date', nullable: true })
-  deadline: string | null;
-
   @Column({ name: 'job_url', nullable: true, type: 'varchar' })
   jobUrl: string | null;
 

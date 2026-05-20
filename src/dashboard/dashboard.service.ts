@@ -59,18 +59,8 @@ export class DashboardService {
     const kstNow = new Date(Date.now() + KST);
     const today = kstNow.toISOString().split('T')[0];
 
-    // 서류 마감 목록
-    const apps = await this.appRepo
-      .createQueryBuilder('app')
-      .where('app.user_id = :userId', { userId })
-      .andWhere('app.status = :status', { status: 'IN_PROGRESS' })
-      .andWhere('app.deleted_at IS NULL')
-      .andWhere('app.deadline IS NOT NULL')
-      .andWhere('app.deadline >= :today', { today })
-      .select(['app.id', 'app.companyName', 'app.deadline'])
-      .getMany();
-
-    // 면접 일정 목록 — scheduledDate(UTC)를 KST로 변환 후 날짜 비교
+    // 스텝 일정 목록 — scheduledDate(UTC)를 KST로 변환 후 날짜 비교
+    // (서류 마감도 첫 step.scheduled_date에 일원화 — 데이터 모델 통합)
     const steps = await this.stepRepo
       .createQueryBuilder('step')
       .innerJoin('step.application', 'app')
@@ -105,7 +95,7 @@ export class DashboardService {
     const todayMs = new Date(today).getTime();
 
     const items: {
-      type: 'deadline' | 'interview' | 'exam';
+      type: 'step' | 'exam';
       applicationId?: string;
       stepId?: string;
       examId?: string;
@@ -117,18 +107,6 @@ export class DashboardService {
       pinnedContent?: string | null;
     }[] = [];
 
-    for (const app of apps) {
-      const dateMs = new Date(app.deadline!).getTime();
-      const dday = Math.round((dateMs - todayMs) / 86400000);
-      items.push({
-        type: 'deadline',
-        applicationId: app.id,
-        companyName: app.companyName,
-        date: app.deadline!,
-        dday,
-      });
-    }
-
     for (const step of steps) {
       const scheduledDate = new Date(step.scheduledDate!);
       // UTC → KST 변환 후 날짜/시간 추출
@@ -139,7 +117,7 @@ export class DashboardService {
       const hours = kstDate.getUTCHours().toString().padStart(2, '0');
       const minutes = kstDate.getUTCMinutes().toString().padStart(2, '0');
       items.push({
-        type: 'interview',
+        type: 'step',
         applicationId: step.applicationId,
         stepId: step.id,
         companyName:
