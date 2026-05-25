@@ -34,6 +34,7 @@ const minimalProdEnv: Record<string, string> = {
   R2_SECRET_ACCESS_KEY: 'secret-key',
   R2_BUCKET: 'bucket',
   R2_PUBLIC_URL: 'https://files.example.com',
+  OPENAI_API_KEY: 'sk-test-key',
 };
 
 function validate(env: Record<string, unknown>) {
