@@ -63,4 +63,13 @@ export const envValidationSchema = Joi.object({
 
   ADMIN_EMAIL: Joi.string().allow('').optional(),
   ADMIN_KAKAO_ID: Joi.string().allow('').optional(),
+
+  // OpenAI (F5+) — dev 에선 optional, prod 필수
+  OPENAI_API_KEY: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  OPENAI_MODEL_LIGHT: Joi.string().default('gpt-4o-mini'),
+  OPENAI_MODEL_HEAVY: Joi.string().default('gpt-4o'),
 });
