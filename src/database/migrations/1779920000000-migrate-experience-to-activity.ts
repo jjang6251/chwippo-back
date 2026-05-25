@@ -1,16 +1,14 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class MigrateExperienceToActivity1779920000000
-  implements MigrationInterface
-{
+export class MigrateExperienceToActivity1779920000000 implements MigrationInterface {
   name = 'MigrateExperienceToActivity1779920000000';
 
   async up(qr: QueryRunner): Promise<void> {
-    const tableExists = await qr.query(
+    const tableExists = (await qr.query(
       `SELECT EXISTS (
          SELECT 1 FROM information_schema.tables WHERE table_name = 'myinfo_experiences'
        ) AS exists;`,
-    );
+    )) as Array<{ exists: boolean }>;
     if (!tableExists?.[0]?.exists) return;
 
     await qr.query(`

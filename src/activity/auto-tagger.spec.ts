@@ -96,7 +96,7 @@ describe('autoTag (mock 1:1)', () => {
         after: '1.8',
       });
     });
-    it("숫자 + 단위 없음 → quant=null", () => {
+    it('숫자 + 단위 없음 → quant=null', () => {
       expect(autoTag('123', 'other').quant).toBeNull();
     });
     it("'0% → 100% 달성' → quant=null (% 가 BA regex 단위 자리에 안 맞아 매치 실패; mock 동작 그대로)", () => {

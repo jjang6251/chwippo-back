@@ -51,10 +51,7 @@ export class AdminAiUsageService {
     if (q.feature) qb.andWhere('l.feature = :feature', { feature: q.feature });
 
     const total = await qb
-      .select([
-        'COUNT(*) AS calls',
-        'COALESCE(SUM(l.cost_usd), 0) AS cost',
-      ])
+      .select(['COUNT(*) AS calls', 'COALESCE(SUM(l.cost_usd), 0) AS cost'])
       .getRawOne<{ calls: string; cost: string }>();
 
     const byFeature = await this.repo
@@ -98,7 +95,10 @@ export class AdminAiUsageService {
       .addSelect('COUNT(*)', 'totalCalls')
       .addSelect('COALESCE(SUM(l.cost_usd), 0)', 'totalCostUsd')
       .addSelect('COALESCE(SUM(l.prompt_tokens), 0)', 'totalPromptTokens')
-      .addSelect('COALESCE(SUM(l.completion_tokens), 0)', 'totalCompletionTokens')
+      .addSelect(
+        'COALESCE(SUM(l.completion_tokens), 0)',
+        'totalCompletionTokens',
+      )
       .where('l.created_at BETWEEN :start AND :end', { start, end })
       .groupBy('l.user_id')
       .orderBy('"totalCostUsd"', 'DESC');

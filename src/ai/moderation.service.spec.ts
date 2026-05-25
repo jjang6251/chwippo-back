@@ -30,7 +30,9 @@ describe('ModerationService', () => {
     const result = await service.check('험한 텍스트');
 
     expect(result.flagged).toBe(true);
-    expect(result.categories).toEqual(expect.arrayContaining(['hate', 'sexual']));
+    expect(result.categories).toEqual(
+      expect.arrayContaining(['hate', 'sexual']),
+    );
     expect(result.categories).not.toContain('violence');
     expect(result.apiFailed).toBe(false);
   });

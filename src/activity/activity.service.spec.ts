@@ -1,7 +1,4 @@
-import {
-  ConflictException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -278,7 +275,7 @@ describe('ActivityService', () => {
     it('가드 1 (activity-level): interview_sessions 참조 ≥1 → Conflict', async () => {
       repo.findOne.mockResolvedValue(makeActivity());
       dataSource.query.mockImplementation(async (sql: string) => {
-        if (sql.includes("table_name = $1")) return [{ exists: true }];
+        if (sql.includes('table_name = $1')) return [{ exists: true }];
         if (sql.includes('interview_sessions')) return [{ n: '1' }];
         return [];
       });

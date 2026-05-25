@@ -3,7 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import type OpenAI from 'openai';
 import { Repository } from 'typeorm';
-import { LlmCallLog, LlmFeature, LlmCallStatus } from './entities/llm-call-log.entity';
+import {
+  LlmCallLog,
+  LlmFeature,
+  LlmCallStatus,
+} from './entities/llm-call-log.entity';
 import { OPENAI_CLIENT } from './openai-client.provider';
 import { calcCostUsd } from './llm-pricing';
 
@@ -166,7 +170,9 @@ export class LlmService {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'unknown OpenAI error';
-      this.logger.error(`LLM call failed (feature=${input.feature}): ${message}`);
+      this.logger.error(
+        `LLM call failed (feature=${input.feature}): ${message}`,
+      );
       const log = await this.logRepo.save(
         this.logRepo.create({
           userId: input.userId,

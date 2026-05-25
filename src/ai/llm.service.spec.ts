@@ -2,39 +2,33 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import type OpenAI from 'openai';
 import { Repository } from 'typeorm';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { LlmService } from './llm.service';
 import { OPENAI_CLIENT } from './openai-client.provider';
-
-type OpenAILike = Pick<OpenAI, 'chat'>;
 
 describe('LlmService', () => {
   let service: LlmService;
   let logRepo: jest.Mocked<Repository<LlmCallLog>>;
   let openai: { chat: { completions: { create: jest.Mock } } };
 
-  const makeLog = (
-    overrides: Partial<LlmCallLog> = {},
-  ): LlmCallLog =>
-    ({
-      id: 'log-1',
-      userId: 'u-1',
-      feature: 'note_summary',
-      model: 'gpt-4o-mini',
-      promptTokens: 0,
-      completionTokens: 0,
-      costUsd: '0',
-      latencyMs: 0,
-      status: 'ok',
-      errorMessage: null,
-      resourceType: null,
-      resourceId: null,
-      createdAt: new Date(),
-      user: undefined as unknown as LlmCallLog['user'],
-      ...overrides,
-    }) as LlmCallLog;
+  const makeLog = (overrides: Partial<LlmCallLog> = {}): LlmCallLog => ({
+    id: 'log-1',
+    userId: 'u-1',
+    feature: 'note_summary',
+    model: 'gpt-4o-mini',
+    promptTokens: 0,
+    completionTokens: 0,
+    costUsd: '0',
+    latencyMs: 0,
+    status: 'ok',
+    errorMessage: null,
+    resourceType: null,
+    resourceId: null,
+    createdAt: new Date(),
+    user: undefined as unknown as LlmCallLog['user'],
+    ...overrides,
+  });
 
   beforeEach(async () => {
     openai = {
@@ -60,7 +54,7 @@ describe('LlmService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LlmService,
-        { provide: OPENAI_CLIENT, useValue: openai as unknown as OpenAILike },
+        { provide: OPENAI_CLIENT, useValue: openai },
         { provide: getRepositoryToken(LlmCallLog), useValue: mockRepo },
         { provide: ConfigService, useValue: config },
       ],

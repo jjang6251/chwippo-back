@@ -19,9 +19,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * down() 은 CI 가 down→up cycle 자동 검증하므로 reversible 하게 작성.
  */
-export class AlignActivitySchemaToMock1779930000000
-  implements MigrationInterface
-{
+export class AlignActivitySchemaToMock1779930000000 implements MigrationInterface {
   name = 'AlignActivitySchemaToMock1779930000000';
 
   async up(qr: QueryRunner): Promise<void> {

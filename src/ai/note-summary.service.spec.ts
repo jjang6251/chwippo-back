@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { createHash } from 'crypto';
 import { mock } from 'jest-mock-extended';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
@@ -183,10 +184,7 @@ describe('NoteSummaryService', () => {
       const fakeLog = makeLog();
       fakeLog.noteSummary = '예전 요약';
       const text = NoteSummaryService.extractPlainText(fakeLog.note);
-      const realHash = require('crypto')
-        .createHash('sha256')
-        .update(text)
-        .digest('hex');
+      const realHash = createHash('sha256').update(text).digest('hex');
       fakeLog.noteSummaryHash = realHash;
       emFindOne.mockResolvedValueOnce(fakeLog);
 
@@ -236,10 +234,7 @@ describe('NoteSummaryService', () => {
       const fakeLog = makeLog();
       fakeLog.noteSummary = '예전 요약';
       const text = NoteSummaryService.extractPlainText(fakeLog.note);
-      fakeLog.noteSummaryHash = require('crypto')
-        .createHash('sha256')
-        .update(text)
-        .digest('hex');
+      fakeLog.noteSummaryHash = createHash('sha256').update(text).digest('hex');
       emFindOne.mockResolvedValue(fakeLog);
       emCount.mockResolvedValue(0);
       llm.call.mockResolvedValue({

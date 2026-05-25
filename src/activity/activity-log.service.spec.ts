@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -103,10 +99,7 @@ describe('ActivityLogService', () => {
         occurredAt: '2026-05-10',
       });
 
-      expect(autoTagSpy).toHaveBeenCalledWith(
-        '발표 자료 만들기',
-        'intern',
-      );
+      expect(autoTagSpy).toHaveBeenCalledWith('발표 자료 만들기', 'intern');
       expect(result.cat).toBe('presentation');
     });
 
@@ -275,9 +268,7 @@ describe('ActivityLogService', () => {
       // noteSummary 3종 그대로 보존 — stale 판정은 UI 가 처리
       expect(result.noteSummary).toBe('이전 요약');
       expect(result.noteSummaryHash).toBe('old-hash');
-      expect(result.noteSummaryAt).toEqual(
-        new Date('2026-05-25T10:00:00Z'),
-      );
+      expect(result.noteSummaryAt).toEqual(new Date('2026-05-25T10:00:00Z'));
     });
 
     it('content + 그 외 필드만 patch, note 미명시 → noteSummary 3종 보존', async () => {
@@ -296,9 +287,7 @@ describe('ActivityLogService', () => {
 
       expect(result.noteSummary).toBe('s');
       expect(result.noteSummaryHash).toBe('h');
-      expect(result.noteSummaryAt).toEqual(
-        new Date('2026-05-25T10:00:00Z'),
-      );
+      expect(result.noteSummaryAt).toEqual(new Date('2026-05-25T10:00:00Z'));
     });
   });
 

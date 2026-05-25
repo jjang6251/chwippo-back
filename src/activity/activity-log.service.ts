@@ -65,7 +65,7 @@ export class ActivityLogService {
     if (dto.comps !== undefined) log.comps = dto.comps;
     if (dto.cl !== undefined) log.cl = dto.cl;
     if (dto.quant !== undefined) {
-      log.quant = (dto.quant ?? null) as ActivityLog['quant'];
+      log.quant = dto.quant ?? null;
     }
     if (dto.keywords !== undefined) log.keywords = dto.keywords;
     if (dto.note !== undefined) log.note = dto.note;
@@ -99,7 +99,10 @@ export class ActivityLogService {
     await this.logRepo.delete({ id: log.id });
   }
 
-  private async findEntity(userId: string, logId: string): Promise<ActivityLog> {
+  private async findEntity(
+    userId: string,
+    logId: string,
+  ): Promise<ActivityLog> {
     const log = await this.logRepo.findOne({
       where: { id: logId, userId },
     });
@@ -123,26 +126,23 @@ export class ActivityLogService {
     logId: string,
   ): Promise<{ cover: number; interview: number; total: number }> {
     const cover = (await this.tableExists('coverletter_source_refs'))
-      ? Number(
-          (
-            await this.dataSource.query(
-              `SELECT COUNT(*) AS n FROM coverletter_source_refs WHERE log_id = $1`,
-              [logId],
-            )
-          )?.[0]?.n ?? 0,
+      ? await this.countRows(
+          `SELECT COUNT(*) AS n FROM coverletter_source_refs WHERE log_id = $1`,
+          [logId],
         )
       : 0;
     const interview = (await this.tableExists('interview_source_refs'))
-      ? Number(
-          (
-            await this.dataSource.query(
-              `SELECT COUNT(*) AS n FROM interview_source_refs WHERE log_id = $1`,
-              [logId],
-            )
-          )?.[0]?.n ?? 0,
+      ? await this.countRows(
+          `SELECT COUNT(*) AS n FROM interview_source_refs WHERE log_id = $1`,
+          [logId],
         )
       : 0;
     return { cover, interview, total: cover + interview };
+  }
+
+  private async countRows(sql: string, params: unknown[]): Promise<number> {
+    const rows: Array<{ n: string }> = await this.dataSource.query(sql, params);
+    return Number(rows?.[0]?.n ?? 0);
   }
 
   private async tableExists(name: string): Promise<boolean> {

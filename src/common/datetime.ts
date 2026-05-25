@@ -60,7 +60,8 @@ function getTimezoneOffsetString(tz: Tz, atDate: Date = new Date()): string {
     timeZoneName: 'longOffset',
   });
   const parts = fmt.formatToParts(atDate);
-  const part = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+00:00';
+  const part =
+    parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+00:00';
   // 'GMT+09:00' → '+09:00'
   const m = part.match(/([+-]\d{2}:?\d{2})$/);
   if (!m) return '+00:00';
@@ -89,7 +90,10 @@ function ymdAddDays(ymd: string, days: number): string {
 // ────────────────────────────────────────────────────────────────────────
 
 /** Date → 'YYYY-MM-DD' (기본 KST) */
-export function toKstDateString(d: Date = new Date(), tz: Tz = APP_TIMEZONE): string {
+export function toKstDateString(
+  d: Date = new Date(),
+  tz: Tz = APP_TIMEZONE,
+): string {
   return ymdFormatter(tz).format(d);
 }
 
@@ -138,7 +142,10 @@ export function endOfMonthKst(tz: Tz = APP_TIMEZONE): Date {
 // ────────────────────────────────────────────────────────────────────────
 
 /** 오늘 (또는 주어진 date) 가 속한 ISO 주의 월요일 'YYYY-MM-DD' (기본 KST) */
-export function getKstWeekMonday(dateStr?: string, tz: Tz = APP_TIMEZONE): string {
+export function getKstWeekMonday(
+  dateStr?: string,
+  tz: Tz = APP_TIMEZONE,
+): string {
   const base = dateStr ?? todayKst(tz);
   const day = ymdDayOfWeek(base);
   const diff = day === 0 ? -6 : 1 - day;
@@ -146,7 +153,10 @@ export function getKstWeekMonday(dateStr?: string, tz: Tz = APP_TIMEZONE): strin
 }
 
 /** 이번 주의 일요일 'YYYY-MM-DD' */
-export function getKstWeekSunday(dateStr?: string, tz: Tz = APP_TIMEZONE): string {
+export function getKstWeekSunday(
+  dateStr?: string,
+  tz: Tz = APP_TIMEZONE,
+): string {
   return ymdAddDays(getKstWeekMonday(dateStr, tz), 6);
 }
 
@@ -155,7 +165,10 @@ export function getKstWeekSunday(dateStr?: string, tz: Tz = APP_TIMEZONE): strin
 // ────────────────────────────────────────────────────────────────────────
 
 /** Date → 'YYYY-MM-DD HH:mm:ss' (기본 KST) — admin·log·debug 표시용 */
-export function formatKstDateTime(d: Date = new Date(), tz: Tz = APP_TIMEZONE): string {
+export function formatKstDateTime(
+  d: Date = new Date(),
+  tz: Tz = APP_TIMEZONE,
+): string {
   const parts = datetimeFormatter(tz).formatToParts(d);
   const pick = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
   return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
