@@ -9,6 +9,7 @@ import { createHash } from 'crypto';
 import { mock } from 'jest-mock-extended';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
+import { AbuserBanService } from './abuser-ban.service';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
@@ -70,6 +71,11 @@ describe('NoteSummaryService', () => {
     const mockLlmLogRepo = mock<Repository<LlmCallLog>>();
     const mockLlm = mock<LlmService>();
     const mockMod = mock<ModerationService>();
+    // Phase 3: AbuserBanService — default 비활성 (override 없음, ban trigger no-op)
+    const mockAbuserBan = {
+      getActiveOverride: jest.fn().mockResolvedValue(null),
+      checkAndBan: jest.fn().mockResolvedValue({ banned: false }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -79,6 +85,7 @@ describe('NoteSummaryService', () => {
         { provide: LlmService, useValue: mockLlm },
         { provide: ModerationService, useValue: mockMod },
         { provide: DataSource, useValue: dataSource },
+        { provide: AbuserBanService, useValue: mockAbuserBan },
       ],
     }).compile();
 

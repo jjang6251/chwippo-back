@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { getKstWeekMonday, toKstDateString } from '../common/datetime';
 import { Activity } from './entities/activity.entity';
 import { ActivityReflection } from './entities/activity-reflection.entity';
@@ -24,6 +28,8 @@ export class ActivityReflectionService {
     private readonly activityRepo: Repository<Activity>,
     @InjectRepository(ActivityReflection)
     private readonly refRepo: Repository<ActivityReflection>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async findAllForActivity(userId: string, activityId: string) {
@@ -66,9 +72,49 @@ export class ActivityReflectionService {
     return this.refRepo.save(ref);
   }
 
+  /**
+   * Hard delete with source_refs guard (PR 1 신규).
+   * coverletter_source_refs.source_reflection_id 참조가 있으면 409 — 자소서에서 먼저 제거.
+   * (interview_source_refs 의 reflection 참조는 PR 2 에서 추가 시 동일 패턴으로 확장)
+   */
   async remove(userId: string, refId: string) {
     const ref = await this.findEntity(userId, refId);
+    const refCounts = await this.countReflectionRefs(ref.id);
+    if (refCounts.total > 0) {
+      throw new ConflictException(
+        `이 회고는 자소서 ${refCounts.cover}건이 참조 중이에요. 자소서에서 먼저 제거해 주세요.`,
+      );
+    }
     await this.refRepo.remove(ref);
+  }
+
+  /** F6 source_refs 카운트 (reflection 기준). 테이블 없으면 0 */
+  async countReflectionRefs(
+    reflectionId: string,
+  ): Promise<{ cover: number; total: number }> {
+    const cover = (await this.tableExists('coverletter_source_refs'))
+      ? await this.countRows(
+          `SELECT COUNT(*) AS n FROM coverletter_source_refs WHERE source_reflection_id = $1`,
+          [reflectionId],
+        )
+      : 0;
+    return { cover, total: cover };
+  }
+
+  private async countRows(sql: string, params: unknown[]): Promise<number> {
+    const rows: Array<{ n: string }> = await this.dataSource.query(sql, params);
+    return Number(rows?.[0]?.n ?? 0);
+  }
+
+  private async tableExists(name: string): Promise<boolean> {
+    const rows: Array<{ exists: boolean }> = await this.dataSource.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = $1
+       ) AS exists`,
+      [name],
+    );
+    return Boolean(rows?.[0]?.exists);
   }
 
   private async findEntity(

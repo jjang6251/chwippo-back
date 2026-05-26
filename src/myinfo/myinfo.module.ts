@@ -40,6 +40,7 @@ import { FilesModule } from '../files/files.module';
     ExamSchedulesController,
   ],
   providers: [MyinfoService, ExamSchedulesService, StorageUsageService],
-  exports: [StorageUsageService],
+  // PR 1 — ApplicationsModule (AiCoverletterDraftService) 이 getSafeDumpForAi 사용
+  exports: [StorageUsageService, MyinfoService],
 })
 export class MyinfoModule {}

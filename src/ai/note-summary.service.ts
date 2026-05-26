@@ -13,6 +13,7 @@ import {
   startOfMonthKst,
   startOfTodayKst,
 } from '../common/datetime';
+import { AbuserBanService } from './abuser-ban.service';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
@@ -56,6 +57,7 @@ export class NoteSummaryService {
     private readonly llm: LlmService,
     private readonly moderation: ModerationService,
     private readonly dataSource: DataSource,
+    private readonly abuserBan: AbuserBanService,
   ) {}
 
   /**
@@ -155,7 +157,16 @@ export class NoteSummaryService {
         };
       }
 
-      // 사용자 일·월 한도
+      // 사용자 일·월 한도. Phase 3: user_ai_quotas active override 가 있으면 perDay 축소
+      const override = await this.abuserBan.getActiveOverride(userId);
+      const effectivePerDay =
+        override?.dailyCapOverride != null
+          ? Math.min(
+              NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY,
+              override.dailyCapOverride,
+            )
+          : NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY;
+
       const dayCount = await em.count(LlmCallLog, {
         where: {
           userId,
@@ -163,22 +174,26 @@ export class NoteSummaryService {
           createdAt: Between(this.startOfToday(), this.endOfToday()),
         },
       });
-      if (dayCount >= NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY) {
+      if (dayCount >= effectivePerDay) {
         await this.llm.call({
           userId,
           feature: 'note_summary',
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: text,
           preBlockedStatus: 'blocked_quota',
-          preBlockedReason: `일 한도 (${NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY}회) 초과`,
+          preBlockedReason: `일 한도 (${effectivePerDay}회) 초과`,
           resourceType: 'activity_log',
           resourceId: logId,
         });
+        // Phase 3: ban trigger 시도 (3일 연속 도달 시 발동, fire & forget)
+        void this.abuserBan
+          .checkAndBan(userId, 'note_summary', effectivePerDay)
+          .catch(() => undefined);
         return {
           status: 'blocked',
           summary: null,
           cached: false,
-          reason: `오늘 사용 가능한 요약 횟수를 모두 사용했어요 (${NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY}회).`,
+          reason: `오늘 사용 가능한 요약 횟수를 모두 사용했어요 (${effectivePerDay}회).`,
         };
       }
       const monthCount = await em.count(LlmCallLog, {

@@ -446,4 +446,126 @@ export class MyinfoService {
   async deleteDocument(userId: string, id: string) {
     await this.deleteWithFileCleanup({ userId, id, repo: this.documentRepo });
   }
+
+  /**
+   * F6 PR 1 — AI 컨텍스트 빌더용 PII-safe dump (ADR-019 + ADR-027).
+   *
+   * **제외**:
+   * - `user-profile` (이름·전화·이메일 등 PII) — 전체 제외
+   * - `documents` (R2 파일 메타만, 본문 unavailable) — 제외
+   * - `exam-schedules` (시험 일정, AI 컨텍스트 가치 낮음) — 제외
+   * - 모든 entity 의 `file_url`·`file_size_bytes` (파일은 별도 OCR 인프라 필요) — 자연히 제외
+   *
+   * **포함** (우선순위 순, ADR-019):
+   * 1. coverletter (직접 입력 자소서 소재 6 카테고리 + custom)
+   * 2. experiences (경력·활동)
+   * 3. educations (학력)
+   * 4. certs + language_certs (자격증)
+   * 5. awards (수상)
+   *
+   * PII 제거를 1차로 entity 선택 단계에서 (이 함수), 2차로 LlmService 진입점 정규식 12종 스크럽 (이중 방어).
+   */
+  async getSafeDumpForAi(userId: string): Promise<{
+    coverletterDrafts: Array<{
+      category: string | null;
+      question: string;
+      answer: string;
+    }>;
+    experiences: Array<{
+      company: string;
+      role: string | null;
+      period: string | null;
+      summary: string | null;
+    }>;
+    educations: Array<{
+      school: string;
+      major: string | null;
+      period: string | null;
+    }>;
+    certs: Array<{ name: string; score: string | null }>;
+    awards: Array<{ name: string; org: string | null }>;
+  }> {
+    const [
+      coverletter,
+      customs,
+      experiences,
+      educations,
+      certs,
+      langCerts,
+      awards,
+    ] = await Promise.all([
+      this.coverRepo.findOne({ where: { user_id: userId } }),
+      this.coverCustomRepo.find({
+        where: { user_id: userId },
+        order: { order_index: 'ASC' },
+      }),
+      this.expRepo.find({ where: { user_id: userId } }),
+      this.educationRepo.find({ where: { user_id: userId } }),
+      this.certRepo.find({ where: { user_id: userId } }),
+      this.langCertRepo.find({ where: { user_id: userId } }),
+      this.awardRepo.find({ where: { user_id: userId } }),
+    ]);
+
+    // 자소서 소재 — 6 카테고리 표준 + custom 라벨
+    const draftItems: Array<{
+      category: string | null;
+      question: string;
+      answer: string;
+    }> = [];
+    if (coverletter) {
+      const fixed = [
+        ['personality', '성격 장단점', coverletter.personality],
+        ['background', '성장 배경', coverletter.background],
+        ['job_competency', '직무 역량·핵심 경험', coverletter.job_competency],
+        ['own_strength', '나만의 강점', coverletter.own_strength],
+        ['collaboration', '갈등 해결·협업 경험', coverletter.collaboration],
+        ['challenge', '도전·실패 경험', coverletter.challenge],
+      ] as const;
+      for (const [cat, label, body] of fixed) {
+        if (body && body.trim().length > 0) {
+          draftItems.push({ category: cat, question: label, answer: body });
+        }
+      }
+    }
+    for (const c of customs) {
+      if (c.content && c.content.trim().length > 0) {
+        draftItems.push({
+          category: 'custom',
+          question: c.label,
+          answer: c.content,
+        });
+      }
+    }
+
+    const fmtPeriod = (s: string | null, e: string | null): string | null => {
+      if (!s && !e) return null;
+      return `${s ?? '?'} ~ ${e ?? '진행 중'}`;
+    };
+
+    return {
+      coverletterDrafts: draftItems,
+      experiences: experiences.map((e) => ({
+        company: e.org ?? e.activity_name,
+        role: e.activity_name && e.org ? e.activity_name : null,
+        period: fmtPeriod(e.start_at, e.end_at),
+        summary: e.content ?? null,
+      })),
+      educations: educations.map((ed) => ({
+        school: ed.school_name,
+        major: ed.major ?? null,
+        period: fmtPeriod(ed.start_at, ed.end_at),
+      })),
+      certs: [
+        ...certs.map((c) => ({ name: c.name, score: null })),
+        ...langCerts.map((l) => ({
+          name: l.cert_type,
+          score: l.score_grade ?? null,
+        })),
+      ],
+      awards: awards.map((a) => ({
+        name: a.award_name ?? a.contest_name,
+        org: a.org ?? null,
+      })),
+    };
+  }
 }

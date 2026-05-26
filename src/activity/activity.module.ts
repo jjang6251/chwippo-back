@@ -10,6 +10,8 @@ import { ActivityReflectionService } from './activity-reflection.service';
 import { ActivityController } from './activity.controller';
 import { ActivityLogController } from './activity-log.controller';
 import { ActivityReflectionController } from './activity-reflection.controller';
+import { InsightsController } from './insights.controller';
+import { InsightsService } from './insights.service';
 
 @Module({
   imports: [
@@ -20,8 +22,14 @@ import { ActivityReflectionController } from './activity-reflection.controller';
     ActivityController,
     ActivityLogController,
     ActivityReflectionController,
+    InsightsController,
   ],
-  providers: [ActivityService, ActivityLogService, ActivityReflectionService],
+  providers: [
+    ActivityService,
+    ActivityLogService,
+    ActivityReflectionService,
+    InsightsService,
+  ],
   exports: [
     TypeOrmModule,
     ActivityService,

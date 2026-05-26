@@ -79,4 +79,7 @@ export const envValidationSchema = Joi.object({
   ANTHROPIC_API_KEY: Joi.string().allow('').optional(),
   ANTHROPIC_MODEL_LIGHT: Joi.string().default('claude-haiku-4-5-20251001'),
   ANTHROPIC_MODEL_HEAVY: Joi.string().default('claude-sonnet-4-6'),
+
+  // PR 1 Phase 3 — AbuserBan Discord webhook (자동 ban 발동 알림). 미설정 시 ban 발동 + webhook skip
+  ADMIN_ALERT_WEBHOOK_URL: Joi.string().uri().allow('').optional(),
 });

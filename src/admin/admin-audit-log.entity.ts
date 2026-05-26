@@ -19,7 +19,11 @@ export type AuditAction =
   | 'view_inquiry' // LRR P1T3 PR J — 단건 문의 상세 조회 (본문+사용자 context 노출)
   | 'publish_announcement'
   | 'update_announcement'
-  | 'delete_announcement';
+  | 'delete_announcement'
+  // F6 PR 1 — AbuserBanService 자동 ban 발동 (3일 연속 일 한도 도달)
+  // adminUserId = NULL (시스템 자동), targetType = 'user', targetId = userId
+  // detail: { reason, duration_days, daily_cap_override, triggered_feature, consecutive_days }
+  | 'auto_ban_ai';
 
 @Entity('admin_audit_logs')
 export class AdminAuditLog {
