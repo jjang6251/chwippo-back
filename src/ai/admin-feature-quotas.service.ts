@@ -97,10 +97,7 @@ export class AdminFeatureQuotasService {
       row.dayLimit = patch.dayLimit;
       changed = true;
     }
-    if (
-      patch.monthLimit !== undefined &&
-      patch.monthLimit !== row.monthLimit
-    ) {
+    if (patch.monthLimit !== undefined && patch.monthLimit !== row.monthLimit) {
       row.monthLimit = patch.monthLimit;
       changed = true;
     }
@@ -128,17 +125,23 @@ export class AdminFeatureQuotasService {
     row.updatedAt = new Date();
     const saved = await this.repo.save(row);
 
-    await this.auditService.log(adminId, 'update_ai_quota', 'feature_quota', `${feature}:${tier}`, {
-      feature,
-      tier,
-      before,
-      after: {
-        dayLimit: saved.dayLimit,
-        monthLimit: saved.monthLimit,
-        cooldownSeconds: saved.cooldownSeconds,
-        enabled: saved.enabled,
+    await this.auditService.log(
+      adminId,
+      'update_ai_quota',
+      'feature_quota',
+      `${feature}:${tier}`,
+      {
+        feature,
+        tier,
+        before,
+        after: {
+          dayLimit: saved.dayLimit,
+          monthLimit: saved.monthLimit,
+          cooldownSeconds: saved.cooldownSeconds,
+          enabled: saved.enabled,
+        },
       },
-    });
+    );
 
     return saved;
   }

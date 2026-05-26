@@ -1,9 +1,4 @@
-import {
-  forwardRef,
-  Inject,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
 import { User } from '../users/user.entity';
@@ -85,7 +80,7 @@ export class QuotaCheckService {
       where: { id: userId },
       select: ['id', 'tier'],
     });
-    const tier: QuotaTier = (user?.tier ?? 'free') as QuotaTier;
+    const tier: QuotaTier = user?.tier ?? 'free';
 
     // ── 2. config 조회 (없으면 fallback) ──
     const config = await this.configRepo.findOne({
@@ -208,7 +203,7 @@ export class QuotaCheckService {
       where: { id: userId },
       select: ['id', 'tier'],
     });
-    const tier: QuotaTier = (user?.tier ?? 'free') as QuotaTier;
+    const tier: QuotaTier = user?.tier ?? 'free';
     const configs = await this.configRepo.find({ where: { tier } });
 
     const override = await this.abuserBan.getActiveOverride(userId);

@@ -14,9 +14,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * **users.tier** 컬럼 추가 — default 'free'. F7 결제 시 admin (또는 결제 시스템) 이 'pro' 로 UPDATE.
  */
-export class CreateFeatureQuotaConfigs1779960000000
-  implements MigrationInterface
-{
+export class CreateFeatureQuotaConfigs1779960000000 implements MigrationInterface {
   name = 'CreateFeatureQuotaConfigs1779960000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {

@@ -32,19 +32,18 @@ describe('QuotaCheckService', () => {
 
   const makeConfig = (
     overrides: Partial<FeatureQuotaConfig> = {},
-  ): FeatureQuotaConfig =>
-    ({
-      feature: 'note_summary',
-      tier: 'free',
-      dayLimit: 100,
-      monthLimit: 1000,
-      cooldownSeconds: 30,
-      enabled: true,
-      updatedBy: null,
-      updatedByUser: null,
-      updatedAt: new Date(),
-      ...overrides,
-    }) as FeatureQuotaConfig;
+  ): FeatureQuotaConfig => ({
+    feature: 'note_summary',
+    tier: 'free',
+    dayLimit: 100,
+    monthLimit: 1000,
+    cooldownSeconds: 30,
+    enabled: true,
+    updatedBy: null,
+    updatedByUser: null,
+    updatedAt: new Date(),
+    ...overrides,
+  });
 
   beforeEach(async () => {
     userRepo = mock<Repository<User>>();
@@ -62,7 +61,10 @@ describe('QuotaCheckService', () => {
       providers: [
         QuotaCheckService,
         { provide: getRepositoryToken(User), useValue: userRepo },
-        { provide: getRepositoryToken(FeatureQuotaConfig), useValue: configRepo },
+        {
+          provide: getRepositoryToken(FeatureQuotaConfig),
+          useValue: configRepo,
+        },
         { provide: getRepositoryToken(LlmCallLog), useValue: logRepo },
         { provide: AbuserBanService, useValue: abuserBan },
       ],

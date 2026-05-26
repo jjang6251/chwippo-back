@@ -25,7 +25,12 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     // User: LlmService 가 consent gate + 본인 이름 블랙리스트 조회
     // UserAiQuota: PR 1 AbuserBanService 가 daily_cap_override UPSERT
     // FeatureQuotaConfig: PR 2 QuotaCheckService 가 feature 별·tier 별 한도 조회 (admin 동적 조절)
-    TypeOrmModule.forFeature([LlmCallLog, User, UserAiQuota, FeatureQuotaConfig]),
+    TypeOrmModule.forFeature([
+      LlmCallLog,
+      User,
+      UserAiQuota,
+      FeatureQuotaConfig,
+    ]),
     forwardRef(() => ActivityModule),
     // AdminModule: AbuserBanService 가 AdminAuditService.log('auto_ban_ai', ...) 호출
     forwardRef(() => AdminModule),
