@@ -59,4 +59,16 @@ export class User {
     nullable: true,
   })
   aiConsentVersion: string | null;
+
+  /**
+   * F6 PR 2 Phase 1 — 사용자 결제 tier ('free'/'pro'/'enterprise').
+   * `feature_quota_configs` 의 tier 별 한도가 적용됨. admin 이 'free' 한도 조절 시 'pro' 영향 0 (유료 보호).
+   * F7 결제 인프라 도입 시 결제 완료 → 'pro' 로 UPDATE.
+   */
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: 'free',
+  })
+  tier: 'free' | 'pro' | 'enterprise';
 }

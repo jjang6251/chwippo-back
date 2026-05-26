@@ -23,7 +23,14 @@ export type AuditAction =
   // F6 PR 1 — AbuserBanService 자동 ban 발동 (3일 연속 일 한도 도달)
   // adminUserId = NULL (시스템 자동), targetType = 'user', targetId = userId
   // detail: { reason, duration_days, daily_cap_override, triggered_feature, consecutive_days }
-  | 'auto_ban_ai';
+  | 'auto_ban_ai'
+  // F6 PR 2 — admin 이 feature_quota_configs 변경 (dayLimit·monthLimit·cooldown·enabled)
+  // targetType = 'feature_quota', targetId = `${feature}:${tier}`
+  // detail: { feature, tier, before, after }
+  | 'update_ai_quota'
+  // F6 PR 2 — admin 이 user.tier 변경 (free ↔ pro ↔ enterprise, F7 결제 전 수동 부여)
+  // targetType = 'user', targetId = userId, detail: { before, after }
+  | 'update_tier';
 
 @Entity('admin_audit_logs')
 export class AdminAuditLog {

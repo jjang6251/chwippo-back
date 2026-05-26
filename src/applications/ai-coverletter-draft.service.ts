@@ -7,10 +7,10 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, In, IsNull, Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import { LlmService } from '../ai/llm.service';
-import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
+import { QuotaCheckService } from '../ai/quota-check.service';
 import { MyinfoService } from '../myinfo/myinfo.service';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { ActivityReflection } from '../activity/entities/activity-reflection.entity';
@@ -32,18 +32,11 @@ import { CoverletterSourceRefsService } from './coverletter-source-refs.service'
  * 7. ApplicationCoverletter.answer 업데이트 + source_refs bulk insert (selected aiRecommended=false / recommended aiRecommended=true)
  * 8. 응답 반환 (answer + meta + refs)
  *
- * **quota** (Phase 2D — Phase 3 user_ai_quotas override 통합 전):
- * - `coverletter_draft_v2` 일 3회 · 월 20회
- * - `coverletter_recommend` 일 3회 · 월 20회 (별도)
- * - NoteSummary 와 동일 hard-coded 상수. Phase 3 에서 UserAiQuota.dailyCapOverride 통합
+ * **quota** (F6 PR 2 Phase 1 통합):
+ * - `coverletter_draft_v2` · `coverletter_recommend` 각각 `feature_quota_configs` 의 (feature, tier) row 로 통제
+ * - admin /ops/ai-feature-quotas 페이지에서 day·month·cooldown·enabled(kill switch) 동적 조절
+ * - QuotaCheckService.checkAndPrepare() 단일 진입점 — memory `feedback_admin_quota_control`
  */
-
-export const COVERLETTER_AI_LIMITS = {
-  DRAFT_PER_DAY: 3,
-  DRAFT_PER_MONTH: 20,
-  RECOMMEND_PER_DAY: 3,
-  RECOMMEND_PER_MONTH: 20,
-} as const;
 
 export type AiDraftStatus = 'ok' | 'blocked';
 
@@ -114,14 +107,13 @@ export class AiCoverletterDraftService {
     private readonly clRepo: Repository<ApplicationCoverletter>,
     @InjectRepository(CoverletterSourceRef)
     private readonly refRepo: Repository<CoverletterSourceRef>,
-    @InjectRepository(LlmCallLog)
-    private readonly logRepo: Repository<LlmCallLog>,
     @InjectRepository(ActivityLog)
     private readonly activityLogRepo: Repository<ActivityLog>,
     @InjectRepository(ActivityReflection)
     private readonly reflectionRepo: Repository<ActivityReflection>,
     private readonly sourceRefsService: CoverletterSourceRefsService,
     private readonly llm: LlmService,
+    private readonly quotaCheck: QuotaCheckService,
     @Inject(forwardRef(() => MyinfoService))
     private readonly myinfo: MyinfoService,
     private readonly abuserBan: AbuserBanService,
@@ -160,14 +152,12 @@ export class AiCoverletterDraftService {
         selectedIds,
       );
 
-    // 3. quota 사전 체크 — draft + (skipRecommend 가 아니면) recommend 둘 다 확인.
-    //    blocked 시 LlmService 진입점 통해 `blocked_quota` audit row 남김 (NoteSummary 패턴 일관성).
-    //    admin /ops/ai-usage 에서 quota 초과 사용자 추적 가능 (memory `ai_usage_tracking_must`).
-    const draftQuota = await this.checkQuota(
+    // 3. quota 사전 체크 — QuotaCheckService 단일 진입점 (admin 통제).
+    //    draft 한도 초과 → 사용자 가치 보존 어려움 (답변 생성 불가) → blocked 반환.
+    //    recommend 한도 초과 → 추천만 skip 하고 draft 진행 (부수 기능, 가치 손실 최소).
+    const draftQuota = await this.quotaCheck.checkAndPrepare(
       userId,
       'coverletter_draft_v2',
-      COVERLETTER_AI_LIMITS.DRAFT_PER_DAY,
-      COVERLETTER_AI_LIMITS.DRAFT_PER_MONTH,
     );
     if (draftQuota.blocked) {
       const blockedResult = await this.llm.call({
@@ -178,12 +168,22 @@ export class AiCoverletterDraftService {
         resourceType: 'application_coverletter',
         resourceId: coverletterId,
         preBlockedStatus: 'blocked_quota',
-        preBlockedReason: draftQuota.reason,
+        preBlockedReason: `${draftQuota.code}: ${draftQuota.reason}`,
       });
+      // DAY_LIMIT 도달 시 abuser ban 평가 (3일 연속 발동, fire & forget)
+      if (draftQuota.code === 'DAY_LIMIT') {
+        void this.abuserBan
+          .checkAndBan(userId, 'coverletter_draft_v2', 1)
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `AbuserBan check 실패 (user=${userId}): ${(err as Error).message}`,
+            ),
+          );
+      }
       return {
         status: 'blocked',
         answer: null,
-        reason: draftQuota.reason!,
+        reason: draftQuota.reason,
         meta: {
           draftCallLogId: blockedResult.callLogId,
           recommendCallLogId: null,
@@ -199,13 +199,10 @@ export class AiCoverletterDraftService {
     const shouldRecommend = !input.skipRecommend;
     let recommendQuotaOk = true;
     if (shouldRecommend) {
-      const recommendQuota = await this.checkQuota(
+      const recommendQuota = await this.quotaCheck.checkAndPrepare(
         userId,
         'coverletter_recommend',
-        COVERLETTER_AI_LIMITS.RECOMMEND_PER_DAY,
-        COVERLETTER_AI_LIMITS.RECOMMEND_PER_MONTH,
       );
-      // 추천은 부수적 — 한도 초과 시 추천 skip 하고 draft 만 진행 (사용자 가치 보존)
       recommendQuotaOk = !recommendQuota.blocked;
     }
 
@@ -324,71 +321,6 @@ export class AiCoverletterDraftService {
   }
 
   // ── private ──
-
-  /**
-   * llm_call_logs COUNT 기반 quota 체크. NoteSummary 와 동일 패턴.
-   *
-   * **Phase 3 통합**:
-   * - `user_ai_quotas.daily_cap_override` 활성 시 (auto-ban 등) → perDay 를 override 값으로 강제 축소
-   * - 도달 시 `AbuserBanService.checkAndBan` 호출 (3일 연속 도달 시 ban 발동)
-   */
-  private async checkQuota(
-    userId: string,
-    feature:
-      | 'coverletter_draft_v2'
-      | 'coverletter_feedback'
-      | 'coverletter_recommend',
-    perDay: number,
-    perMonth: number,
-  ): Promise<{ blocked: boolean; reason?: string }> {
-    // Phase 3: active override (auto-ban 등) 가 있으면 perDay 축소
-    const override = await this.abuserBan.getActiveOverride(userId);
-    const effectiveDayLimit =
-      override?.dailyCapOverride != null
-        ? Math.min(perDay, override.dailyCapOverride)
-        : perDay;
-
-    const now = new Date();
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-
-    // status='ok' 또는 'retry_parsing' 만 카운트 (error/blocked 제외 — quota 차감 정책 H5)
-    const baseWhere = {
-      userId,
-      feature,
-      status: In(['ok', 'retry_parsing']),
-    };
-
-    const dayCount = await this.logRepo.count({
-      where: { ...baseWhere, createdAt: Between(dayStart, now) },
-    });
-    if (dayCount >= effectiveDayLimit) {
-      // Phase 3: 도달 → ban trigger 시도 (3일 연속이면 발동, 아니면 noop)
-      // best-effort — fire & forget (실패해도 quota blocked 반환은 유지)
-      void this.abuserBan
-        .checkAndBan(userId, feature, effectiveDayLimit)
-        .catch((err: unknown) =>
-          this.logger.warn(
-            `AbuserBan check 실패 (user=${userId}, feature=${feature}): ${(err as Error).message}`,
-          ),
-        );
-      return {
-        blocked: true,
-        reason: `오늘 ${feature === 'coverletter_recommend' ? '추천' : '자소서 작성'} ${effectiveDayLimit}회를 모두 사용했어요. 내일 다시 시도해 주세요.`,
-      };
-    }
-    const monthCount = await this.logRepo.count({
-      where: { ...baseWhere, createdAt: Between(monthStart, monthEnd) },
-    });
-    if (monthCount >= perMonth) {
-      return {
-        blocked: true,
-        reason: `이번 달 ${feature === 'coverletter_recommend' ? '추천' : '자소서 작성'} ${perMonth}회를 모두 사용했어요.`,
-      };
-    }
-    return { blocked: false };
-  }
 
   /**
    * AI 추천 LLM 호출 — Anthropic callJson (tool_use 강제). 실패 시 빈 추천 반환 + log.

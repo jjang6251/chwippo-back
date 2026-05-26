@@ -17,16 +17,19 @@ import {
   NOTE_SUMMARY_LIMITS,
   NoteSummaryService,
 } from './note-summary.service';
+import { QuotaCheckService } from './quota-check.service';
 
 describe('NoteSummaryService', () => {
   let service: NoteSummaryService;
   let llm: jest.Mocked<LlmService>;
   let moderation: jest.Mocked<ModerationService>;
+  let quotaCheck: jest.Mocked<QuotaCheckService>;
+  let abuserBan: { checkAndBan: jest.Mock; getActiveOverride: jest.Mock };
   let emFindOne: jest.Mock;
   let emCount: jest.Mock;
   let emSave: jest.Mock;
 
-  const longText = '가'.repeat(100); // 100자 — MIN_NOTE_CHARS(50) 초과
+  const longText = '가'.repeat(100);
   const longNote = { type: 'doc', content: [{ type: 'text', text: longText }] };
 
   const makeLog = (overrides: Partial<ActivityLog> = {}): ActivityLog => ({
@@ -54,7 +57,7 @@ describe('NoteSummaryService', () => {
 
   beforeEach(async () => {
     emFindOne = jest.fn();
-    emCount = jest.fn();
+    emCount = jest.fn().mockResolvedValue(0);
     emSave = jest.fn().mockImplementation(async (_, e) => e);
 
     const fakeEm = {
@@ -71,11 +74,13 @@ describe('NoteSummaryService', () => {
     const mockLlmLogRepo = mock<Repository<LlmCallLog>>();
     const mockLlm = mock<LlmService>();
     const mockMod = mock<ModerationService>();
-    // Phase 3: AbuserBanService — default 비활성 (override 없음, ban trigger no-op)
-    const mockAbuserBan = {
+    abuserBan = {
       getActiveOverride: jest.fn().mockResolvedValue(null),
       checkAndBan: jest.fn().mockResolvedValue({ banned: false }),
     };
+    const mockQuotaCheck = mock<QuotaCheckService>();
+    // default: 통과
+    mockQuotaCheck.checkAndPrepare.mockResolvedValue({ blocked: false });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -85,13 +90,15 @@ describe('NoteSummaryService', () => {
         { provide: LlmService, useValue: mockLlm },
         { provide: ModerationService, useValue: mockMod },
         { provide: DataSource, useValue: dataSource },
-        { provide: AbuserBanService, useValue: mockAbuserBan },
+        { provide: AbuserBanService, useValue: abuserBan },
+        { provide: QuotaCheckService, useValue: mockQuotaCheck },
       ],
     }).compile();
 
     service = module.get<NoteSummaryService>(NoteSummaryService);
     llm = module.get(LlmService);
     moderation = module.get(ModerationService);
+    quotaCheck = module.get(QuotaCheckService);
 
     moderation.check.mockResolvedValue({
       flagged: false,
@@ -167,7 +174,10 @@ describe('NoteSummaryService', () => {
       expect(result.remainingPerNote).toBe(
         NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H - 1,
       );
-      // log.noteSummary, hash, at 저장 확인
+      expect(quotaCheck.checkAndPrepare).toHaveBeenCalledWith(
+        'user-1',
+        'note_summary',
+      );
       expect(emSave).toHaveBeenCalledWith(
         ActivityLog,
         expect.objectContaining({
@@ -177,37 +187,26 @@ describe('NoteSummaryService', () => {
       );
     });
 
-    it('같은 hash + force=false → LLM 호출 없이 캐시 반환', async () => {
-      const hash =
-        '7f23ae7e5e0fed5466b8fb12d3c4ce4e0c3a9f6bd87aab1f4ade62b6f7b4d6f7'; // 임의
-      emFindOne.mockResolvedValue(
-        makeLog({
-          noteSummary: '예전 요약',
-          noteSummaryHash: hash,
-        }),
-      );
-
-      // hash 계산 결과가 동일하도록 — 동일 텍스트면 동일 hash
-      // 따라서 실제 hash 를 미리 계산해 entity 에 주입하는 helper
+    it('같은 hash + force=false → LLM 호출 없이 캐시 반환 (quota check 도 skip)', async () => {
       const fakeLog = makeLog();
       fakeLog.noteSummary = '예전 요약';
       const text = NoteSummaryService.extractPlainText(fakeLog.note);
-      const realHash = createHash('sha256').update(text).digest('hex');
-      fakeLog.noteSummaryHash = realHash;
-      emFindOne.mockResolvedValueOnce(fakeLog);
+      fakeLog.noteSummaryHash = createHash('sha256').update(text).digest('hex');
+      emFindOne.mockResolvedValue(fakeLog);
 
       const result = await service.summarize('user-1', 'log-1');
 
       expect(result.status).toBe('cached');
       expect(result.summary).toBe('예전 요약');
       expect(llm.call).not.toHaveBeenCalled();
+      // 캐시 hit → quota check 도 호출 안 됨 (admin 통제 외, LLM 호출 0)
+      expect(quotaCheck.checkAndPrepare).not.toHaveBeenCalled();
     });
 
-    // memory `feedback_test_real_user_flows` — note 수정 후 첫 summarize 호출 흐름
+    // memory `feedback_test_real_user_flows` — note 수정 후 첫 summarize 흐름
     it('기존 noteSummary 가 있어도 hash 가 다르면 (note 수정 후) 캐시 무효 + 새 LLM 호출', async () => {
       const fakeLog = makeLog();
       fakeLog.noteSummary = '예전 요약';
-      // 일부러 다른 hash 저장 (note 수정된 상태 시뮬레이션)
       fakeLog.noteSummaryHash = 'STALE_HASH_DIFFERENT_FROM_ACTUAL';
       emFindOne.mockResolvedValue(fakeLog);
       emCount.mockResolvedValue(0);
@@ -224,12 +223,10 @@ describe('NoteSummaryService', () => {
 
       const result = await service.summarize('user-1', 'log-1');
 
-      // 캐시 hit 아님 → 새 LLM 호출
       expect(result.status).toBe('ok');
       expect(result.cached).toBe(false);
       expect(result.summary).toBe('새 요약');
       expect(llm.call).toHaveBeenCalled();
-      // 새 hash + summary 저장됨
       expect(emSave).toHaveBeenCalledWith(
         ActivityLog,
         expect.objectContaining({
@@ -239,7 +236,7 @@ describe('NoteSummaryService', () => {
       );
     });
 
-    it('force=true → 캐시 무시하고 다시 호출', async () => {
+    it('force=true → 캐시 무시하고 다시 호출 (quota check 통과 필요)', async () => {
       const fakeLog = makeLog();
       fakeLog.noteSummary = '예전 요약';
       const text = NoteSummaryService.extractPlainText(fakeLog.note);
@@ -263,9 +260,10 @@ describe('NoteSummaryService', () => {
 
       expect(result.summary).toBe('새 요약');
       expect(llm.call).toHaveBeenCalled();
+      expect(quotaCheck.checkAndPrepare).toHaveBeenCalled();
     });
 
-    it('노트당 24h 한도 초과 → blocked + 0회 남음 + audit 로그', async () => {
+    it('노트당 24h 한도 초과 → blocked + 0회 남음 + audit 로그 (quota check 도달 안 함)', async () => {
       emFindOne.mockResolvedValue(makeLog());
       emCount.mockResolvedValueOnce(NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H);
       llm.call.mockResolvedValue({
@@ -282,14 +280,17 @@ describe('NoteSummaryService', () => {
       expect(llm.call).toHaveBeenCalledWith(
         expect.objectContaining({ preBlockedStatus: 'blocked_quota' }),
       );
+      // per-note 가 먼저 → quota check 호출 안 됨
+      expect(quotaCheck.checkAndPrepare).not.toHaveBeenCalled();
     });
 
-    it('일 한도 초과 → blocked + reason 메시지', async () => {
+    it('QuotaCheck DAY_LIMIT → blocked + reason 전파 + abuser ban 트리거', async () => {
       emFindOne.mockResolvedValue(makeLog());
-      // perNote count(0) → day count(30) 초과
-      emCount
-        .mockResolvedValueOnce(0)
-        .mockResolvedValueOnce(NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY);
+      quotaCheck.checkAndPrepare.mockResolvedValue({
+        blocked: true,
+        code: 'DAY_LIMIT',
+        reason: '오늘 사용 한도 30회를 모두 사용했어요.',
+      });
       llm.call.mockResolvedValue({
         status: 'blocked_quota',
         text: null,
@@ -298,8 +299,89 @@ describe('NoteSummaryService', () => {
       });
 
       const result = await service.summarize('user-1', 'log-1');
+
       expect(result.status).toBe('blocked');
       expect(result.reason).toContain('오늘');
+      expect(llm.call).toHaveBeenCalledWith(
+        expect.objectContaining({
+          preBlockedStatus: 'blocked_quota',
+          preBlockedReason: expect.stringContaining('DAY_LIMIT'),
+        }),
+      );
+      // DAY_LIMIT → abuser ban 평가 트리거
+      expect(abuserBan.checkAndBan).toHaveBeenCalledWith(
+        'user-1',
+        'note_summary',
+        1,
+      );
+    });
+
+    it('QuotaCheck MONTH_LIMIT → blocked + "이번 달" reason + abuser ban 미트리거', async () => {
+      emFindOne.mockResolvedValue(makeLog());
+      quotaCheck.checkAndPrepare.mockResolvedValue({
+        blocked: true,
+        code: 'MONTH_LIMIT',
+        reason: '이번 달 사용 한도 300회를 모두 사용했어요.',
+      });
+      llm.call.mockResolvedValue({
+        status: 'blocked_quota',
+        text: null,
+        errorMessage: 'month',
+        callLogId: 'c',
+      });
+
+      const result = await service.summarize('user-1', 'log-1');
+
+      expect(result.status).toBe('blocked');
+      expect(result.reason).toContain('이번 달');
+      // MONTH_LIMIT 은 abuser ban 미트리거 (day 도달 패턴만 ban)
+      expect(abuserBan.checkAndBan).not.toHaveBeenCalled();
+    });
+
+    it('QuotaCheck FEATURE_DISABLED (kill switch) → blocked + reason + abuser ban 미트리거', async () => {
+      emFindOne.mockResolvedValue(makeLog());
+      quotaCheck.checkAndPrepare.mockResolvedValue({
+        blocked: true,
+        code: 'FEATURE_DISABLED',
+        reason: '관리자에 의해 일시 중단된 기능이에요. 곧 복구돼요.',
+      });
+      llm.call.mockResolvedValue({
+        status: 'blocked_quota',
+        text: null,
+        errorMessage: 'disabled',
+        callLogId: 'c',
+      });
+
+      const result = await service.summarize('user-1', 'log-1');
+
+      expect(result.status).toBe('blocked');
+      expect(result.reason).toContain('관리자');
+      expect(abuserBan.checkAndBan).not.toHaveBeenCalled();
+      // moderation, 실제 LLM call 안 됨 — 단 audit row 는 생성
+      expect(moderation.check).not.toHaveBeenCalled();
+    });
+
+    it('QuotaCheck COOLDOWN → blocked + nextAvailableAt ISO 전파', async () => {
+      emFindOne.mockResolvedValue(makeLog());
+      const next = new Date(Date.now() + 20_000);
+      quotaCheck.checkAndPrepare.mockResolvedValue({
+        blocked: true,
+        code: 'COOLDOWN',
+        reason: '다음 사용까지 20초 남았어요.',
+        nextAvailableAt: next,
+      });
+      llm.call.mockResolvedValue({
+        status: 'blocked_quota',
+        text: null,
+        errorMessage: 'cooldown',
+        callLogId: 'c',
+      });
+
+      const result = await service.summarize('user-1', 'log-1');
+
+      expect(result.status).toBe('blocked');
+      expect(result.nextAvailableAt).toBe(next.toISOString());
+      expect(abuserBan.checkAndBan).not.toHaveBeenCalled();
     });
 
     it('moderation flagged → blocked + blocked_moderation 로그', async () => {
@@ -340,25 +422,6 @@ describe('NoteSummaryService', () => {
       expect(result.reason).toContain('잠시 후');
     });
 
-    it('월 한도 300회 초과 → blocked + "이번 달" reason', async () => {
-      emFindOne.mockResolvedValue(makeLog());
-      // perNote count(0) → day count(0) → month count(300)
-      emCount
-        .mockResolvedValueOnce(0)
-        .mockResolvedValueOnce(0)
-        .mockResolvedValueOnce(NOTE_SUMMARY_LIMITS.PER_USER_PER_MONTH);
-      llm.call.mockResolvedValue({
-        status: 'blocked_quota',
-        text: null,
-        errorMessage: 'month',
-        callLogId: 'c',
-      });
-
-      const result = await service.summarize('user-1', 'log-1');
-      expect(result.status).toBe('blocked');
-      expect(result.reason).toContain('이번 달');
-    });
-
     it('moderation API 실패 (apiFailed=true) → fail-open, 정상 LLM 호출 진행', async () => {
       emFindOne.mockResolvedValue(makeLog());
       emCount.mockResolvedValue(0);
@@ -383,10 +446,7 @@ describe('NoteSummaryService', () => {
       expect(result.summary).toBe('fail-open 요약');
     });
 
-    it('알려진 quota race leak (문서화): 동시 호출 시 count() 사이 락 없음 — 양쪽 ok 가능 (수용)', async () => {
-      // 동시 호출 시 두 transaction 이 count() 단계에서 서로 못 보고 통과.
-      // 시뮬: 모든 count = 0 (한도 미만) → 양쪽 모두 ok.
-      // 실 운영에서는 두 요청이 모두 count=29 본 후 양쪽 통과 = 31회 leak. 동일 메커니즘.
+    it('알려진 quota race leak (문서화): 동시 호출 시 락 없음 — 양쪽 ok 가능 (수용)', async () => {
       const logA = makeLog({ id: 'log-A' });
       const logB = makeLog({ id: 'log-B' });
       emFindOne.mockResolvedValueOnce(logA).mockResolvedValueOnce(logB);
@@ -406,7 +466,6 @@ describe('NoteSummaryService', () => {
         service.summarize('user-1', 'log-A'),
         service.summarize('user-1', 'log-B'),
       ]);
-      // 두 호출 사이 quota 락 없음을 명시 — F7 에서 user_ai_quota 테이블로 정확화 검토
       expect(r1.status).toBe('ok');
       expect(r2.status).toBe('ok');
     });

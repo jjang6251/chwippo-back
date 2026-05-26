@@ -91,36 +91,36 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
   },
 
   // ── PR 0 신규 (F6 PR 1·2 에서 사용) ──
-  // 자소서 = Claude Sonnet (한국어 자연스러움)
+  // F6 PR 2 — **모든 feature light 모델 강제** (memory `feedback_admin_quota_control` 비용 통제).
+  // 한국어 품질 평가 후 사용자가 명시적으로 heavy 전환 결정 시 admin 매트릭스 갱신.
   coverletter_draft_v2: {
     provider: 'anthropic',
-    modelEnvKey: 'ANTHROPIC_MODEL_HEAVY',
-    defaultModel: 'claude-sonnet-4-6',
+    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
+    defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 16_000,
     maxOutputTokens: 2_000,
     temperature: 0.5,
   },
   coverletter_feedback: {
     provider: 'anthropic',
-    modelEnvKey: 'ANTHROPIC_MODEL_HEAVY',
-    defaultModel: 'claude-sonnet-4-6',
+    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
+    defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 16_000,
     maxOutputTokens: 1_500,
     temperature: 0.3,
   },
   coverletter_recommend: {
-    provider: 'openai', // 추천만 — mini 로 비용 절감
+    provider: 'openai',
     modelEnvKey: 'OPENAI_MODEL_LIGHT',
     defaultModel: 'gpt-4o-mini',
     maxInputTokens: 4_000,
     maxOutputTokens: 300,
     temperature: 0.2,
   },
-  // 면접 = GPT-4o (structured JSON output 강함)
   interview_prep_session: {
     provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_HEAVY',
-    defaultModel: 'gpt-4o',
+    modelEnvKey: 'OPENAI_MODEL_LIGHT',
+    defaultModel: 'gpt-4o-mini',
     maxInputTokens: 16_000,
     maxOutputTokens: 3_000,
     temperature: 0.5,

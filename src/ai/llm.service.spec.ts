@@ -56,6 +56,7 @@ describe('LlmService', () => {
     suspendedAt: null,
     aiConsentAt: new Date(),
     aiConsentVersion: CURRENT_AI_CONSENT_VERSION,
+    tier: 'free',
     ...overrides,
   });
 
@@ -274,7 +275,7 @@ describe('LlmService', () => {
       expect(anthropic.complete).not.toHaveBeenCalled();
     });
 
-    it('coverletter_draft_v2 → anthropic provider 호출 (claude-sonnet-4-6)', async () => {
+    it('coverletter_draft_v2 → anthropic provider 호출 (light claude-haiku-4-5)', async () => {
       anthropic.complete.mockResolvedValue({
         text: '자소서 초안',
         promptTokens: 100,
@@ -288,19 +289,19 @@ describe('LlmService', () => {
         userPrompt: 'u',
       });
       expect(anthropic.complete).toHaveBeenCalledWith(
-        expect.objectContaining({ model: 'claude-sonnet-4-6' }),
+        expect.objectContaining({ model: 'claude-haiku-4-5-20251001' }),
       );
       expect(openai.complete).not.toHaveBeenCalled();
       expect(logRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: 'anthropic',
-          model: 'claude-sonnet-4-6',
+          model: 'claude-haiku-4-5-20251001',
           status: 'ok',
         }),
       );
     });
 
-    it('interview_prep_session → openai gpt-4o (heavy structured)', async () => {
+    it('interview_prep_session → openai light gpt-4o-mini (모든 feature light 강제)', async () => {
       openai.complete.mockResolvedValue({
         text: 'q',
         promptTokens: 50,
@@ -314,7 +315,7 @@ describe('LlmService', () => {
         userPrompt: 'u',
       });
       expect(openai.complete).toHaveBeenCalledWith(
-        expect.objectContaining({ model: 'gpt-4o' }),
+        expect.objectContaining({ model: 'gpt-4o-mini' }),
       );
     });
 

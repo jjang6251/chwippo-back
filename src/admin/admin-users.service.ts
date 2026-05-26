@@ -206,6 +206,20 @@ export class AdminUsersService {
         );
       }
 
+      if (dto.tier !== undefined && dto.tier !== user.tier) {
+        const before = user.tier;
+        user.tier = dto.tier;
+        await manager.save(User, user);
+        await this.auditService.log(
+          adminId,
+          'update_tier',
+          'user',
+          userId,
+          { before, after: dto.tier },
+          manager,
+        );
+      }
+
       if (dto.nickname !== undefined) {
         if (dto.nickname.trim().length === 0) {
           throw new BadRequestException('닉네임은 빈 값일 수 없습니다.');
