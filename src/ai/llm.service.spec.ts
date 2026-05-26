@@ -3,19 +3,67 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
+import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
-import { LlmService } from './llm.service';
-import { OPENAI_CLIENT } from './openai-client.provider';
+import { CURRENT_AI_CONSENT_VERSION, LlmService } from './llm.service';
+import {
+  LlmJsonParseError,
+  LlmProvider,
+} from './providers/llm-provider.interface';
+import { AnthropicProvider } from './providers/anthropic.provider';
+import { OpenAIProvider } from './providers/openai.provider';
 
+/**
+ * LlmService 단위 spec — PR 0 신규 아키텍처 검증.
+ *
+ * 검증 축:
+ * - consent gate (NULL / version mismatch / 통과)
+ * - provider 라우팅 (openai vs anthropic feature 별 분기)
+ * - PII 스크럽 (system + user prompt 양쪽)
+ * - 본인 이름 블랙리스트
+ * - input token cap (chars/3 추정)
+ * - 출력 PII 역방향 (outputRedacted flag)
+ * - retry_parsing (callJson 1회 재시도 + 별도 audit row)
+ * - audit 행 신규 필드 (provider, promptHash, promptExcerpt, attempts, outputRedacted)
+ * - preBlocked 분기 (consent 보다 우선)
+ */
 describe('LlmService', () => {
   let service: LlmService;
   let logRepo: jest.Mocked<Repository<LlmCallLog>>;
-  let openai: { chat: { completions: { create: jest.Mock } } };
+  let userRepo: jest.Mocked<Repository<User>>;
+  // 테스트용 mutable fixture — LlmProvider 의 isAvailable 는 readonly 지만 spec 에선 토글 필요
+  type MutableProvider = {
+    -readonly [K in keyof LlmProvider]: LlmProvider[K];
+  } & {
+    complete: jest.Mock;
+    callJson: jest.Mock;
+  };
+  let openai: MutableProvider;
+  let anthropic: MutableProvider;
+
+  const makeUser = (overrides: Partial<User> = {}): User => ({
+    id: 'u-1',
+    kakaoId: 'k-1',
+    nickname: '장성원',
+    email: null,
+    refreshToken: null,
+    role: 'user',
+    createdAt: new Date(),
+    lastActiveAt: null,
+    termsAgreedAt: new Date(),
+    dashboardConfig: null,
+    onboardedAt: new Date(),
+    suspendedAt: null,
+    aiConsentAt: new Date(),
+    aiConsentVersion: CURRENT_AI_CONSENT_VERSION,
+    ...overrides,
+  });
 
   const makeLog = (overrides: Partial<LlmCallLog> = {}): LlmCallLog => ({
-    id: 'log-1',
+    id: 'log-' + Math.random().toString(36).slice(2, 8),
     userId: 'u-1',
     feature: 'note_summary',
+    provider: 'openai',
     model: 'gpt-4o-mini',
     promptTokens: 0,
     completionTokens: 0,
@@ -25,223 +73,623 @@ describe('LlmService', () => {
     errorMessage: null,
     resourceType: null,
     resourceId: null,
+    promptHash: null,
+    promptExcerpt: null,
+    outputRedacted: false,
+    attempts: 1,
     createdAt: new Date(),
-    user: undefined as unknown as LlmCallLog['user'],
+    user: undefined as unknown as User,
     ...overrides,
   });
 
-  beforeEach(async () => {
-    openai = {
-      chat: {
-        completions: {
-          create: jest.fn(),
-        },
-      },
+  const buildProvider = (available = true) => {
+    const p = {
+      name: 'openai' as const,
+      isAvailable: available,
+      complete: jest.fn(),
+      callJson: jest.fn(),
     };
-    const mockRepo = mock<Repository<LlmCallLog>>();
-    mockRepo.create.mockImplementation((d) => d as LlmCallLog);
-    mockRepo.save.mockImplementation(async (d) =>
+    return p;
+  };
+
+  beforeEach(async () => {
+    openai = { ...buildProvider(true), name: 'openai' };
+    anthropic = { ...buildProvider(true), name: 'anthropic' };
+
+    const mockLogRepo = mock<Repository<LlmCallLog>>();
+    mockLogRepo.create.mockImplementation((d) => d as LlmCallLog);
+    mockLogRepo.save.mockImplementation(async (d) =>
       makeLog(d as Partial<LlmCallLog>),
     );
+
+    const mockUserRepo = mock<Repository<User>>();
+    mockUserRepo.findOne.mockResolvedValue(makeUser());
 
     const config = mock<ConfigService>();
     config.get.mockImplementation((key: string) => {
       if (key === 'OPENAI_MODEL_LIGHT') return 'gpt-4o-mini';
       if (key === 'OPENAI_MODEL_HEAVY') return 'gpt-4o';
+      if (key === 'ANTHROPIC_MODEL_LIGHT') return 'claude-haiku-4-5-20251001';
+      if (key === 'ANTHROPIC_MODEL_HEAVY') return 'claude-sonnet-4-6';
       return undefined;
     });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LlmService,
-        { provide: OPENAI_CLIENT, useValue: openai },
-        { provide: getRepositoryToken(LlmCallLog), useValue: mockRepo },
+        { provide: OpenAIProvider, useValue: openai },
+        { provide: AnthropicProvider, useValue: anthropic },
+        { provide: getRepositoryToken(LlmCallLog), useValue: mockLogRepo },
+        { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: ConfigService, useValue: config },
       ],
     }).compile();
 
     service = module.get<LlmService>(LlmService);
     logRepo = module.get(getRepositoryToken(LlmCallLog));
+    userRepo = module.get(getRepositoryToken(User));
   });
 
-  it('성공 호출: status=ok 로그 + 토큰·비용 기록', async () => {
-    openai.chat.completions.create.mockResolvedValue({
-      choices: [{ message: { content: '요약된 내용' } }],
-      usage: { prompt_tokens: 1000, completion_tokens: 200 },
+  // ── 1. preBlocked 분기 ──
+  describe('preBlocked', () => {
+    it('preBlockedStatus=blocked_quota → provider 미호출, audit row 만', async () => {
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        preBlockedStatus: 'blocked_quota',
+        preBlockedReason: '일일 한도 초과',
+      });
+      expect(openai.complete).not.toHaveBeenCalled();
+      expect(r.status).toBe('blocked_quota');
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'blocked_quota',
+          provider: 'openai',
+          attempts: 1,
+          outputRedacted: false,
+        }),
+      );
     });
 
-    const result = await service.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 'sys',
-      userPrompt: 'user',
+    it('preBlockedStatus=blocked_moderation → 동일', async () => {
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        preBlockedStatus: 'blocked_moderation',
+        preBlockedReason: 'flagged',
+      });
+      expect(r.status).toBe('blocked_moderation');
+      expect(openai.complete).not.toHaveBeenCalled();
     });
 
-    expect(result.status).toBe('ok');
-    if (result.status !== 'ok') throw new Error('expected ok');
-    expect(result.text).toBe('요약된 내용');
-    expect(result.promptTokens).toBe(1000);
-    expect(result.completionTokens).toBe(200);
-    expect(result.costUsd).toBeGreaterThan(0);
-    expect(logRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'ok',
-        promptTokens: 1000,
-        completionTokens: 200,
-      }),
-    );
+    it('preBlockedReason 없으면 errorMessage 가 status 값 fallback', async () => {
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        preBlockedStatus: 'blocked_quota',
+      });
+      if (r.status === 'ok') throw new Error('expected blocked');
+      expect(r.errorMessage).toBe('blocked_quota');
+    });
+
+    it('preBlocked 일 때는 consent 체크 안 함 (preBlocked 우선)', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser({ aiConsentAt: null }));
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        preBlockedStatus: 'blocked_quota',
+      });
+      expect(r.status).toBe('blocked_quota');
+      // consent NULL 임에도 quota 우선 → blocked_consent 아님
+    });
   });
 
-  it('preBlockedStatus=blocked_quota → OpenAI 호출 안 함, 로그만 기록', async () => {
-    const result = await service.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 's',
-      userPrompt: 'u',
-      preBlockedStatus: 'blocked_quota',
-      preBlockedReason: 'daily limit',
+  // ── 2. consent gate ──
+  describe('consent gate', () => {
+    it('ai_consent_at NULL → blocked_consent + provider 미호출', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser({ aiConsentAt: null }));
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('blocked_consent');
+      expect(openai.complete).not.toHaveBeenCalled();
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'blocked_consent' }),
+      );
     });
 
-    expect(openai.chat.completions.create).not.toHaveBeenCalled();
-    expect(result.status).toBe('blocked_quota');
-    expect(logRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'blocked_quota' }),
-    );
+    it('aiConsentVersion 이 CURRENT 와 다르면 blocked_consent', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({
+          aiConsentAt: new Date(),
+          aiConsentVersion: 'v0-legacy',
+        }),
+      );
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('blocked_consent');
+      if (r.status === 'ok') throw new Error('not expected');
+      expect(r.errorMessage).toContain(CURRENT_AI_CONSENT_VERSION);
+    });
+
+    it('사용자 없음 → blocked_consent + 안내 메시지', async () => {
+      userRepo.findOne.mockResolvedValue(null);
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('blocked_consent');
+    });
+
+    it('동의 완료 + version 일치 → 정상 진입 (consent gate 통과)', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'ok',
+        promptTokens: 10,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+    });
   });
 
-  it('preBlockedStatus=blocked_moderation → 호출 안 함', async () => {
-    const result = await service.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 's',
-      userPrompt: 'u',
-      preBlockedStatus: 'blocked_moderation',
-      preBlockedReason: 'flagged',
+  // ── 3. provider 가용성 + 라우팅 ──
+  describe('provider 라우팅 + 가용성', () => {
+    it('note_summary → openai provider 호출', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'r',
+        promptTokens: 1,
+        completionTokens: 1,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(openai.complete).toHaveBeenCalled();
+      expect(anthropic.complete).not.toHaveBeenCalled();
     });
 
-    expect(openai.chat.completions.create).not.toHaveBeenCalled();
-    expect(result.status).toBe('blocked_moderation');
+    it('coverletter_draft_v2 → anthropic provider 호출 (claude-sonnet-4-6)', async () => {
+      anthropic.complete.mockResolvedValue({
+        text: '자소서 초안',
+        promptTokens: 100,
+        completionTokens: 50,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(anthropic.complete).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'claude-sonnet-4-6' }),
+      );
+      expect(openai.complete).not.toHaveBeenCalled();
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-6',
+          status: 'ok',
+        }),
+      );
+    });
+
+    it('interview_prep_session → openai gpt-4o (heavy structured)', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'q',
+        promptTokens: 50,
+        completionTokens: 30,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'interview_prep_session',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(openai.complete).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'gpt-4o' }),
+      );
+    });
+
+    it('provider isAvailable=false → status=error ("..._API_KEY 미설정")', async () => {
+      openai.isAvailable = false;
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('not expected');
+      expect(r.errorMessage).toContain('OPENAI_API_KEY');
+      expect(openai.complete).not.toHaveBeenCalled();
+    });
+
+    it('anthropic provider 미가용 (key 없음) → coverletter_draft_v2 호출 시 error', async () => {
+      anthropic.isAvailable = false;
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('not expected');
+      expect(r.errorMessage).toContain('ANTHROPIC_API_KEY');
+    });
   });
 
-  it('OpenAI 에러 → status=error 로그 + errorMessage', async () => {
-    openai.chat.completions.create.mockRejectedValue(
-      new Error('rate limit exceeded'),
-    );
-
-    const result = await service.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 's',
-      userPrompt: 'u',
+  // ── 4. PII 스크럽 ──
+  describe('PII 스크럽 + 본인 이름 블랙리스트', () => {
+    it('system + user prompt 양쪽에 PII 정규식 적용', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'r',
+        promptTokens: 5,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: '시스템 메일 admin@chwippo.com',
+        userPrompt: '내 번호 010-1234-5678',
+      });
+      const passed = openai.complete.mock.calls[0][0] as {
+        systemPrompt: string;
+        userPrompt: string;
+      };
+      expect(passed.systemPrompt).toContain('[REDACTED_EMAIL]');
+      expect(passed.systemPrompt).not.toContain('admin@chwippo.com');
+      expect(passed.userPrompt).toContain('[REDACTED_PHONE]');
+      expect(passed.userPrompt).not.toContain('010-1234-5678');
     });
 
-    expect(result.status).toBe('error');
-    if (result.status === 'ok') throw new Error('not expected');
-    expect(result.errorMessage).toContain('rate limit');
-    expect(logRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'error' }),
-    );
+    it('User.nickname 이 prompt 안에 있으면 [REDACTED_NAME] 치환 후 provider 로 전달', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser({ nickname: '박은빈' }));
+      openai.complete.mockResolvedValue({
+        text: 'r',
+        promptTokens: 5,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: '박은빈 이라고 합니다',
+      });
+      const passed = openai.complete.mock.calls[0][0] as {
+        userPrompt: string;
+      };
+      expect(passed.userPrompt).toContain('[REDACTED_NAME]');
+      expect(passed.userPrompt).not.toContain('박은빈');
+    });
+
+    it('응답에 PII (hallucination) 검출 시 outputRedacted=true 로 audit + 응답 본문 치환', async () => {
+      openai.complete.mockResolvedValue({
+        text: '담당자 010-9999-8888 로 연락하세요',
+        promptTokens: 5,
+        completionTokens: 10,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.text).toContain('[REDACTED_PHONE]');
+      expect(r.text).not.toContain('010-9999-8888');
+      expect(r.outputRedacted).toBe(true);
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ outputRedacted: true }),
+      );
+    });
+
+    it('응답에 PII 없음 → outputRedacted=false', async () => {
+      openai.complete.mockResolvedValue({
+        text: '정상 요약 텍스트',
+        promptTokens: 5,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.outputRedacted).toBe(false);
+    });
   });
 
-  it('OPENAI_CLIENT 가 null 이면 호출 시도 안 하고 error 로 로그', async () => {
-    const mockRepo = mock<Repository<LlmCallLog>>();
-    mockRepo.create.mockImplementation((d) => d as LlmCallLog);
-    mockRepo.save.mockImplementation(async (d) =>
-      makeLog(d as Partial<LlmCallLog>),
-    );
-    const config = mock<ConfigService>();
-    config.get.mockReturnValue('gpt-4o-mini');
-
-    const module = await Test.createTestingModule({
-      providers: [
-        LlmService,
-        { provide: OPENAI_CLIENT, useValue: null },
-        { provide: getRepositoryToken(LlmCallLog), useValue: mockRepo },
-        { provide: ConfigService, useValue: config },
-      ],
-    }).compile();
-
-    const svcNoKey = module.get<LlmService>(LlmService);
-    const result = await svcNoKey.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 's',
-      userPrompt: 'u',
+  // ── 5. input token cap ──
+  describe('input token cap', () => {
+    it('cap 초과 시 blocked_input_cap (note_summary 8K 한도) — provider 미호출', async () => {
+      // chars/3 추정: 30,000자 → 약 10,000 토큰 > 8,000
+      const hugeText = '가'.repeat(30_000);
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: hugeText,
+      });
+      expect(r.status).toBe('blocked_input_cap');
+      if (r.status === 'ok') throw new Error('not expected');
+      expect(r.errorMessage).toContain('입력 토큰');
+      expect(r.errorMessage).toContain('한도');
+      expect(openai.complete).not.toHaveBeenCalled();
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'blocked_input_cap' }),
+      );
     });
 
-    expect(result.status).toBe('error');
-    if (result.status === 'ok') throw new Error('not expected');
-    expect(result.errorMessage).toContain('OPENAI_API_KEY');
+    it('cap 안쪽 길이 → 정상 호출', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'r',
+        promptTokens: 1,
+        completionTokens: 1,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: '짧은 시스템',
+        userPrompt: '짧은 사용자 입력',
+      });
+      expect(r.status).toBe('ok');
+    });
   });
 
-  it('modelTier=heavy → gpt-4o 사용', async () => {
-    openai.chat.completions.create.mockResolvedValue({
-      choices: [{ message: { content: 'x' } }],
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
+  // ── 6. retry_parsing ──
+  describe('callJson retry_parsing', () => {
+    const schema = {
+      name: 'feedback',
+      schema: { type: 'object', properties: { score: { type: 'number' } } },
+    };
+
+    it('callJson 1차 LlmJsonParseError → 1회 재시도 → 성공 시 별도 retry_parsing audit row + ok audit row', async () => {
+      anthropic.callJson
+        .mockRejectedValueOnce(
+          new LlmJsonParseError('anthropic', 'raw garbage', 'parse fail'),
+        )
+        .mockResolvedValueOnce({
+          text: '',
+          json: { score: 7 },
+          promptTokens: 50,
+          completionTokens: 20,
+          finishReason: 'tool_use',
+        });
+
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_feedback',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: schema,
+      });
+
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.json).toEqual({ score: 7 });
+      expect(anthropic.callJson).toHaveBeenCalledTimes(2);
+
+      // 별도 retry_parsing audit row + 성공 audit row 둘 다 저장됨
+      const saveCalls = logRepo.save.mock.calls.map((c) => c[0]);
+      const statuses = saveCalls.map((s) => (s as Partial<LlmCallLog>).status);
+      expect(statuses).toContain('retry_parsing');
+      expect(statuses).toContain('ok');
+
+      // ok 행의 attempts=2
+      const okRow = saveCalls.find(
+        (s) => (s as Partial<LlmCallLog>).status === 'ok',
+      ) as Partial<LlmCallLog>;
+      expect(okRow.attempts).toBe(2);
+
+      // retry_parsing 행은 tokens=0, cost=0 (quota 이중 카운트 방지)
+      const retryRow = saveCalls.find(
+        (s) => (s as Partial<LlmCallLog>).status === 'retry_parsing',
+      ) as Partial<LlmCallLog>;
+      expect(retryRow.promptTokens).toBe(0);
+      expect(retryRow.completionTokens).toBe(0);
+      expect(retryRow.costUsd).toBe('0');
     });
 
-    await service.call({
-      userId: 'u-1',
-      feature: 'coverletter',
-      modelTier: 'heavy',
-      systemPrompt: 's',
-      userPrompt: 'u',
+    it('callJson 2회 모두 실패 → status=error + LlmJsonParseError.message 보존', async () => {
+      anthropic.callJson
+        .mockRejectedValueOnce(
+          new LlmJsonParseError('anthropic', 'r1', 'fail1'),
+        )
+        .mockRejectedValueOnce(
+          new LlmJsonParseError('anthropic', 'r2', 'fail2'),
+        );
+
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_feedback',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: schema,
+      });
+      expect(r.status).toBe('error');
+      expect(anthropic.callJson).toHaveBeenCalledTimes(2);
     });
 
-    expect(openai.chat.completions.create).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'gpt-4o' }),
-    );
+    it('jsonSchema 없으면 complete() 사용 (callJson 미호출)', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'plain',
+        promptTokens: 5,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(openai.complete).toHaveBeenCalled();
+      expect(openai.callJson).not.toHaveBeenCalled();
+    });
   });
 
-  it('응답에 usage 필드 없음 → tokens=0, cost=0 안전 처리', async () => {
-    openai.chat.completions.create.mockResolvedValue({
-      choices: [{ message: { content: 'hi' } }],
-      // usage 없음
+  // ── 7. provider 일반 에러 ──
+  describe('provider error', () => {
+    it('complete() 에러 → status=error + errorMessage 보존 + audit row', async () => {
+      openai.complete.mockRejectedValue(new Error('rate limit exceeded'));
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('not expected');
+      expect(r.errorMessage).toContain('rate limit');
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'error',
+          promptTokens: 0,
+          completionTokens: 0,
+          costUsd: '0',
+        }),
+      );
     });
-
-    const result = await service.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 's',
-      userPrompt: 'u',
-    });
-
-    expect(result.status).toBe('ok');
-    if (result.status !== 'ok') throw new Error('expected ok');
-    expect(result.promptTokens).toBe(0);
-    expect(result.completionTokens).toBe(0);
-    expect(result.costUsd).toBe(0);
   });
 
-  it('응답 content 가 빈 문자열 → text="" + status=ok', async () => {
-    openai.chat.completions.create.mockResolvedValue({
-      choices: [{ message: { content: '' } }],
-      usage: { prompt_tokens: 10, completion_tokens: 0 },
+  // ── 8. audit row 신규 필드 ──
+  describe('audit row 신규 필드', () => {
+    it('정상 호출 → provider/promptHash/promptExcerpt/attempts 기록', async () => {
+      openai.complete.mockResolvedValue({
+        text: '응답',
+        promptTokens: 50,
+        completionTokens: 20,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: '시스템',
+        userPrompt: '사용자 prompt 내용',
+      });
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'openai',
+          promptHash: expect.stringMatching(/^[a-f0-9]{64}$/), // SHA256 64자
+          promptExcerpt: expect.any(String),
+          attempts: 1,
+          outputRedacted: false,
+        }),
+      );
     });
 
-    const result = await service.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 's',
-      userPrompt: 'u',
+    it('promptExcerpt 는 200자 이내 (잘림)', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'r',
+        promptTokens: 1,
+        completionTokens: 1,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'A'.repeat(500),
+      });
+      const saved = logRepo.save.mock.calls[0][0] as Partial<LlmCallLog>;
+      expect(saved.promptExcerpt?.length).toBeLessThanOrEqual(200);
     });
 
-    expect(result.status).toBe('ok');
-    if (result.status !== 'ok') throw new Error('expected ok');
-    expect(result.text).toBe('');
+    it('동일 prompt → promptHash 동일 (재호출 추적용)', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'r',
+        promptTokens: 1,
+        completionTokens: 1,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 'same',
+        userPrompt: 'same',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 'same',
+        userPrompt: 'same',
+      });
+      const hash1 = (logRepo.save.mock.calls[0][0] as Partial<LlmCallLog>)
+        .promptHash;
+      const hash2 = (logRepo.save.mock.calls[1][0] as Partial<LlmCallLog>)
+        .promptHash;
+      expect(hash1).toBe(hash2);
+    });
+
+    it('blocked_consent / blocked_input_cap / preBlocked 행은 promptHash=null (정책)', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser({ aiConsentAt: null }));
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'blocked_consent',
+          promptHash: null,
+          promptExcerpt: null,
+        }),
+      );
+    });
   });
 
-  it('preBlockedReason 없을 때 errorMessage 가 status 값으로 fallback', async () => {
-    const result = await service.call({
-      userId: 'u-1',
-      feature: 'note_summary',
-      systemPrompt: 's',
-      userPrompt: 'u',
-      preBlockedStatus: 'blocked_quota',
-      // preBlockedReason 미지정
+  // ── 9. cost 계산 ──
+  describe('cost 계산', () => {
+    it('정상 호출 → costUsd 가 0 보다 큼 (llm-pricing 매트릭스 적용)', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'r',
+        promptTokens: 10_000,
+        completionTokens: 5_000,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.costUsd).toBeGreaterThan(0);
     });
-    expect(result.status).toBe('blocked_quota');
-    if (result.status === 'ok') throw new Error('not expected');
-    expect(result.errorMessage).toBe('blocked_quota');
   });
 });

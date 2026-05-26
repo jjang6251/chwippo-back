@@ -28,6 +28,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     dashboardConfig: null,
     onboardedAt: null,
     suspendedAt: null,
+    aiConsentAt: null,
+    aiConsentVersion: null,
     ...overrides,
   };
 }
