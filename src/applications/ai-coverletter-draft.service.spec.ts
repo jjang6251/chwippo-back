@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository } from 'typeorm';
+import { AbuserBanService } from '../ai/abuser-ban.service';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { LlmService } from '../ai/llm.service';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
@@ -45,6 +46,7 @@ describe('AiCoverletterDraftService', () => {
   let sourceRefs: jest.Mocked<CoverletterSourceRefsService>;
   let llm: jest.Mocked<LlmService>;
   let myinfo: jest.Mocked<MyinfoService>;
+  let abuserBan: jest.Mocked<AbuserBanService>;
 
   const USER_ID = 'user-1';
   const CL_ID = 'cl-1';
@@ -120,6 +122,10 @@ describe('AiCoverletterDraftService', () => {
     sourceRefs = mock<CoverletterSourceRefsService>();
     llm = mock<LlmService>();
     myinfo = mock<MyinfoService>();
+    abuserBan = mock<AbuserBanService>();
+    // default: 활성 override 없음 (통상 한도 사용) + ban trigger no-op
+    abuserBan.getActiveOverride.mockResolvedValue(null);
+    abuserBan.checkAndBan.mockResolvedValue({ banned: false });
 
     // defaults
     sourceRefs.assertOwnsCoverletter.mockResolvedValue(makeCl());
@@ -158,6 +164,7 @@ describe('AiCoverletterDraftService', () => {
         { provide: CoverletterSourceRefsService, useValue: sourceRefs },
         { provide: LlmService, useValue: llm },
         { provide: MyinfoService, useValue: myinfo },
+        { provide: AbuserBanService, useValue: abuserBan },
       ],
     }).compile();
     service = module.get<AiCoverletterDraftService>(AiCoverletterDraftService);
@@ -502,7 +509,55 @@ describe('AiCoverletterDraftService', () => {
     expect(result.reason).toContain('잠시 후');
   });
 
-  // ── 6. 사용자 입력 격리 (PR 0 의 LlmService.call 가 PII·consent gate 자동 적용 — 여기선 LlmService 호출만 검증) ──
+  // ── 6. Phase 3: AbuserBanService quota override + ban trigger ──
+
+  it('Phase 3: active override dailyCapOverride=5 → 일 한도 5 로 축소 (통상 3 보다 크지만 min 적용)', async () => {
+    // override 가 dailyCapOverride=5 → coverletter_draft_v2 통상 일3 보다 큼 → 통상 한도가 더 작으니 min(3, 5)=3 으로 통상값 유지
+    abuserBan.getActiveOverride.mockResolvedValue({
+      userId: USER_ID,
+      dailyCapOverride: 5,
+      validUntil: new Date(Date.now() + 86_400_000),
+      reason: 'auto_ban_3_consecutive_days',
+    } as unknown as Awaited<ReturnType<typeof abuserBan.getActiveOverride>>);
+    // 통상 한도(3) 도달 시뮬
+    logCallRepo.count.mockResolvedValueOnce(
+      COVERLETTER_AI_LIMITS.DRAFT_PER_DAY,
+    );
+    llm.call.mockResolvedValue({
+      status: 'blocked_quota',
+      text: null,
+      errorMessage: '오늘',
+      callLogId: 'log-b',
+    });
+    const result = await service.generate(USER_ID, CL_ID, {});
+    expect(result.status).toBe('blocked');
+    // reason 에 min(3, 5)=3 표시
+    expect(result.reason).toContain('3회');
+  });
+
+  it('Phase 3: 일 한도 도달 시 abuserBan.checkAndBan 호출 (fire & forget, draft 진행은 차단)', async () => {
+    abuserBan.getActiveOverride.mockResolvedValue(null);
+    logCallRepo.count.mockResolvedValueOnce(
+      COVERLETTER_AI_LIMITS.DRAFT_PER_DAY,
+    );
+    llm.call.mockResolvedValue({
+      status: 'blocked_quota',
+      text: null,
+      errorMessage: '오늘',
+      callLogId: 'log-b',
+    });
+    await service.generate(USER_ID, CL_ID, {});
+    // checkAndBan 이 fire & forget 으로 호출됨 (void Promise) — call 자체 검증
+    // 비동기 fire-and-forget 의 보장이 어렵지만 호출은 시도되어야 함
+    await new Promise((r) => setTimeout(r, 10));
+    expect(abuserBan.checkAndBan).toHaveBeenCalledWith(
+      USER_ID,
+      'coverletter_draft_v2',
+      COVERLETTER_AI_LIMITS.DRAFT_PER_DAY,
+    );
+  });
+
+  // ── 7. 사용자 입력 격리 (PR 0 의 LlmService.call 가 PII·consent gate 자동 적용 — 여기선 LlmService 호출만 검증) ──
 
   it('LlmService.call 호출 시 resourceType/resourceId 정확히 전달 (audit 추적)', async () => {
     llm.call.mockResolvedValue({

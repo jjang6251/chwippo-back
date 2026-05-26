@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, IsNull, Repository } from 'typeorm';
+import { AbuserBanService } from '../ai/abuser-ban.service';
 import { LlmService } from '../ai/llm.service';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { MyinfoService } from '../myinfo/myinfo.service';
@@ -123,6 +124,7 @@ export class AiCoverletterDraftService {
     private readonly llm: LlmService,
     @Inject(forwardRef(() => MyinfoService))
     private readonly myinfo: MyinfoService,
+    private readonly abuserBan: AbuserBanService,
   ) {}
 
   async generate(
@@ -325,7 +327,10 @@ export class AiCoverletterDraftService {
 
   /**
    * llm_call_logs COUNT 기반 quota 체크. NoteSummary 와 동일 패턴.
-   * Phase 3 에서 UserAiQuota.dailyCapOverride 와 통합 예정.
+   *
+   * **Phase 3 통합**:
+   * - `user_ai_quotas.daily_cap_override` 활성 시 (auto-ban 등) → perDay 를 override 값으로 강제 축소
+   * - 도달 시 `AbuserBanService.checkAndBan` 호출 (3일 연속 도달 시 ban 발동)
    */
   private async checkQuota(
     userId: string,
@@ -336,6 +341,13 @@ export class AiCoverletterDraftService {
     perDay: number,
     perMonth: number,
   ): Promise<{ blocked: boolean; reason?: string }> {
+    // Phase 3: active override (auto-ban 등) 가 있으면 perDay 축소
+    const override = await this.abuserBan.getActiveOverride(userId);
+    const effectiveDayLimit =
+      override?.dailyCapOverride != null
+        ? Math.min(perDay, override.dailyCapOverride)
+        : perDay;
+
     const now = new Date();
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -351,10 +363,19 @@ export class AiCoverletterDraftService {
     const dayCount = await this.logRepo.count({
       where: { ...baseWhere, createdAt: Between(dayStart, now) },
     });
-    if (dayCount >= perDay) {
+    if (dayCount >= effectiveDayLimit) {
+      // Phase 3: 도달 → ban trigger 시도 (3일 연속이면 발동, 아니면 noop)
+      // best-effort — fire & forget (실패해도 quota blocked 반환은 유지)
+      void this.abuserBan
+        .checkAndBan(userId, feature, effectiveDayLimit)
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `AbuserBan check 실패 (user=${userId}, feature=${feature}): ${(err as Error).message}`,
+          ),
+        );
       return {
         blocked: true,
-        reason: `오늘 ${feature === 'coverletter_recommend' ? '추천' : '자소서 작성'} ${perDay}회를 모두 사용했어요. 내일 다시 시도해 주세요.`,
+        reason: `오늘 ${feature === 'coverletter_recommend' ? '추천' : '자소서 작성'} ${effectiveDayLimit}회를 모두 사용했어요. 내일 다시 시도해 주세요.`,
       };
     }
     const monthCount = await this.logRepo.count({
