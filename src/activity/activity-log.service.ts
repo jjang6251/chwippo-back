@@ -93,7 +93,7 @@ export class ActivityLogService {
     const refCounts = await this.countLogRefs(log.id);
     if (refCounts.total > 0) {
       throw new ConflictException(
-        `이 기록은 자소서 ${refCounts.cover}건·면접 ${refCounts.interview}세션이 참조 중이에요. 자소서에서 먼저 제거하거나 보관함으로 이동하세요.`,
+        `이 기록은 자소서 ${refCounts.cover}건·면접 세션 ${refCounts.interviewSessions}개·면접 질문 ${refCounts.interviewQuestions}개가 참조 중이에요. 자소서·면접에서 먼저 제거하거나 보관함으로 이동하세요.`,
       );
     }
     await this.logRepo.delete({ id: log.id });
@@ -123,25 +123,50 @@ export class ActivityLogService {
 
   /**
    * F6 source_refs 카운트. 테이블 없으면 0.
-   * **PR 1 변경**: coverletter_source_refs 의 컬럼명은 `source_log_id` (F5 임시 placeholder `log_id` 가 아님).
-   * interview_source_refs 는 PR 2 에서 추가 — 아직 테이블 미존재, tableExists 가드로 안전.
+   * - **자소서** (PR 1): `coverletter_source_refs.source_log_id`
+   * - **면접 세션 추가 로그** (PR 2): `interview_prep_sessions.extra_log_ids` JSONB `@>`
+   * - **면접 질문 답변 근거 로그** (PR 2): `interview_prep_questions.source_log_ids` JSONB `@>`
+   *
+   * 각 테이블 GIN 인덱스로 ≤10ms (PR 2 마이그레이션 idx_ips_extra_log_ids_gin · idx_ipq_source_log_ids_gin).
    */
-  async countLogRefs(
-    logId: string,
-  ): Promise<{ cover: number; interview: number; total: number }> {
+  async countLogRefs(logId: string): Promise<{
+    cover: number;
+    interviewSessions: number;
+    interviewQuestions: number;
+    interview: number;
+    total: number;
+  }> {
     const cover = (await this.tableExists('coverletter_source_refs'))
       ? await this.countRows(
           `SELECT COUNT(*) AS n FROM coverletter_source_refs WHERE source_log_id = $1`,
           [logId],
         )
       : 0;
-    const interview = (await this.tableExists('interview_source_refs'))
+    const jsonbArg = JSON.stringify([logId]);
+    const interviewSessions = (await this.tableExists(
+      'interview_prep_sessions',
+    ))
       ? await this.countRows(
-          `SELECT COUNT(*) AS n FROM interview_source_refs WHERE log_id = $1`,
-          [logId],
+          `SELECT COUNT(*) AS n FROM interview_prep_sessions WHERE extra_log_ids @> $1::jsonb`,
+          [jsonbArg],
         )
       : 0;
-    return { cover, interview, total: cover + interview };
+    const interviewQuestions = (await this.tableExists(
+      'interview_prep_questions',
+    ))
+      ? await this.countRows(
+          `SELECT COUNT(*) AS n FROM interview_prep_questions WHERE source_log_ids @> $1::jsonb`,
+          [jsonbArg],
+        )
+      : 0;
+    const interview = interviewSessions + interviewQuestions;
+    return {
+      cover,
+      interviewSessions,
+      interviewQuestions,
+      interview,
+      total: cover + interview,
+    };
   }
 
   private async countRows(sql: string, params: unknown[]): Promise<number> {

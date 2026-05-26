@@ -136,18 +136,33 @@ export class ActivityService {
     return Number(rows?.[0]?.n ?? 0);
   }
 
-  /** log 단위 source_refs 합산. 테이블 없으면 0 */
+  /**
+   * log 단위 source_refs 합산. 테이블 없으면 0.
+   * - **자소서** (PR 1): `coverletter_source_refs.source_log_id = ANY($logIds)`
+   * - **면접 세션 추가 로그** (PR 2): `interview_prep_sessions.extra_log_ids` JSONB `?|` (any of array)
+   * - **면접 질문 답변 근거 로그** (PR 2): `interview_prep_questions.source_log_ids` JSONB `?|`
+   */
   private async countLogRefs(logIds: string[]): Promise<number> {
+    if (logIds.length === 0) return 0;
     let total = 0;
-    // PR 1: coverletter_source_refs 컬럼명 = source_log_id / interview_source_refs (PR 2) = log_id placeholder
-    const tableColumns: Array<{ table: string; column: string }> = [
-      { table: 'coverletter_source_refs', column: 'source_log_id' },
-      { table: 'interview_source_refs', column: 'log_id' },
-    ];
-    for (const { table, column } of tableColumns) {
-      if (!(await this.tableExists(table))) continue;
+    if (await this.tableExists('coverletter_source_refs')) {
       const rows: Array<{ n: string }> = await this.dataSource.query(
-        `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ANY($1::uuid[])`,
+        `SELECT COUNT(*) AS n FROM coverletter_source_refs WHERE source_log_id = ANY($1::uuid[])`,
+        [logIds],
+      );
+      total += Number(rows?.[0]?.n ?? 0);
+    }
+    // jsonb ?| operator — array 의 어떤 element 가 logIds 중 하나라도 포함되면 match
+    if (await this.tableExists('interview_prep_sessions')) {
+      const rows: Array<{ n: string }> = await this.dataSource.query(
+        `SELECT COUNT(*) AS n FROM interview_prep_sessions WHERE extra_log_ids ?| $1::text[]`,
+        [logIds],
+      );
+      total += Number(rows?.[0]?.n ?? 0);
+    }
+    if (await this.tableExists('interview_prep_questions')) {
+      const rows: Array<{ n: string }> = await this.dataSource.query(
+        `SELECT COUNT(*) AS n FROM interview_prep_questions WHERE source_log_ids ?| $1::text[]`,
         [logIds],
       );
       total += Number(rows?.[0]?.n ?? 0);

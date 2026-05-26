@@ -16,6 +16,7 @@ import { CalendarModule } from './calendar/calendar.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { ActivityModule } from './activity/activity.module';
 import { AiModule } from './ai/ai.module';
+import { InterviewPrepModule } from './interview-prep/interview-prep.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -38,6 +39,7 @@ import { HealthController } from './health/health.controller';
     AnnouncementsModule,
     ActivityModule,
     AiModule,
+    InterviewPrepModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

@@ -344,16 +344,17 @@ describe('ActivityLogService', () => {
       expect(logRepo.delete).toHaveBeenCalledWith({ id: 'log-1' });
     });
 
-    it('source_refs ≥1 (F6 시나리오 stub) → Conflict + 카운트 메시지', async () => {
+    it('source_refs ≥1 (F6 PR 1·2 시나리오) → Conflict + 카운트 메시지 (자소서·면접 세션·면접 질문 분리)', async () => {
       logRepo.findOne.mockResolvedValue(makeLog());
       dataSource.query.mockImplementation(async (sql: string) => {
         if (sql.includes('information_schema')) return [{ exists: true }];
         if (sql.includes('coverletter_source_refs')) return [{ n: '2' }];
-        if (sql.includes('interview_source_refs')) return [{ n: '1' }];
+        if (sql.includes('interview_prep_sessions')) return [{ n: '1' }];
+        if (sql.includes('interview_prep_questions')) return [{ n: '3' }];
         return [];
       });
       await expect(service.remove('user-1', 'log-1')).rejects.toThrow(
-        /자소서 2건.*면접 1세션/,
+        /자소서 2건.*면접 세션 1개.*면접 질문 3개/,
       );
     });
 
