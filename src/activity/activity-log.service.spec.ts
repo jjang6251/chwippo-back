@@ -363,6 +363,29 @@ describe('ActivityLogService', () => {
         NotFoundException,
       );
     });
+
+    it('PR 1: countLogRefs 의 coverletter_source_refs SQL 이 source_log_id 컬럼명 사용 (마이그레이션 정합성)', async () => {
+      logRepo.findOne.mockResolvedValue(makeLog());
+      logRepo.delete.mockResolvedValue({ raw: [], affected: 1 });
+      const sqls: string[] = [];
+      dataSource.query.mockImplementation(async (sql: string) => {
+        sqls.push(sql);
+        if (sql.includes('information_schema')) return [{ exists: true }];
+        return [{ n: '0' }];
+      });
+      await service.remove('user-1', 'log-1');
+      expect(
+        sqls.some(
+          (s) =>
+            s.includes('coverletter_source_refs') &&
+            s.includes('source_log_id'),
+        ),
+      ).toBe(true);
+      // 구 컬럼명 (단순 'log_id') 으로 coverletter 테이블 조회하면 안 됨 (회귀 차단)
+      expect(
+        sqls.some((s) => s.includes('coverletter_source_refs WHERE log_id')),
+      ).toBe(false);
+    });
   });
 
   describe('엣지', () => {

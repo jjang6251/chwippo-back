@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
+import type { DataSource } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
 import { Activity } from './entities/activity.entity';
@@ -56,6 +57,11 @@ describe('ActivityReflectionService', () => {
   beforeEach(async () => {
     const mockActivityRepo = mock<Repository<Activity>>();
     const mockRefRepo = mock<Repository<ActivityReflection>>();
+    // PR 1: countReflectionRefs 가 dataSource.query 로 coverletter_source_refs COUNT.
+    // dev/CI DB 에 테이블 있으므로 tableExists=true 분기 + count 0 반환 simulation.
+    const mockDataSource = {
+      query: jest.fn().mockResolvedValue([{ exists: false, n: '0' }]),
+    } as unknown as DataSource;
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ActivityReflectionService,
@@ -64,6 +70,7 @@ describe('ActivityReflectionService', () => {
           provide: getRepositoryToken(ActivityReflection),
           useValue: mockRefRepo,
         },
+        { provide: getDataSourceToken(), useValue: mockDataSource },
       ],
     }).compile();
     service = module.get<ActivityReflectionService>(ActivityReflectionService);
@@ -216,18 +223,62 @@ describe('ActivityReflectionService', () => {
     });
   });
 
-  describe('remove', () => {
-    it('정상 삭제', async () => {
+  describe('remove (PR 1: source_refs guard 신규)', () => {
+    it('정상 삭제 — coverletter_source_refs 테이블 없거나 COUNT 0', async () => {
       refRepo.findOne.mockResolvedValue(makeRef());
       refRepo.remove.mockResolvedValue(makeRef());
+      // 기본 mockDataSource 가 항상 빈 결과 → tableExists false → 통과
       await service.remove('user-1', 'ref-1');
       expect(refRepo.remove).toHaveBeenCalled();
     });
-    it('다른 user remove → NotFound', async () => {
+
+    it('다른 user reflection remove → NotFound', async () => {
       refRepo.findOne.mockResolvedValue(null);
       await expect(service.remove('user-1', 'x')).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    it('PR 1: coverletter_source_refs.source_reflection_id 참조 ≥1 → Conflict + "자소서 N건" 메시지', async () => {
+      refRepo.findOne.mockResolvedValue(makeRef());
+      // DataSource mock 을 새 instance 로 교체 (이 케이스 한정)
+      const queryFn = jest.fn(async (sql: string) => {
+        if (sql.includes('information_schema')) return [{ exists: true }];
+        if (sql.includes('source_reflection_id')) return [{ n: '3' }];
+        return [];
+      });
+      // service 내부 dataSource 를 직접 spy 로 교체 (jest-mock-extended 한계 우회)
+      const ds = (service as unknown as { dataSource: { query: jest.Mock } })
+        .dataSource;
+      ds.query.mockImplementation(queryFn);
+
+      await expect(service.remove('user-1', 'ref-1')).rejects.toThrow(
+        /자소서 3건/,
+      );
+      expect(refRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('PR 1: countReflectionRefs SQL 이 source_reflection_id 컬럼명 사용 (마이그레이션 정합성)', async () => {
+      refRepo.findOne.mockResolvedValue(makeRef());
+      const queryFn = jest.fn(async (sql: string) => {
+        if (sql.includes('information_schema')) return [{ exists: true }];
+        return [{ n: '0' }];
+      });
+      const ds = (service as unknown as { dataSource: { query: jest.Mock } })
+        .dataSource;
+      ds.query.mockImplementation(queryFn);
+
+      await service.countReflectionRefs('refl-1');
+      // SQL 에 정확한 컬럼명 포함 검증 (오타·구 컬럼명 회귀 차단)
+      const calls = ds.query.mock.calls;
+      const sqls = calls.map((c) => String(c[0]));
+      expect(
+        sqls.some(
+          (s) =>
+            s.includes('coverletter_source_refs') &&
+            s.includes('source_reflection_id'),
+        ),
+      ).toBe(true);
     });
   });
 });

@@ -139,10 +139,15 @@ export class ActivityService {
   /** log 단위 source_refs 합산. 테이블 없으면 0 */
   private async countLogRefs(logIds: string[]): Promise<number> {
     let total = 0;
-    for (const table of ['coverletter_source_refs', 'interview_source_refs']) {
+    // PR 1: coverletter_source_refs 컬럼명 = source_log_id / interview_source_refs (PR 2) = log_id placeholder
+    const tableColumns: Array<{ table: string; column: string }> = [
+      { table: 'coverletter_source_refs', column: 'source_log_id' },
+      { table: 'interview_source_refs', column: 'log_id' },
+    ];
+    for (const { table, column } of tableColumns) {
       if (!(await this.tableExists(table))) continue;
       const rows: Array<{ n: string }> = await this.dataSource.query(
-        `SELECT COUNT(*) AS n FROM ${table} WHERE log_id = ANY($1::uuid[])`,
+        `SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ANY($1::uuid[])`,
         [logIds],
       );
       total += Number(rows?.[0]?.n ?? 0);

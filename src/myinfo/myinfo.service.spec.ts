@@ -731,4 +731,139 @@ describe('MyinfoService', () => {
       expect(transactionSpy).toHaveBeenCalled();
     });
   });
+
+  // ── F6 PR 1 — AI 컨텍스트 빌더용 PII-safe dump ──
+  describe('getSafeDumpForAi (PR 1: ADR-019·027)', () => {
+    it('모든 entity 비어있음 → 모든 섹션 빈 배열 (user-profile 자체 조회 0)', async () => {
+      coverRepo.findOne.mockResolvedValue(null);
+      coverCustomRepo.find.mockResolvedValue([]);
+      expRepo.find.mockResolvedValue([]);
+      educationRepo.find.mockResolvedValue([]);
+      certRepo.find.mockResolvedValue([]);
+      langCertRepo.find.mockResolvedValue([]);
+      awardRepo.find.mockResolvedValue([]);
+
+      const dump = await service.getSafeDumpForAi(USER_ID);
+      expect(dump).toEqual({
+        coverletterDrafts: [],
+        experiences: [],
+        educations: [],
+        certs: [],
+        awards: [],
+      });
+      // user-profile (PII) 은 조회 자체 0
+      expect(profileRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('coverletter 6 카테고리 모두 있음 + custom 1개 → 7개 draftItems 반환', async () => {
+      coverRepo.findOne.mockResolvedValue({
+        user_id: USER_ID,
+        personality: '성격',
+        background: '배경',
+        job_competency: '역량',
+        own_strength: '강점',
+        collaboration: '협업',
+        challenge: '도전',
+        updated_at: new Date(),
+      });
+      coverCustomRepo.find.mockResolvedValue([
+        {
+          id: 'cc-1',
+          user_id: USER_ID,
+          label: '맞춤 항목',
+          content: '맞춤 답변',
+          order_index: 0,
+        },
+      ]);
+      expRepo.find.mockResolvedValue([]);
+      educationRepo.find.mockResolvedValue([]);
+      certRepo.find.mockResolvedValue([]);
+      langCertRepo.find.mockResolvedValue([]);
+      awardRepo.find.mockResolvedValue([]);
+
+      const dump = await service.getSafeDumpForAi(USER_ID);
+      expect(dump.coverletterDrafts).toHaveLength(7);
+      expect(dump.coverletterDrafts[0].question).toBe('성격 장단점');
+      expect(dump.coverletterDrafts[6].question).toBe('맞춤 항목');
+    });
+
+    it('coverletter 일부 컬럼이 빈 문자열/null → 해당 항목 자동 제외 (trim 검증)', async () => {
+      coverRepo.findOne.mockResolvedValue({
+        user_id: USER_ID,
+        personality: '   ', // 공백만
+        background: '실제 내용',
+        job_competency: '',
+        own_strength: null as unknown as string,
+        collaboration: null as unknown as string,
+        challenge: null as unknown as string,
+        updated_at: new Date(),
+      });
+      coverCustomRepo.find.mockResolvedValue([]);
+      expRepo.find.mockResolvedValue([]);
+      educationRepo.find.mockResolvedValue([]);
+      certRepo.find.mockResolvedValue([]);
+      langCertRepo.find.mockResolvedValue([]);
+      awardRepo.find.mockResolvedValue([]);
+
+      const dump = await service.getSafeDumpForAi(USER_ID);
+      expect(dump.coverletterDrafts).toHaveLength(1);
+      expect(dump.coverletterDrafts[0].answer).toBe('실제 내용');
+    });
+
+    it('cert + langCert 합쳐 certs 배열 (langCert.cert_type → name 매핑)', async () => {
+      coverRepo.findOne.mockResolvedValue(null);
+      coverCustomRepo.find.mockResolvedValue([]);
+      expRepo.find.mockResolvedValue([]);
+      educationRepo.find.mockResolvedValue([]);
+      certRepo.find.mockResolvedValue([
+        {
+          user_id: USER_ID,
+          name: 'AWS SAA',
+        } as Cert,
+      ]);
+      langCertRepo.find.mockResolvedValue([
+        {
+          user_id: USER_ID,
+          cert_type: 'TOEIC',
+          score_grade: '900',
+        } as LanguageCert,
+      ]);
+      awardRepo.find.mockResolvedValue([]);
+
+      const dump = await service.getSafeDumpForAi(USER_ID);
+      expect(dump.certs).toEqual([
+        { name: 'AWS SAA', score: null },
+        { name: 'TOEIC', score: '900' },
+      ]);
+    });
+
+    it('award.award_name 우선, 없으면 contest_name fallback', async () => {
+      coverRepo.findOne.mockResolvedValue(null);
+      coverCustomRepo.find.mockResolvedValue([]);
+      expRepo.find.mockResolvedValue([]);
+      educationRepo.find.mockResolvedValue([]);
+      certRepo.find.mockResolvedValue([]);
+      langCertRepo.find.mockResolvedValue([]);
+      awardRepo.find.mockResolvedValue([
+        {
+          user_id: USER_ID,
+          award_name: '대상',
+          contest_name: '해커톤',
+          org: 'NIPA',
+        } as Award,
+        {
+          user_id: USER_ID,
+          award_name: null,
+          contest_name: '경진대회',
+          org: null,
+        } as unknown as Award,
+      ]);
+
+      const dump = await service.getSafeDumpForAi(USER_ID);
+      expect(dump.awards).toEqual([
+        { name: '대상', org: 'NIPA' },
+        { name: '경진대회', org: null },
+      ]);
+    });
+  });
 });

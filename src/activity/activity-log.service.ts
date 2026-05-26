@@ -121,13 +121,17 @@ export class ActivityLogService {
     return activity;
   }
 
-  /** F6 source_refs 카운트. 테이블 없으면 0 */
+  /**
+   * F6 source_refs 카운트. 테이블 없으면 0.
+   * **PR 1 변경**: coverletter_source_refs 의 컬럼명은 `source_log_id` (F5 임시 placeholder `log_id` 가 아님).
+   * interview_source_refs 는 PR 2 에서 추가 — 아직 테이블 미존재, tableExists 가드로 안전.
+   */
   async countLogRefs(
     logId: string,
   ): Promise<{ cover: number; interview: number; total: number }> {
     const cover = (await this.tableExists('coverletter_source_refs'))
       ? await this.countRows(
-          `SELECT COUNT(*) AS n FROM coverletter_source_refs WHERE log_id = $1`,
+          `SELECT COUNT(*) AS n FROM coverletter_source_refs WHERE source_log_id = $1`,
           [logId],
         )
       : 0;
