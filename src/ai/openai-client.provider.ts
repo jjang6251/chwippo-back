@@ -14,6 +14,8 @@ export const openaiClientProvider: Provider = {
   useFactory: (config: ConfigService): OpenAI | null => {
     const apiKey = config.get<string>('OPENAI_API_KEY');
     if (!apiKey) return null;
-    return new OpenAI({ apiKey });
+    // PR 0 정책 — SDK transport retry 차단 (callJson retry 와 곱셈 방지).
+    // ModerationService 전용 클라이언트지만 일관성 위해 동일 적용
+    return new OpenAI({ apiKey, maxRetries: 0, timeout: 30_000 });
   },
 };

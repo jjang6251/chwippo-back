@@ -149,6 +149,7 @@ describe('NoteSummaryService', () => {
         costUsd: 0.001,
         latencyMs: 100,
         callLogId: 'call-1',
+        outputRedacted: false,
       });
 
       const result = await service.summarize('user-1', 'log-1');
@@ -211,6 +212,7 @@ describe('NoteSummaryService', () => {
         costUsd: 0.001,
         latencyMs: 100,
         callLogId: 'c',
+        outputRedacted: false,
       });
 
       const result = await service.summarize('user-1', 'log-1');
@@ -245,6 +247,7 @@ describe('NoteSummaryService', () => {
         costUsd: 0.001,
         latencyMs: 100,
         callLogId: 'c',
+        outputRedacted: false,
       });
 
       const result = await service.summarize('user-1', 'log-1', {
@@ -365,6 +368,7 @@ describe('NoteSummaryService', () => {
         costUsd: 0.0001,
         latencyMs: 100,
         callLogId: 'c',
+        outputRedacted: false,
       });
 
       const result = await service.summarize('user-1', 'log-1');
@@ -388,6 +392,7 @@ describe('NoteSummaryService', () => {
         costUsd: 0.0001,
         latencyMs: 50,
         callLogId: 'c',
+        outputRedacted: false,
       });
 
       const [r1, r2] = await Promise.all([

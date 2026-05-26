@@ -42,4 +42,21 @@ export class User {
 
   @Column({ name: 'suspended_at', type: 'timestamptz', nullable: true })
   suspendedAt: Date | null;
+
+  /**
+   * PR 0 — AI 사용 별도 동의 시점 (개인정보보호법 26조 — OpenAI·Anthropic 미국 소재 처리위탁).
+   * NULL → LlmService 진입점에서 `blocked_consent` 반환. 프론트가 모달 노출 후 동의.
+   * **F5 NoteSummary 기존 사용자도 NULL → 재동의 트리거**.
+   */
+  @Column({ name: 'ai_consent_at', type: 'timestamptz', nullable: true })
+  aiConsentAt: Date | null;
+
+  /** PR 0 — 동의 버전 ('v1' 등). 약관 갱신 시 강제 재동의 (저장된 version 과 현재 version 비교) */
+  @Column({
+    name: 'ai_consent_version',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  aiConsentVersion: string | null;
 }

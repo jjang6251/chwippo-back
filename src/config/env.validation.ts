@@ -72,4 +72,11 @@ export const envValidationSchema = Joi.object({
   }),
   OPENAI_MODEL_LIGHT: Joi.string().default('gpt-4o-mini'),
   OPENAI_MODEL_HEAVY: Joi.string().default('gpt-4o'),
+
+  // Anthropic (PR 0 — 자소서 등 한국어 중심 feature 용)
+  // dev 에선 optional (key 없으면 isAvailable=false 로 fallback). prod 도 optional —
+  // OpenAI 만으로 운영 시작해도 동작. Anthropic feature 호출 시 blocked_provider_unavailable 처리
+  ANTHROPIC_API_KEY: Joi.string().allow('').optional(),
+  ANTHROPIC_MODEL_LIGHT: Joi.string().default('claude-haiku-4-5-20251001'),
+  ANTHROPIC_MODEL_HEAVY: Joi.string().default('claude-sonnet-4-6'),
 });
