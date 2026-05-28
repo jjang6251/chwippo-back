@@ -1,13 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
 import { AdminAiUsageService } from './admin-ai-usage.service';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 
 describe('AdminAiUsageService', () => {
   let service: AdminAiUsageService;
   let repo: jest.Mocked<Repository<LlmCallLog>>;
+  let dataSource: jest.Mocked<DataSource>;
 
   function makeQb<T>(
     raws: Array<T> = [],
@@ -19,6 +20,7 @@ describe('AdminAiUsageService', () => {
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       groupBy: jest.fn().mockReturnThis(),
+      addGroupBy: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue(raws),
       getRawOne: jest.fn().mockResolvedValue(single),
@@ -28,14 +30,17 @@ describe('AdminAiUsageService', () => {
 
   beforeEach(async () => {
     const mockRepo = mock<Repository<LlmCallLog>>();
+    const mockDs = mock<DataSource>();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminAiUsageService,
         { provide: getRepositoryToken(LlmCallLog), useValue: mockRepo },
+        { provide: DataSource, useValue: mockDs },
       ],
     }).compile();
     service = module.get<AdminAiUsageService>(AdminAiUsageService);
     repo = module.get(getRepositoryToken(LlmCallLog));
+    dataSource = module.get(DataSource);
   });
 
   it('overview: total + byFeature + byStatus 집계', async () => {
@@ -142,5 +147,140 @@ describe('AdminAiUsageService', () => {
     expect(result.totalCostUsd).toBe(0);
     expect(result.byFeature).toEqual([]);
     expect(result.byStatus).toEqual([]);
+  });
+
+  // ── F6 PR 2 Phase 5.3 — v2 메트릭 ──
+
+  describe('byModel (provider × model 비용)', () => {
+    it('정상 집계 + cost desc', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([
+          {
+            provider: 'openai',
+            model: 'gpt-4o',
+            calls: '50',
+            cost: '0.8',
+          },
+          {
+            provider: 'anthropic',
+            model: 'claude-haiku-4-5',
+            calls: '200',
+            cost: '0.2',
+          },
+        ]),
+      );
+      const result = await service.byModel({});
+      expect(result).toHaveLength(2);
+      expect(result[0].provider).toBe('openai');
+      expect(result[0].costUsd).toBe(0.8);
+    });
+
+    it('feature 필터 적용', async () => {
+      const qb = makeQb([]);
+      repo.createQueryBuilder.mockReturnValue(qb);
+      await service.byModel({ feature: 'company_research' });
+      expect(qb.andWhere).toHaveBeenCalledWith('l.feature = :feature', {
+        feature: 'company_research',
+      });
+    });
+
+    it('0건 → 빈 배열', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(makeQb([]));
+      const result = await service.byModel({});
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('byHour (KST hour bucket)', () => {
+    it('KST timezone 적용된 SQL 생성', async () => {
+      const qb = makeQb([]);
+      repo.createQueryBuilder.mockReturnValue(qb);
+      await service.byHour({});
+      expect(qb.select).toHaveBeenCalledWith(
+        expect.stringContaining("AT TIME ZONE 'Asia/Seoul'"),
+        'hour',
+      );
+    });
+
+    it('정상 집계 + Date → ISO string 변환', async () => {
+      const sampleDate = new Date('2026-05-28T03:00:00Z');
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([{ hour: sampleDate, calls: '10', cost: '0.05' }]),
+      );
+      const result = await service.byHour({});
+      expect(result[0].hour).toBe(sampleDate.toISOString());
+      expect(result[0].calls).toBe(10);
+    });
+
+    it('hour 가 string 그대로 와도 안전 처리', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([{ hour: '2026-05-28T03:00:00Z', calls: '1', cost: '0' }]),
+      );
+      const result = await service.byHour({});
+      expect(typeof result[0].hour).toBe('string');
+    });
+  });
+
+  describe('hallucinationStats (PII redacted 비율)', () => {
+    it('정상 집계 + ratio 계산', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([
+          { feature: 'note_summary', total: '100', redacted: '5' },
+          { feature: 'coverletter_draft_v2', total: '50', redacted: '0' },
+        ]),
+      );
+      const result = await service.hallucinationStats({});
+      expect(result[0].ratio).toBeCloseTo(0.05);
+      expect(result[1].ratio).toBe(0);
+    });
+
+    it('total=0 → ratio=0 safe (분모 0)', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([{ feature: 'note_summary', total: '0', redacted: '0' }]),
+      );
+      const result = await service.hallucinationStats({});
+      expect(result[0].ratio).toBe(0);
+    });
+  });
+
+  describe('cacheHitRate (note_summary + company_research)', () => {
+    it('두 cache 통합 응답', async () => {
+      (dataSource.query as jest.Mock)
+        .mockResolvedValueOnce([{ total: '100', with_summary: '40' }])
+        .mockResolvedValueOnce([{ rows: '10', total_hits: '50' }]);
+      const result = await service.cacheHitRate();
+      expect(result.noteSummary.ratio).toBe(0.4);
+      expect(result.companyResearch.avgHitsPerRow).toBe(5);
+    });
+
+    it('0건 → ratio·avg 모두 0 safe', async () => {
+      (dataSource.query as jest.Mock)
+        .mockResolvedValueOnce([{ total: '0', with_summary: '0' }])
+        .mockResolvedValueOnce([{ rows: '0', total_hits: '0' }]);
+      const result = await service.cacheHitRate();
+      expect(result.noteSummary.ratio).toBe(0);
+      expect(result.companyResearch.avgHitsPerRow).toBe(0);
+    });
+  });
+
+  describe('monthEstimate', () => {
+    it('누적 / 경과일 × 31일 추정', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([], { cost: '10.00' }),
+      );
+      const result = await service.monthEstimate();
+      expect(result.cumulativeCostUsd).toBe(10);
+      expect(result.daysElapsed).toBeGreaterThanOrEqual(1);
+      expect(result.estimatedMonthEndUsd).toBeGreaterThanOrEqual(
+        result.cumulativeCostUsd,
+      );
+    });
+
+    it('누적 0 → 추정도 0 safe', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(makeQb([], { cost: '0' }));
+      const result = await service.monthEstimate();
+      expect(result.cumulativeCostUsd).toBe(0);
+      expect(result.estimatedMonthEndUsd).toBe(0);
+    });
   });
 });

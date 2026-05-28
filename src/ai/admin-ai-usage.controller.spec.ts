@@ -30,7 +30,16 @@ describe('AdminAiUsageController — admin 권한 가드', () => {
 
   describe('method 레벨', () => {
     // 모든 endpoint 가 admin-only — class 레벨 @Roles 상속 보장 (override 없어야)
-    const methods = ['overview', 'byUser', 'userDetail'] as const;
+    const methods = [
+      'overview',
+      'byUser',
+      'userDetail',
+      'byModel',
+      'byHour',
+      'hallucination',
+      'cacheHit',
+      'monthEstimate',
+    ] as const;
     it.each(methods)('%s — class 레벨 @Roles("admin") 가 적용된다', (m) => {
       const ctorRoles = reflector.get<string[]>(
         ROLES_KEY,
