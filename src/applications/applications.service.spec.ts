@@ -344,36 +344,46 @@ describe('ApplicationsService', () => {
 
   // ── update ─────────────────────────────────────────────
   describe('update', () => {
+    // update 가 dataSource.transaction wrap (트랜잭션 audit) — em 으로 save·count·findOne·create 통일
+    let em: {
+      save: jest.Mock;
+      count: jest.Mock;
+      findOne: jest.Mock;
+      create: jest.Mock;
+    };
+
+    beforeEach(() => {
+      em = {
+        save: jest.fn().mockImplementation(async (a: unknown) => a),
+        count: jest.fn().mockResolvedValue(0),
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest
+          .fn()
+          .mockImplementation((_entity: unknown, data: unknown) => data),
+      };
+      dataSource.transaction.mockImplementation(async (cb: any) => cb(em));
+    });
+
     it('PLANNED→IN_PROGRESS + 기존 스텝 없음 → createDefaultSteps 호출', async () => {
       const app = makeApp({ status: 'PLANNED' });
-      appRepo.findOne.mockResolvedValue(app); // findEntity용
-      appRepo.save.mockImplementation(async (a) => a as Application);
-      stepRepo.count.mockResolvedValue(0); // 기존 스텝 없음
-
-      // createDefaultSteps는 stepRepo.manager 사용
-      const mockManager = {
-        create: jest.fn().mockImplementation((_entity, data) => data),
-        save: jest.fn().mockResolvedValue([]),
-      };
-      (stepRepo as any).manager = mockManager;
-
-      // findOne(userId, id) for return — relations 포함
       appRepo.findOne
-        .mockResolvedValueOnce(app) // findEntity (relations 없음)
+        .mockResolvedValueOnce(app) // findEntity
         .mockResolvedValue({
           ...app,
           status: 'IN_PROGRESS',
           steps: makeDefaultSteps(),
-        }); // findOne (relations 포함)
+        }); // findOne return
+      em.count.mockResolvedValue(0); // 기존 스텝 없음
 
       await service.update('user-uuid-1', 'app-uuid-1', {
         status: 'IN_PROGRESS',
       });
 
-      expect(stepRepo.count).toHaveBeenCalledWith({
+      expect(em.count).toHaveBeenCalledWith(ApplicationStep, {
         where: { applicationId: 'app-uuid-1' },
       });
-      expect(mockManager.save).toHaveBeenCalled();
+      // em.save 가 최소 2번 (app + steps array)
+      expect(em.save.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
     it('PLANNED→IN_PROGRESS + 기존 스텝 있음 → createDefaultSteps 미호출', async () => {
@@ -383,15 +393,15 @@ describe('ApplicationsService', () => {
         status: 'IN_PROGRESS',
         steps: makeDefaultSteps(),
       });
-      appRepo.save.mockImplementation(async (a) => a as Application);
-      stepRepo.count.mockResolvedValue(7); // 이미 스텝 있음
+      em.count.mockResolvedValue(7); // 이미 스텝 있음
 
       await service.update('user-uuid-1', 'app-uuid-1', {
         status: 'IN_PROGRESS',
       });
 
-      expect(stepRepo.count).toHaveBeenCalled();
-      // manager.save는 호출되지 않아야 함 (createDefaultSteps 미호출)
+      expect(em.count).toHaveBeenCalled();
+      // em.save 는 app 1번만 (steps 미생성)
+      expect(em.save).toHaveBeenCalledTimes(1);
     });
 
     it('존재하지 않는 카드 → NotFoundException', async () => {
@@ -407,23 +417,35 @@ describe('ApplicationsService', () => {
         jobTitle: null,
         needsDetail: true,
       });
-      const saved: Partial<Application>[] = [];
       appRepo.findOne
         .mockResolvedValueOnce(app)
         .mockResolvedValue({ ...app, jobTitle: '백엔드 개발자', steps: [] });
-      appRepo.save.mockImplementation(async (a) => {
-        saved.push(a as Application);
-        return a as Application;
-      });
 
       await service.update('user-uuid-1', 'app-uuid-1', {
         jobTitle: '백엔드 개발자',
       });
 
-      expect(saved[0]).toMatchObject({
+      // em.save 첫 호출 = app 객체
+      expect(em.save.mock.calls[0][0]).toMatchObject({
         jobTitle: '백엔드 개발자',
         needsDetail: false,
       });
+    });
+
+    // ── 트랜잭션 rollback (memory feedback_transaction_wrap) ──
+    it('app.save 성공 후 em.save(steps) 실패 → 트랜잭션 전체 reject (rollback)', async () => {
+      const app = makeApp({ status: 'PLANNED' });
+      appRepo.findOne.mockResolvedValueOnce(app);
+      em.count.mockResolvedValue(0); // createDefaultSteps 분기 진입
+      let saveCallNo = 0;
+      em.save.mockImplementation(async (data) => {
+        saveCallNo++;
+        if (saveCallNo === 1) return data; // app.save 성공
+        throw new Error('FK violation on steps insert'); // steps.save 실패
+      });
+      await expect(
+        service.update('user-uuid-1', 'app-uuid-1', { status: 'IN_PROGRESS' }),
+      ).rejects.toThrow('FK violation on steps insert');
     });
 
     it('IN_PROGRESS인데 직무명이 여전히 없으면 needsDetail은 true 유지', async () => {
@@ -432,20 +454,15 @@ describe('ApplicationsService', () => {
         jobTitle: null,
         needsDetail: true,
       });
-      const saved: Partial<Application>[] = [];
       appRepo.findOne
         .mockResolvedValueOnce(app)
         .mockResolvedValue({ ...app, steps: [] });
-      appRepo.save.mockImplementation(async (a) => {
-        saved.push(a as Application);
-        return a as Application;
-      });
 
       await service.update('user-uuid-1', 'app-uuid-1', {
         memo: '메모만 수정',
       });
 
-      expect(saved[0]).toMatchObject({ needsDetail: true });
+      expect(em.save.mock.calls[0][0]).toMatchObject({ needsDetail: true });
     });
   });
 

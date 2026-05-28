@@ -41,7 +41,21 @@ describe('InquiriesService', () => {
   beforeEach(async () => {
     const mockRepo = mock<Repository<Inquiry>>();
     const mockCommentRepo = mock<Repository<InquiryComment>>();
-    const mockDataSource = { query: jest.fn() };
+    // transaction wrap (addUserComment/addAdminComment) 용 EntityManager mock
+    // em.getRepository(X) 가 기존 mock repo 를 반환하도록 — 기존 검증 (commentRepo.save / repo.increment 등) 그대로 통과
+    const em = {
+      getRepository: jest.fn((entity: unknown) => {
+        if (entity === InquiryComment) return mockCommentRepo;
+        if (entity === Inquiry) return mockRepo;
+        throw new Error('unknown entity');
+      }),
+    };
+    const mockDataSource = {
+      query: jest.fn(),
+      transaction: jest.fn(async (cb: (em: typeof em) => Promise<unknown>) =>
+        cb(em),
+      ),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -299,6 +313,29 @@ describe('InquiriesService', () => {
       await expect(
         service.addAdminComment('nonexistent', 'admin-uuid', '답변'),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    // ── 트랜잭션 rollback (memory feedback_transaction_wrap) ──
+    it('comment.save 성공 후 user_unread.increment 실패 → 트랜잭션 전체 reject (rollback)', async () => {
+      setupAdmin('OPEN');
+      commentRepo.save.mockResolvedValue(makeComment());
+      repo.increment.mockRejectedValue(new Error('DB lock conflict'));
+      await expect(
+        service.addAdminComment('inq-uuid-1', 'admin-uuid', '답변'),
+      ).rejects.toThrow('DB lock conflict');
+    });
+  });
+
+  // ── addUserComment 트랜잭션 rollback ──
+  describe('addUserComment 트랜잭션 rollback', () => {
+    it('comment.save 성공 후 admin_unread.increment 실패 → 트랜잭션 전체 reject (rollback)', async () => {
+      repo.findOneBy.mockResolvedValue(makeInquiry({ status: 'OPEN' }));
+      commentRepo.create.mockReturnValue(makeComment());
+      commentRepo.save.mockResolvedValue(makeComment());
+      repo.increment.mockRejectedValue(new Error('DB timeout'));
+      await expect(
+        service.addUserComment('inq-uuid-1', 'user-uuid-1', '내용'),
+      ).rejects.toThrow('DB timeout');
     });
   });
 
