@@ -25,6 +25,15 @@ export interface LlmProviderJsonRequest extends LlmProviderRequest {
     name: string;
     schema: Record<string, unknown>;
   };
+  /**
+   * F6 PR 2 Phase 4 단계 B — web_search tool 활성화 (Anthropic 만 지원).
+   * `allowedDomains` 화이트리스트 외 사이트는 검색 결과에서 제외.
+   * OpenAI 는 무시 (web_search 미지원 모델 사용 시).
+   */
+  webSearch?: {
+    allowedDomains: string[];
+    maxUses: number; // 호출 1회당 web_search 최대 사용 횟수 (비용 통제)
+  };
 }
 
 export interface LlmProviderResponse {

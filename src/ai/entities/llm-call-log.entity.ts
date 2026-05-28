@@ -23,7 +23,9 @@ export type LlmFeature =
   | 'coverletter_feedback'
   | 'coverletter_recommend'
   | 'interview_prep_session'
-  | 'interview_prep_followup';
+  | 'interview_prep_followup'
+  // PR 2 Phase 4 단계 B — 회사·직무 조사 (Anthropic Claude haiku + web_search tool)
+  | 'company_research';
 
 export type LlmProviderName = 'openai' | 'anthropic';
 

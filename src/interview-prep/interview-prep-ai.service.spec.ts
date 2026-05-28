@@ -587,5 +587,90 @@ describe('InterviewPrepAiService', () => {
       const r = await service.generateFollowup(USER_ID, 'q-parent');
       expect(r.question?.orderIndex).toBe(0); // null → -1 → +1 = 0
     });
+
+    // Phase 4 (단계 A) — prompt 확장
+    it('parent.myMemo 가 있으면 → prompt 에 "★ 사용자 실제 답변" 포함 (AI 모범 답안보다 우선)', async () => {
+      const parentWithMemo = {
+        ...parentEntity,
+        myMemo: '저는 데이터로 설득해 ROAS 1.8 달성했습니다',
+      } as InterviewPrepQuestion;
+      questionsService.assertCanCreateFollowup.mockResolvedValueOnce(
+        parentWithMemo,
+      );
+      llm.call.mockResolvedValue({
+        status: 'ok',
+        text: '',
+        json: { question: 'f', suggested_answer: 'a', source_log_ids: [] },
+        promptTokens: 30,
+        completionTokens: 15,
+        costUsd: 0.0001,
+        latencyMs: 100,
+        callLogId: 'log-f',
+        outputRedacted: false,
+      });
+
+      await service.generateFollowup(USER_ID, 'q-parent');
+      const callArg = llm.call.mock.calls[0][0];
+      expect(callArg.userPrompt).toContain('★ 사용자가 실제로 적은 본인 답변');
+      expect(callArg.userPrompt).toContain('ROAS 1.8 달성');
+    });
+
+    it('myMemo 비어있으면 → "AI 모범 답안 기준으로 추궁" 안내 포함', async () => {
+      const parentNoMemo = {
+        ...parentEntity,
+        myMemo: null,
+      } as InterviewPrepQuestion;
+      questionsService.assertCanCreateFollowup.mockResolvedValueOnce(
+        parentNoMemo,
+      );
+      llm.call.mockResolvedValue({
+        status: 'ok',
+        text: '',
+        json: { question: 'f', suggested_answer: 'a', source_log_ids: [] },
+        promptTokens: 30,
+        completionTokens: 15,
+        costUsd: 0.0001,
+        latencyMs: 100,
+        callLogId: 'log-f',
+        outputRedacted: false,
+      });
+
+      await service.generateFollowup(USER_ID, 'q-parent');
+      const callArg = llm.call.mock.calls[0][0];
+      expect(callArg.userPrompt).toContain('아직 미작성');
+    });
+
+    it('회사·직무·모집 요강·강조 포인트 모두 prompt 에 포함 (followup 정확도 ↑)', async () => {
+      sessionRepo.findOne.mockResolvedValueOnce({
+        ...makeSession({
+          jobDescription: 'C++ 5년, MSA 경험 우대',
+          emphasisPoints: '갈등 중재 경험을 어필',
+        }),
+      });
+      llm.call.mockResolvedValue({
+        status: 'ok',
+        text: '',
+        json: { question: 'f', suggested_answer: 'a', source_log_ids: [] },
+        promptTokens: 30,
+        completionTokens: 15,
+        costUsd: 0.0001,
+        latencyMs: 100,
+        callLogId: 'log-f',
+        outputRedacted: false,
+      });
+
+      await service.generateFollowup(USER_ID, 'q-parent');
+      const callArg = llm.call.mock.calls[0][0];
+      // 회사·직무
+      expect(callArg.userPrompt).toContain('카카오');
+      expect(callArg.userPrompt).toContain('백엔드');
+      // 차수·종류
+      expect(callArg.userPrompt).toContain('1차');
+      // 모집 요강
+      expect(callArg.userPrompt).toContain('MSA 경험 우대');
+      // 강조 포인트
+      expect(callArg.userPrompt).toContain('갈등 중재 경험을 어필');
+      expect(callArg.userPrompt).toContain('검증·약점 파고들기');
+    });
   });
 });

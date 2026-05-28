@@ -53,6 +53,10 @@ export interface BuildInterviewContextInput {
   application: InterviewApplicationInput;
   round: string;
   interviewType: string | null;
+  /** Phase 4 — 사용자가 붙여넣은 모집 요강 (회사 특화 키워드 source, priority 1.5) */
+  jobDescription: string | null;
+  /** Phase 4 — 사용자가 어필하고 싶은 강점/경험 (AI 가 그 방향으로 추궁, priority 1.5) */
+  emphasisPoints: string | null;
   /** 사용자가 선택한 자소서 문항+답변 (priority 1) */
   coverletters: CoverletterInput[];
   /** coverletter_source_refs 의 activity_log (priority 2). 자소서 답변에 이미 인용 — 중복 정보지만 면접관 추궁 시 근거 */
@@ -158,6 +162,31 @@ export function buildInterviewContext(
         '```',
         input.coverletters.map(serializeCoverletter).join('\n\n---\n\n'),
         '```',
+      ].join('\n'),
+    );
+  }
+
+  // Phase 4: 모집 요강 (priority 1.5 — 회사 특화 키워드 source, 필수 포함)
+  if (input.jobDescription?.trim()) {
+    sections.push(
+      [
+        `# 모집 요강 (회사 특화 키워드)`,
+        '```',
+        input.jobDescription.trim(),
+        '```',
+      ].join('\n'),
+    );
+  }
+
+  // Phase 4: 강조 포인트 (priority 1.5 — AI 가 이 방향으로 추궁 질문 생성)
+  if (input.emphasisPoints?.trim()) {
+    sections.push(
+      [
+        `# 사용자가 어필하고 싶은 강점·경험`,
+        '```',
+        input.emphasisPoints.trim(),
+        '```',
+        `위 강점을 면접에서 드러내도록 추궁형 질문을 만들어 주세요.`,
       ].join('\n'),
     );
   }

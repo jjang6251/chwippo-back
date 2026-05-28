@@ -12,6 +12,21 @@ import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
 
+export interface SessionRefsExpanded {
+  coverletters: Array<{
+    id: string;
+    category: string | null;
+    question: string;
+  }>;
+  logs: Array<{
+    id: string;
+    activityName: string;
+    occurredAt: string;
+    content: string;
+    cat: string | null;
+  }>;
+}
+
 /**
  * F6 PR 2 Phase 2 — InterviewPrepSessionsService.
  *
@@ -33,6 +48,8 @@ export interface SessionResponse {
   coverletterIds: string[];
   extraLogIds: string[];
   myMemo: string | null;
+  jobDescription: string | null;
+  emphasisPoints: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -134,6 +151,8 @@ export class InterviewPrepSessionsService {
       coverletterIds,
       extraLogIds,
       myMemo: null,
+      jobDescription: dto.jobDescription?.trim() || null,
+      emphasisPoints: dto.emphasisPoints?.trim() || null,
     });
     const saved = await this.sessionRepo.save(session);
     return this.toResponse(saved);
@@ -179,6 +198,25 @@ export class InterviewPrepSessionsService {
     if (dto.interviewType !== undefined)
       session.interviewType = dto.interviewType;
     if (dto.myMemo !== undefined) session.myMemo = dto.myMemo;
+    if (dto.jobDescription !== undefined)
+      session.jobDescription =
+        dto.jobDescription === null ? null : dto.jobDescription.trim() || null;
+    if (dto.emphasisPoints !== undefined)
+      session.emphasisPoints =
+        dto.emphasisPoints === null ? null : dto.emphasisPoints.trim() || null;
+    // Phase 4 — 자료 변경 (IDOR batch 재실행 필수)
+    if (dto.coverletterIds !== undefined) {
+      await this.assertCoverlettersBelongToUser(
+        userId,
+        session.applicationId,
+        dto.coverletterIds,
+      );
+      session.coverletterIds = dto.coverletterIds;
+    }
+    if (dto.extraLogIds !== undefined) {
+      await this.assertLogsBelongToUser(userId, dto.extraLogIds);
+      session.extraLogIds = dto.extraLogIds;
+    }
     const saved = await this.sessionRepo.save(session);
     return this.toResponse(saved);
   }
@@ -186,6 +224,65 @@ export class InterviewPrepSessionsService {
   async remove(userId: string, sessionId: string): Promise<void> {
     const session = await this.findOwnedRaw(userId, sessionId);
     await this.sessionRepo.remove(session);
+  }
+
+  /**
+   * Phase 4 — 세션의 참고 자료 expand (title/카테고리 포함). 사이드바 메타카드 표시용.
+   * IN 쿼리 2개 (coverletters + logs) 로 N+1 회피.
+   * cross-user 격리 — coverletter 는 본인 application 만, log 는 본인 user 만.
+   */
+  async getRefs(
+    userId: string,
+    sessionId: string,
+  ): Promise<SessionRefsExpanded> {
+    const session = await this.findOwnedRaw(userId, sessionId);
+
+    const coverletterIds = session.coverletterIds ?? [];
+    const extraLogIds = session.extraLogIds ?? [];
+
+    // coverletters — 본인 application 의 cl 만 (cl→app→user JOIN)
+    const coverletters =
+      coverletterIds.length === 0
+        ? []
+        : (
+            await this.clRepo
+              .createQueryBuilder('cl')
+              .innerJoin('cl.application', 'app')
+              .where('cl.id IN (:...ids)', { ids: coverletterIds })
+              .andWhere('cl.application_id = :appId', {
+                appId: session.applicationId,
+              })
+              .andWhere('app.user_id = :userId', { userId })
+              .select(['cl.id', 'cl.category', 'cl.question'])
+              .getMany()
+          ).map((cl) => ({
+            id: cl.id,
+            category: cl.category,
+            question: cl.question,
+          }));
+
+    // logs — 본인 user 의 log 만 + 활동 이름 join
+    const logs =
+      extraLogIds.length === 0
+        ? []
+        : (
+            await this.logRepo
+              .createQueryBuilder('l')
+              .innerJoin('l.activity', 'a')
+              .where('l.id IN (:...ids)', { ids: extraLogIds })
+              .andWhere('l.user_id = :userId', { userId })
+              .select(['l.id', 'l.content', 'l.cat', 'l.occurredAt', 'a.name'])
+              .getMany()
+          ).map((l) => ({
+            id: l.id,
+            activityName: (l as unknown as { activity: { name: string } })
+              .activity.name,
+            occurredAt: l.occurredAt,
+            content: l.content,
+            cat: l.cat,
+          }));
+
+    return { coverletters, logs };
   }
 
   /** 응답 mapper — user_id 제거 (Q4 defense in depth) */
@@ -198,6 +295,8 @@ export class InterviewPrepSessionsService {
       coverletterIds: s.coverletterIds,
       extraLogIds: s.extraLogIds,
       myMemo: s.myMemo,
+      jobDescription: s.jobDescription,
+      emphasisPoints: s.emphasisPoints,
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
     };

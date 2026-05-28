@@ -3,8 +3,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from '../activity/activity.module';
 import { AiModule } from '../ai/ai.module';
 import { ApplicationsModule } from '../applications/applications.module';
+import { CompanyResearchCache } from './entities/company-research-cache.entity';
 import { InterviewPrepQuestion } from './entities/interview-prep-question.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
+import { AdminCompanyResearchController } from './admin-company-research.controller';
+import { CompanyResearchService } from './company-research.service';
 import { InterviewPrepAiService } from './interview-prep-ai.service';
 import { InterviewPrepQuestionsController } from './interview-prep-questions.controller';
 import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
@@ -24,7 +27,11 @@ import { InterviewPrepSessionsService } from './interview-prep-sessions.service'
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([InterviewPrepSession, InterviewPrepQuestion]),
+    TypeOrmModule.forFeature([
+      InterviewPrepSession,
+      InterviewPrepQuestion,
+      CompanyResearchCache,
+    ]),
     forwardRef(() => ActivityModule),
     forwardRef(() => AiModule),
     forwardRef(() => ApplicationsModule),
@@ -32,17 +39,20 @@ import { InterviewPrepSessionsService } from './interview-prep-sessions.service'
   controllers: [
     InterviewPrepSessionsController,
     InterviewPrepQuestionsController,
+    AdminCompanyResearchController,
   ],
   providers: [
     InterviewPrepSessionsService,
     InterviewPrepQuestionsService,
     InterviewPrepAiService,
+    CompanyResearchService,
   ],
   exports: [
     TypeOrmModule,
     InterviewPrepSessionsService,
     InterviewPrepQuestionsService,
     InterviewPrepAiService,
+    CompanyResearchService,
   ],
 })
 export class InterviewPrepModule {}

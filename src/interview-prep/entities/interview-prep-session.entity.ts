@@ -50,7 +50,7 @@ export class InterviewPrepSession {
   @Column({ type: 'varchar', length: 40 })
   round: string;
 
-  /** 면접 종류 — null 또는 enum 6종 (technical/behavioral/personality/case/codingtest/etc — UI 결정) */
+  /** 면접 종류 — null 또는 enum 3종 (technical/personality/etc). PT·토론·코딩은 F-후속 별도 기능 */
   @Column({
     name: 'interview_type',
     type: 'varchar',
@@ -78,6 +78,29 @@ export class InterviewPrepSession {
   /** 세션 단위 사용자 메모 (autosave 대상, 질문별 my_memo 와 분리) */
   @Column({ name: 'my_memo', type: 'text', nullable: true })
   myMemo: string | null;
+
+  /**
+   * Phase 4 추가 — 모집 요강 (사용자가 직접 붙여넣음). 회사·직무 + 자소서 외 회사 특화 키워드 source.
+   * AI 가 요구역량·우대사항 기반 추궁 질문 생성에 사용.
+   */
+  @Column({ name: 'job_description', type: 'text', nullable: true })
+  jobDescription: string | null;
+
+  /**
+   * Phase 4 추가 — 사용자가 면접관에게 꼭 어필하고 싶은 강점/경험.
+   * AI 가 본인 의도 방향으로 질문 생성 (예: "갈등 해결 경험을 꼭 어필" → 그 방향 추궁).
+   */
+  @Column({ name: 'emphasis_points', type: 'text', nullable: true })
+  emphasisPoints: string | null;
+
+  /**
+   * Phase 4 단계 B — 사용자가 회사 조사 결과 위에 추가로 적은 자유 메모.
+   * AI 가 생성한 `company_research_cache.ai_research` 는 read-only.
+   * 책임 분리: AI 정보 = 우리 책임 / 사용자 메모 = 사용자 책임.
+   * 면접 질문 생성에도 활용 (사용자 메모 우선).
+   */
+  @Column({ name: 'user_research_notes', type: 'text', nullable: true })
+  userResearchNotes: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

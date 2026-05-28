@@ -10,14 +10,11 @@ import {
   MinLength,
 } from 'class-validator';
 
-const INTERVIEW_TYPES = [
-  'technical',
-  'behavioral',
-  'personality',
-  'case',
-  'codingtest',
-  'etc',
-] as const;
+/**
+ * F6 PR 2 Phase 4 — 현재 AI Q&A 형식이 잘 맞는 3종만.
+ * PT/토론/코딩테스트는 1:1 Q&A 가 아니라서 별도 기능 (F-후속) 으로 분리.
+ */
+const INTERVIEW_TYPES = ['technical', 'personality', 'etc'] as const;
 
 export class CreateSessionDto {
   @IsUUID()
@@ -48,4 +45,16 @@ export class CreateSessionDto {
   @ArrayMaxSize(30)
   @IsUUID('all', { each: true })
   extraLogIds?: string[];
+
+  /** 모집 요강 텍스트 (사용자가 붙여넣음) — Phase 4. 최대 8000자 (token cap 고려) */
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  jobDescription?: string;
+
+  /** 강조하고 싶은 강점/경험 — Phase 4. 최대 2000자 */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  emphasisPoints?: string;
 }

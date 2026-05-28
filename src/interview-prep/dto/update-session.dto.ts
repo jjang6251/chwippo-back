@@ -1,20 +1,16 @@
 import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
 
-const INTERVIEW_TYPES = [
-  'technical',
-  'behavioral',
-  'personality',
-  'case',
-  'codingtest',
-  'etc',
-] as const;
+const INTERVIEW_TYPES = ['technical', 'personality', 'etc'] as const;
 
 export class UpdateSessionDto {
   @IsOptional()
@@ -34,4 +30,27 @@ export class UpdateSessionDto {
   @IsString()
   @MaxLength(5000)
   myMemo?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  jobDescription?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  emphasisPoints?: string | null;
+
+  /** Phase 4 — 자료 변경 후 "다시 생성" 흐름. IDOR batch 가드는 service 가 재실행 */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsUUID('all', { each: true })
+  coverletterIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsUUID('all', { each: true })
+  extraLogIds?: string[];
 }
