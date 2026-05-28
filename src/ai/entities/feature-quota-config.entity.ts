@@ -44,6 +44,17 @@ export class FeatureQuotaConfig {
   @Column({ name: 'cooldown_seconds', type: 'int' })
   cooldownSeconds: number;
 
+  /**
+   * F6 PR 2 Phase 5.6.8 — 리소스별 24h 한도 (같은 노트/자소서/세션 N회).
+   * NULL = 미사용. 현재는 NoteSummaryService (note_summary) 만 활용.
+   */
+  @Column({
+    name: 'per_resource_day_limit',
+    type: 'int',
+    nullable: true,
+  })
+  perResourceDayLimit: number | null;
+
   @Column({ type: 'boolean', default: true })
   enabled: boolean;
 

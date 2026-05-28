@@ -33,7 +33,11 @@ export type AuditAction =
   | 'update_tier'
   // F6 PR 2 Phase 5.4 — admin 이 alert_thresholds 변경 (daily_cost · hourly_error_rate · vs_yesterday · enabled)
   // targetType = 'alert_thresholds', targetId = '1', detail: { before, after }
-  | 'update_alert_thresholds';
+  | 'update_alert_thresholds'
+  // F6 PR 2 Phase 5.6.9 — admin 가 AI 사용량 reset
+  // targetType='all_users' (userId 없음) | 'user' (userId 있음), targetId=userId or 'all'
+  // detail: { scope, affected, resetAt }
+  | 'reset_ai_quota';
 
 @Entity('admin_audit_logs')
 export class AdminAuditLog {

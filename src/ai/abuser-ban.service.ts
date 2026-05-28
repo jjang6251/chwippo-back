@@ -2,6 +2,7 @@ import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
 import { AdminAuditService } from '../admin/admin-audit.service';
+import { AlertHistory } from '../admin/entities/alert-history.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
 import { LlmCallLog, LlmFeature } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
@@ -39,6 +40,8 @@ export class AbuserBanService {
     @Inject(forwardRef(() => AdminAuditService))
     private readonly auditService: AdminAuditService,
     private readonly discord: DiscordNotifier,
+    @InjectRepository(AlertHistory)
+    private readonly historyRepo: Repository<AlertHistory>,
   ) {}
 
   /**
@@ -148,6 +151,22 @@ export class AbuserBanService {
     validUntil: Date,
   ): Promise<void> {
     const content = `🚨 AI Auto-Ban\nuser=${userId}\nfeature=${feature}\nuntil=${validUntil.toISOString()}\ndaily_cap=${BAN_DAILY_CAP}`;
-    await this.discord.notify(content);
+    const status = await this.discord.notify(content);
+    // 5.6.3 — alert_history 통합 가시화 (/ops/monitoring 의 admin UI 에서 임계치 알람과 함께 표시)
+    try {
+      await this.historyRepo.save(
+        this.historyRepo.create({
+          alertType: 'abuser_ban',
+          triggeredValue: BAN_DAILY_CAP,
+          thresholdValue: CONSECUTIVE_DAYS_FOR_BAN,
+          message: content,
+          webhookStatus: status,
+        }),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `alert_history insert 실패 (abuser_ban, user=${userId}): ${(err as Error).message}`,
+      );
+    }
   }
 }

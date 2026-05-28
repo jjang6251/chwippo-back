@@ -6,9 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
-import { Between, DataSource, Repository } from 'typeorm';
+import { Between, DataSource, In, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { AbuserBanService } from './abuser-ban.service';
+import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
@@ -43,6 +44,8 @@ export interface SummarizeNoteResult {
   cached: boolean;
   reason?: string;
   remainingPerNote?: number;
+  /** 5.6.8 — admin 통제 per-note 한도. UI 의 "노트당 N/M" 표시 — limit 동적 반영 */
+  perNoteLimit?: number;
   /** COOLDOWN 시 사용자 UI 가 카운트다운 표시용 */
   nextAvailableAt?: string;
 }
@@ -54,6 +57,8 @@ export class NoteSummaryService {
     private readonly logRepo: Repository<ActivityLog>,
     @InjectRepository(LlmCallLog)
     private readonly llmLogRepo: Repository<LlmCallLog>,
+    @InjectRepository(FeatureQuotaConfig)
+    private readonly configRepo: Repository<FeatureQuotaConfig>,
     private readonly llm: LlmService,
     private readonly moderation: ModerationService,
     private readonly dataSource: DataSource,
@@ -110,25 +115,35 @@ export class NoteSummaryService {
         };
       }
 
-      // 노트당 24h 한도 (note-specific, 같은 노트 N회 호출 방어. QuotaCheckService 영역 밖)
-      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      // 5.6.8 — 노트당 24h 한도는 admin 통제 (feature_quota_configs.per_resource_day_limit)
+      // NULL 또는 row 없음 → fallback NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H (안전)
+      const cfg = await this.configRepo.findOne({
+        where: { feature: 'note_summary', tier: 'free' },
+      });
+      const perNoteLimit =
+        cfg?.perResourceDayLimit ?? NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H;
+
+      // 5.6.9 — quota_reset_at 적용 (QuotaCheckService 단일 진입점)
+      const since24h = await this.quotaCheck.resolveSince24h(userId);
+      // 5.6.8 fix — blocked/error row 제외 (QuotaCheckService 와 동일 정책).
       const perNoteCount = await em.count(LlmCallLog, {
         where: {
           userId,
           feature: 'note_summary',
           resourceType: 'activity_log',
           resourceId: logId,
+          status: In(['ok', 'retry_parsing']),
           createdAt: Between(since24h, new Date()),
         },
       });
-      if (perNoteCount >= NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H) {
+      if (perNoteCount >= perNoteLimit) {
         await this.llm.call({
           userId,
           feature: 'note_summary',
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: text,
           preBlockedStatus: 'blocked_quota',
-          preBlockedReason: `노트당 24시간 한도 (${NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H}회) 초과`,
+          preBlockedReason: `노트당 24시간 한도 (${perNoteLimit}회) 초과`,
           resourceType: 'activity_log',
           resourceId: logId,
         });
@@ -136,8 +151,9 @@ export class NoteSummaryService {
           status: 'blocked',
           summary: null,
           cached: false,
-          reason: `이 노트는 24시간 동안 ${NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H}회 요약을 모두 사용했어요.`,
+          reason: `이 노트는 24시간 동안 ${perNoteLimit}회 요약을 모두 사용했어요.`,
           remainingPerNote: 0,
+          perNoteLimit,
         };
       }
 
@@ -228,9 +244,54 @@ export class NoteSummaryService {
         status: 'ok',
         summary: result.text,
         cached: false,
-        remainingPerNote:
-          NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H - perNoteCount - 1,
+        remainingPerNote: perNoteLimit - perNoteCount - 1,
+        perNoteLimit,
       };
     });
+  }
+
+  /**
+   * 5.6.8 — 노트별 현황만 조회 (mount 시 사용). LLM 호출 0.
+   * - log 존재·소유 검증
+   * - 24h 내 호출 횟수 + admin 통제 한도
+   */
+  async getStatus(
+    userId: string,
+    logId: string,
+  ): Promise<{
+    perNoteUsed: number;
+    perNoteLimit: number;
+    remainingPerNote: number;
+  }> {
+    const log = await this.logRepo.findOne({ where: { id: logId } });
+    if (!log) throw new NotFoundException('노트를 찾을 수 없습니다.');
+    if (log.userId !== userId)
+      throw new ForbiddenException('본인 노트만 조회할 수 있어요.');
+
+    const cfg = await this.configRepo.findOne({
+      where: { feature: 'note_summary', tier: 'free' },
+    });
+    const perNoteLimit =
+      cfg?.perResourceDayLimit ?? NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H;
+
+    // 5.6.9 — quota_reset_at 적용 (summarize 와 동일 정책)
+    const since24h = await this.quotaCheck.resolveSince24h(userId);
+    // 5.6.8 fix — summarize 와 동일 status 필터 (ok·retry_parsing 만 카운트)
+    const perNoteUsed = await this.llmLogRepo.count({
+      where: {
+        userId,
+        feature: 'note_summary',
+        resourceType: 'activity_log',
+        resourceId: logId,
+        status: In(['ok', 'retry_parsing']),
+        createdAt: Between(since24h, new Date()),
+      },
+    });
+
+    return {
+      perNoteUsed,
+      perNoteLimit,
+      remainingPerNote: Math.max(0, perNoteLimit - perNoteUsed),
+    };
   }
 }

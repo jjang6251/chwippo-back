@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository } from 'typeorm';
 import { AdminAuditService } from '../admin/admin-audit.service';
+import { AlertHistory } from '../admin/entities/alert-history.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
 import { AbuserBanService } from './abuser-ban.service';
 import { LlmCallLog } from './entities/llm-call-log.entity';
@@ -25,6 +26,7 @@ describe('AbuserBanService', () => {
   let logRepo: jest.Mocked<Repository<LlmCallLog>>;
   let auditService: jest.Mocked<AdminAuditService>;
   let discord: jest.Mocked<DiscordNotifier>;
+  let historyRepo: jest.Mocked<Repository<AlertHistory>>;
   let fetchSpy: jest.SpyInstance;
 
   const USER_ID = 'user-1';
@@ -35,6 +37,9 @@ describe('AbuserBanService', () => {
     auditService = mock<AdminAuditService>();
     discord = mock<DiscordNotifier>();
     discord.notify.mockResolvedValue('skipped_no_webhook');
+    historyRepo = mock<Repository<AlertHistory>>();
+    historyRepo.create.mockImplementation((d) => d as AlertHistory);
+    historyRepo.save.mockResolvedValue({} as AlertHistory);
 
     fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -47,6 +52,7 @@ describe('AbuserBanService', () => {
         { provide: getRepositoryToken(LlmCallLog), useValue: logRepo },
         { provide: AdminAuditService, useValue: auditService },
         { provide: DiscordNotifier, useValue: discord },
+        { provide: getRepositoryToken(AlertHistory), useValue: historyRepo },
       ],
     }).compile();
     service = module.get<AbuserBanService>(AbuserBanService);
@@ -227,6 +233,30 @@ describe('AbuserBanService', () => {
       discord.notify.mockResolvedValue('skipped_no_webhook');
       quotaRepo.findOne.mockResolvedValue(null);
       logRepo.count.mockResolvedValue(30);
+      const r = await service.checkAndBan(USER_ID, 'note_summary', 30);
+      expect(r.banned).toBe(true);
+      expect(quotaRepo.upsert).toHaveBeenCalled();
+    });
+
+    it('5.6.3 — ban 발동 시 alert_history insert (type=abuser_ban + webhook_status)', async () => {
+      quotaRepo.findOne.mockResolvedValue(null);
+      logRepo.count.mockResolvedValue(30);
+      discord.notify.mockResolvedValue('sent');
+      await service.checkAndBan(USER_ID, 'note_summary', 30);
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          alertType: 'abuser_ban',
+          webhookStatus: 'sent',
+          message: expect.stringContaining(USER_ID),
+        }),
+      );
+    });
+
+    it('5.6.3 — alert_history insert 실패 → ban 자체는 정상 (best-effort)', async () => {
+      quotaRepo.findOne.mockResolvedValue(null);
+      logRepo.count.mockResolvedValue(30);
+      discord.notify.mockResolvedValue('sent');
+      historyRepo.save.mockRejectedValueOnce(new Error('DB down'));
       const r = await service.checkAndBan(USER_ID, 'note_summary', 30);
       expect(r.banned).toBe(true);
       expect(quotaRepo.upsert).toHaveBeenCalled();

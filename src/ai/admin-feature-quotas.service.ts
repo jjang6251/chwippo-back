@@ -74,6 +74,7 @@ export class AdminFeatureQuotasService {
       monthLimit?: number;
       cooldownSeconds?: number;
       enabled?: boolean;
+      perResourceDayLimit?: number;
     },
   ): Promise<FeatureQuotaConfig> {
     this.assertValid(feature, tier);
@@ -91,6 +92,7 @@ export class AdminFeatureQuotasService {
       monthLimit: row.monthLimit,
       cooldownSeconds: row.cooldownSeconds,
       enabled: row.enabled,
+      perResourceDayLimit: row.perResourceDayLimit,
     };
     let changed = false;
     if (patch.dayLimit !== undefined && patch.dayLimit !== row.dayLimit) {
@@ -110,6 +112,13 @@ export class AdminFeatureQuotasService {
     }
     if (patch.enabled !== undefined && patch.enabled !== row.enabled) {
       row.enabled = patch.enabled;
+      changed = true;
+    }
+    if (
+      patch.perResourceDayLimit !== undefined &&
+      patch.perResourceDayLimit !== row.perResourceDayLimit
+    ) {
+      row.perResourceDayLimit = patch.perResourceDayLimit;
       changed = true;
     }
 

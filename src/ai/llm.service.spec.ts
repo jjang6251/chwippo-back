@@ -693,4 +693,130 @@ describe('LlmService', () => {
       expect(r.costUsd).toBeGreaterThan(0);
     });
   });
+
+  // ── 5.6.소급 — Mock LLM 분기 (NODE_ENV='development' + provider 미가용) ──
+  describe('Mock LLM 분기 (dev only)', () => {
+    let originalEnv: string | undefined;
+
+    beforeEach(() => {
+      originalEnv = process.env.NODE_ENV;
+    });
+
+    afterEach(() => {
+      if (originalEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalEnv;
+    });
+
+    it('1) NODE_ENV=development + provider 미가용 → mock 응답 + audit (provider=mock, status=ok, costUsd=0)', async () => {
+      process.env.NODE_ENV = 'development';
+      openai.isAvailable = false;
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.costUsd).toBe(0);
+      expect(openai.complete).not.toHaveBeenCalled();
+      // audit row insert 검증 — provider='mock'
+      expect(logRepo.save).toHaveBeenCalled();
+      const saved = (logRepo.save as jest.Mock).mock.calls[0][0];
+      expect(saved.provider).toBe('mock');
+      expect(saved.status).toBe('ok');
+      expect(saved.userId).toBe('u-1');
+      expect(saved.feature).toBe('note_summary');
+      expect(saved.attempts).toBe(1);
+      expect(saved.outputRedacted).toBe(false);
+      expect(saved.costUsd).toBe('0');
+    });
+
+    it('2) NODE_ENV=production + provider 미가용 → status=error (mock 안 탐, fail-safe)', async () => {
+      process.env.NODE_ENV = 'production';
+      openai.isAvailable = false;
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      // mock audit row 들어가지 않음 (provider='openai' 로 error audit)
+      const saved = (logRepo.save as jest.Mock).mock.calls[0]?.[0];
+      expect(saved?.provider).not.toBe('mock');
+    });
+
+    it('3) NODE_ENV=development + provider 가용 → 실제 호출 (mock 안 탐)', async () => {
+      process.env.NODE_ENV = 'development';
+      openai.isAvailable = true;
+      openai.complete.mockResolvedValue({
+        text: 'real',
+        promptTokens: 5,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+      expect(openai.complete).toHaveBeenCalled();
+      const saved = (logRepo.save as jest.Mock).mock.calls[0][0];
+      expect(saved.provider).toBe('openai');
+    });
+
+    it('4) NODE_ENV=development + provider 미가용 + preBlockedStatus → preBlock 우선 (mock 안 탐)', async () => {
+      process.env.NODE_ENV = 'development';
+      openai.isAvailable = false;
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        preBlockedStatus: 'blocked_quota',
+        preBlockedReason: 'day limit',
+      });
+      expect(r.status).toBe('blocked_quota');
+      const saved = (logRepo.save as jest.Mock).mock.calls[0][0];
+      expect(saved.provider).not.toBe('mock');
+      expect(saved.status).toBe('blocked_quota');
+    });
+
+    it('5) mock 분기 + jsonSchema 있음 → mock 응답에 json 필드 (callJson 흐름)', async () => {
+      process.env.NODE_ENV = 'development';
+      openai.isAvailable = false;
+      anthropic.isAvailable = false; // company_research = anthropic provider
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'company_research',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: {
+          name: 'noop',
+          schema: { type: 'object', properties: {}, additionalProperties: true },
+        },
+      });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') throw new Error('expected ok');
+      // mock-llm-responses 가 company_research feature 일 때 json 객체 반환
+      expect(r.json).toBeDefined();
+    });
+
+    it('6) mock 분기 audit 의 model 은 FEATURE_MATRIX 의 model name (real provider 동일)', async () => {
+      process.env.NODE_ENV = 'development';
+      openai.isAvailable = false;
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      const saved = (logRepo.save as jest.Mock).mock.calls[0][0];
+      // FEATURE_MATRIX.note_summary.model = 'gpt-4o-mini' (light 강제)
+      expect(saved.model).toMatch(/gpt-4o-mini|gpt-4o/);
+    });
+  });
 });

@@ -8,6 +8,7 @@ import {
   type QuotaTier,
 } from './entities/feature-quota-config.entity';
 import { LlmCallLog, type LlmFeature } from './entities/llm-call-log.entity';
+import { UserAiQuota } from './entities/user-ai-quota.entity';
 
 /**
  * F6 PR 2 Phase 1 — 모든 LLM caller 가 호출하는 단일 quota 진입점.
@@ -67,9 +68,26 @@ export class QuotaCheckService {
     private readonly configRepo: Repository<FeatureQuotaConfig>,
     @InjectRepository(LlmCallLog)
     private readonly logRepo: Repository<LlmCallLog>,
+    @InjectRepository(UserAiQuota)
+    private readonly userQuotaRepo: Repository<UserAiQuota>,
     @Inject(forwardRef(() => AbuserBanService))
     private readonly abuserBan: AbuserBanService,
   ) {}
+
+  /**
+   * 5.6.9 — quota_reset_at 적용 시작 시각 계산.
+   * GREATEST(24h ago, user_ai_quotas.quota_reset_at['*'])
+   *
+   * NoteSummaryService 의 per-note 카운트도 같은 정책 (single source of truth).
+   */
+  async resolveSince24h(userId: string): Promise<Date> {
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const row = await this.userQuotaRepo.findOne({ where: { userId } });
+    const resetIso = row?.quotaResetAt?.['*'];
+    if (!resetIso) return since24h;
+    const resetAt = new Date(resetIso);
+    return resetAt > since24h ? resetAt : since24h;
+  }
 
   async checkAndPrepare(
     userId: string,
@@ -116,9 +134,9 @@ export class QuotaCheckService {
         ? Math.min(effective.dayLimit, override.dailyCapOverride)
         : effective.dayLimit;
 
-    // ── 5. day 카운트 ──
+    // ── 5. day 카운트 ── (5.6.9: reset_at 적용)
     const now = new Date();
-    const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const since24h = await this.resolveSince24h(userId);
     const baseWhere = {
       userId,
       feature,
@@ -208,7 +226,8 @@ export class QuotaCheckService {
 
     const override = await this.abuserBan.getActiveOverride(userId);
     const now = new Date();
-    const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    // 5.6.9 — reset_at 적용
+    const since24h = await this.resolveSince24h(userId);
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 

@@ -6,6 +6,7 @@ import { User } from '../users/user.entity';
 import { AbuserBanService } from './abuser-ban.service';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
+import { UserAiQuota } from './entities/user-ai-quota.entity';
 import { QuotaCheckService } from './quota-check.service';
 
 /**
@@ -26,6 +27,7 @@ describe('QuotaCheckService', () => {
   let userRepo: jest.Mocked<Repository<User>>;
   let configRepo: jest.Mocked<Repository<FeatureQuotaConfig>>;
   let logRepo: jest.Mocked<Repository<LlmCallLog>>;
+  let userQuotaRepo: jest.Mocked<Repository<UserAiQuota>>;
   let abuserBan: jest.Mocked<AbuserBanService>;
 
   const USER_ID = 'user-1';
@@ -38,6 +40,7 @@ describe('QuotaCheckService', () => {
     dayLimit: 100,
     monthLimit: 1000,
     cooldownSeconds: 30,
+    perResourceDayLimit: null,
     enabled: true,
     updatedBy: null,
     updatedByUser: null,
@@ -49,6 +52,8 @@ describe('QuotaCheckService', () => {
     userRepo = mock<Repository<User>>();
     configRepo = mock<Repository<FeatureQuotaConfig>>();
     logRepo = mock<Repository<LlmCallLog>>();
+    userQuotaRepo = mock<Repository<UserAiQuota>>();
+    userQuotaRepo.findOne.mockResolvedValue(null); // 5.6.9 default
     abuserBan = mock<AbuserBanService>();
 
     // defaults
@@ -66,6 +71,7 @@ describe('QuotaCheckService', () => {
           useValue: configRepo,
         },
         { provide: getRepositoryToken(LlmCallLog), useValue: logRepo },
+        { provide: getRepositoryToken(UserAiQuota), useValue: userQuotaRepo },
         { provide: AbuserBanService, useValue: abuserBan },
       ],
     }).compile();
@@ -328,6 +334,72 @@ describe('QuotaCheckService', () => {
       } as unknown as Awaited<ReturnType<typeof abuserBan.getActiveOverride>>);
       const r = await service.getMyQuotas(USER_ID);
       expect(r[0].dayLimit).toBe(5);
+    });
+  });
+
+  // ── 5.6.9 — quota_reset_at 적용 (dayUsed 계산 시 GREATEST(24h, reset_at)) ──
+  describe('5.6.9 quota_reset_at', () => {
+    it('1) quota_reset_at 없음 (row 없음) → 24h ago 그대로 사용 (기존 동작)', async () => {
+      configRepo.findOne.mockResolvedValue(makeConfig());
+      abuserBan.getActiveOverride.mockResolvedValue(null);
+      // user_ai_quotas row 없음 → null
+      userQuotaRepo.findOne.mockResolvedValue(null);
+      logRepo.count.mockResolvedValue(5);
+      const r = await service.checkAndPrepare(USER_ID, 'note_summary');
+      expect(r.blocked).toBe(false);
+      // count 쿼리의 createdAt 범위가 24h ago 기반
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      expect(callWhere.createdAt).toBeDefined();
+    });
+
+    it('2) quota_reset_at="1h ago" → reset_at 이후만 카운트 (since24h 대체)', async () => {
+      configRepo.findOne.mockResolvedValue(makeConfig());
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      userQuotaRepo.findOne.mockResolvedValue({
+        userId: USER_ID,
+        quotaResetAt: { '*': oneHourAgo },
+      } as unknown as UserAiQuota);
+      logRepo.count.mockResolvedValue(0);
+      await service.checkAndPrepare(USER_ID, 'note_summary');
+      // count 쿼리의 createdAt 범위가 1h ago 부터 시작
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      const between = callWhere.createdAt as { _value: Date[] };
+      const start = between._value[0];
+      // GREATEST(24h ago, 1h ago) = 1h ago
+      expect(start?.getTime()).toBeGreaterThan(Date.now() - 2 * 60 * 60 * 1000);
+    });
+
+    it('3) quota_reset_at="25h ago" (만료) → GREATEST(24h, 25h) = 24h 선택 (안전)', async () => {
+      configRepo.findOne.mockResolvedValue(makeConfig());
+      const farPast = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+      userQuotaRepo.findOne.mockResolvedValue({
+        userId: USER_ID,
+        quotaResetAt: { '*': farPast },
+      } as unknown as UserAiQuota);
+      logRepo.count.mockResolvedValue(0);
+      await service.checkAndPrepare(USER_ID, 'note_summary');
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      const between = callWhere.createdAt as { _value: Date[] };
+      const start = between._value[0];
+      // 24h ago 가 25h ago 보다 최근 → start ≈ 24h ago
+      const expected24hAgo = Date.now() - 24 * 60 * 60 * 1000;
+      // 1분 오차 허용
+      expect(Math.abs(start.getTime() - expected24hAgo)).toBeLessThan(60_000);
+    });
+
+    it('4) user_ai_quotas row 있고 quota_reset_at={} (빈 객체) → 24h ago 그대로', async () => {
+      configRepo.findOne.mockResolvedValue(makeConfig());
+      userQuotaRepo.findOne.mockResolvedValue({
+        userId: USER_ID,
+        quotaResetAt: {},
+      } as UserAiQuota);
+      logRepo.count.mockResolvedValue(0);
+      await service.checkAndPrepare(USER_ID, 'note_summary');
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      const between = callWhere.createdAt as { _value: Date[] };
+      const start = between._value[0];
+      const expected24hAgo = Date.now() - 24 * 60 * 60 * 1000;
+      expect(Math.abs(start.getTime() - expected24hAgo)).toBeLessThan(60_000);
     });
   });
 });

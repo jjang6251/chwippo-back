@@ -139,6 +139,22 @@ export class LlmService {
         `[MOCK MODE] ${cfg.provider}.${cfg.model} 호출 (feature=${input.feature}) — API key 미설정, 모든 gate 우회. 실제 호출 원하면 .env 에 ${cfg.provider.toUpperCase()}_API_KEY 추가 후 재시작.`,
       );
       const mock = buildMockLlmResponse(input.feature, !!input.jsonSchema);
+      // audit row insert — provider='mock', costUsd=0 (실제 LLM 미호출이지만 감사 가시화 필수)
+      const log = await this.saveAudit({
+        input,
+        model: cfg.model,
+        provider: 'mock',
+        promptHash: null,
+        promptExcerpt: null,
+        status: 'ok',
+        errorMessage: null,
+        promptTokens: mock.promptTokens,
+        completionTokens: mock.completionTokens,
+        costUsd: '0',
+        latencyMs: 0,
+        outputRedacted: false,
+        attempts: 1,
+      });
       return {
         status: 'ok',
         text: mock.text,
@@ -147,7 +163,7 @@ export class LlmService {
         completionTokens: mock.completionTokens,
         costUsd: 0,
         latencyMs: 0,
-        callLogId: 'mock',
+        callLogId: log.id,
         outputRedacted: false,
       };
     }

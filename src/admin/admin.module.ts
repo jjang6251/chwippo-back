@@ -10,6 +10,9 @@ import { AlertHistory } from './entities/alert-history.entity';
 import { AlertThresholds } from './entities/alert-thresholds.entity';
 import { AlertThresholdsController } from './alert-thresholds.controller';
 import { AlertThresholdsService } from './alert-thresholds.service';
+import { ProviderHealthCron } from './provider-health.cron';
+import { ProviderHealthService } from './provider-health.service';
+import { SystemStatusController } from './system-status.controller';
 import { ThresholdCheckService } from './threshold-check.service';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
@@ -55,6 +58,7 @@ import { Education } from '../myinfo/entities/education.entity';
     AdminController,
     AdminUsersController,
     AlertThresholdsController,
+    SystemStatusController,
   ],
   providers: [
     AdminService,
@@ -62,6 +66,8 @@ import { Education } from '../myinfo/entities/education.entity';
     AdminAuditService,
     AlertThresholdsService,
     ThresholdCheckService,
+    ProviderHealthService,
+    ProviderHealthCron,
   ],
   exports: [AdminAuditService, AlertThresholdsService, ThresholdCheckService],
 })

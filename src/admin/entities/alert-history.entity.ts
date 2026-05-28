@@ -11,7 +11,10 @@ export type AlertType =
   | 'hourly_error_rate'
   | 'vs_yesterday'
   | 'abuser_ban'
-  | 'test';
+  | 'test'
+  // 5.6.10 — provider health cron (5분) detect status 변경
+  | 'provider_down'
+  | 'provider_up';
 
 export type WebhookStatus =
   | 'sent'

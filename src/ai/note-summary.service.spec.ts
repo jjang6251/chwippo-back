@@ -10,6 +10,7 @@ import { mock } from 'jest-mock-extended';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { AbuserBanService } from './abuser-ban.service';
+import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
@@ -25,6 +26,7 @@ describe('NoteSummaryService', () => {
   let moderation: jest.Mocked<ModerationService>;
   let quotaCheck: jest.Mocked<QuotaCheckService>;
   let abuserBan: { checkAndBan: jest.Mock; getActiveOverride: jest.Mock };
+  let configRepo: jest.Mocked<Repository<FeatureQuotaConfig>>;
   let emFindOne: jest.Mock;
   let emCount: jest.Mock;
   let emSave: jest.Mock;
@@ -72,6 +74,13 @@ describe('NoteSummaryService', () => {
 
     const mockLogRepo = mock<Repository<ActivityLog>>();
     const mockLlmLogRepo = mock<Repository<LlmCallLog>>();
+    const mockConfigRepo = mock<Repository<FeatureQuotaConfig>>();
+    // 5.6.8 — default: per-note 한도 5 (seed 값)
+    mockConfigRepo.findOne.mockResolvedValue({
+      feature: 'note_summary',
+      tier: 'free',
+      perResourceDayLimit: 5,
+    } as FeatureQuotaConfig);
     const mockLlm = mock<LlmService>();
     const mockMod = mock<ModerationService>();
     abuserBan = {
@@ -87,6 +96,10 @@ describe('NoteSummaryService', () => {
         NoteSummaryService,
         { provide: getRepositoryToken(ActivityLog), useValue: mockLogRepo },
         { provide: getRepositoryToken(LlmCallLog), useValue: mockLlmLogRepo },
+        {
+          provide: getRepositoryToken(FeatureQuotaConfig),
+          useValue: mockConfigRepo,
+        },
         { provide: LlmService, useValue: mockLlm },
         { provide: ModerationService, useValue: mockMod },
         { provide: DataSource, useValue: dataSource },
@@ -99,6 +112,7 @@ describe('NoteSummaryService', () => {
     llm = module.get(LlmService);
     moderation = module.get(ModerationService);
     quotaCheck = module.get(QuotaCheckService);
+    configRepo = module.get(getRepositoryToken(FeatureQuotaConfig));
 
     moderation.check.mockResolvedValue({
       flagged: false,
@@ -468,6 +482,278 @@ describe('NoteSummaryService', () => {
       ]);
       expect(r1.status).toBe('ok');
       expect(r2.status).toBe('ok');
+    });
+  });
+
+  // ── 5.6.8 — per_resource_day_limit admin 통제 ──
+  describe('5.6.8 per-note 한도 admin 통제', () => {
+    it('1) admin config perResourceDayLimit=3 → 같은 노트 3회 호출 후 blocked (5 hardcoded 무시)', async () => {
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 3,
+      } as FeatureQuotaConfig);
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValueOnce(3); // 이미 3회 사용
+      llm.call.mockResolvedValueOnce({
+        status: 'blocked_quota',
+        text: null,
+        errorMessage: 'blocked_quota',
+        callLogId: 'l-pre',
+      });
+      const r = await service.summarize('user-1', 'log-1');
+      expect(r.status).toBe('blocked');
+      expect(r.reason).toContain('3회');
+      expect(r.perNoteLimit).toBe(3);
+    });
+
+    it('2) admin config perResourceDayLimit=10 → 같은 노트 9회 사용도 통과', async () => {
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 10,
+      } as FeatureQuotaConfig);
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValueOnce(9);
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '요약',
+        promptTokens: 10,
+        completionTokens: 5,
+        costUsd: 0.001,
+        latencyMs: 100,
+        callLogId: 'l-1',
+        outputRedacted: false,
+      });
+      const r = await service.summarize('user-1', 'log-1');
+      expect(r.status).toBe('ok');
+      expect(r.perNoteLimit).toBe(10);
+      expect(r.remainingPerNote).toBe(0); // 10 - 9 - 1
+    });
+
+    it('3) config row 없음 → fallback NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H (5) 적용', async () => {
+      configRepo.findOne.mockResolvedValue(null);
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValueOnce(4);
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '요약',
+        promptTokens: 10,
+        completionTokens: 5,
+        costUsd: 0.001,
+        latencyMs: 100,
+        callLogId: 'l-1',
+        outputRedacted: false,
+      });
+      const r = await service.summarize('user-1', 'log-1');
+      expect(r.status).toBe('ok');
+      expect(r.perNoteLimit).toBe(NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H);
+    });
+
+    it('4) config perResourceDayLimit=NULL → fallback 5', async () => {
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: null,
+      } as FeatureQuotaConfig);
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValueOnce(0);
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '요약',
+        promptTokens: 10,
+        completionTokens: 5,
+        costUsd: 0.001,
+        latencyMs: 100,
+        callLogId: 'l-1',
+        outputRedacted: false,
+      });
+      const r = await service.summarize('user-1', 'log-1');
+      expect(r.perNoteLimit).toBe(5);
+      expect(r.remainingPerNote).toBe(4);
+    });
+
+    it('5-regression) per-note count 쿼리는 status IN (ok, retry_parsing) 필터 (8/7 같은 limit 초과 표시 방지)', async () => {
+      // blocked_quota preBlock row 가 누적돼도 카운트 X
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 5,
+      } as FeatureQuotaConfig);
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValueOnce(2);
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '요약',
+        promptTokens: 10,
+        completionTokens: 5,
+        costUsd: 0.001,
+        latencyMs: 100,
+        callLogId: 'l-1',
+        outputRedacted: false,
+      });
+      await service.summarize('user-1', 'log-1');
+      const callArgs = emCount.mock.calls[0];
+      const whereCondition = callArgs[1].where;
+      expect(whereCondition.status).toBeDefined();
+    });
+
+    it('6) 응답에 perNoteLimit 항상 포함 (ok·blocked 둘 다, UI 가 "N/M" 표시)', async () => {
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 7,
+      } as FeatureQuotaConfig);
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValueOnce(2);
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '요약',
+        promptTokens: 10,
+        completionTokens: 5,
+        costUsd: 0.001,
+        latencyMs: 100,
+        callLogId: 'l-1',
+        outputRedacted: false,
+      });
+      const r = await service.summarize('user-1', 'log-1');
+      expect(r.perNoteLimit).toBe(7);
+    });
+  });
+
+  // ── 5.6.8 — getStatus (mount 시 잔여 표시용 read-only) ──
+  describe('5.6.8 getStatus (read-only)', () => {
+    let logFindOne: jest.Mock;
+    let llmLogCount: jest.Mock;
+
+    beforeEach(() => {
+      const repoMock = module ?? null;
+      void repoMock;
+      // logRepo / llmLogRepo 의 메서드 mock 접근
+      const logRepo = (
+        service as unknown as { logRepo: jest.Mocked<Repository<ActivityLog>> }
+      ).logRepo;
+      const llmLogRepo = (
+        service as unknown as {
+          llmLogRepo: jest.Mocked<Repository<LlmCallLog>>;
+        }
+      ).llmLogRepo;
+      logFindOne = logRepo.findOne as jest.Mock;
+      llmLogCount = llmLogRepo.count as jest.Mock;
+      logFindOne.mockReset();
+      llmLogCount.mockReset();
+    });
+
+    it('1) 정상 — log 본인 소유 + 24h 카운트 + admin limit 반환', async () => {
+      logFindOne.mockResolvedValue(makeLog());
+      llmLogCount.mockResolvedValue(2);
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 5,
+      } as FeatureQuotaConfig);
+      const r = await service.getStatus('user-1', 'log-1');
+      expect(r).toEqual({
+        perNoteUsed: 2,
+        perNoteLimit: 5,
+        remainingPerNote: 3,
+      });
+    });
+
+    it('2) log 없음 → NotFoundException', async () => {
+      logFindOne.mockResolvedValue(null);
+      await expect(service.getStatus('user-1', 'log-x')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(llmLogCount).not.toHaveBeenCalled();
+    });
+
+    it('3) 다른 user 의 log → ForbiddenException', async () => {
+      logFindOne.mockResolvedValue(makeLog({ userId: 'other-user' }));
+      await expect(service.getStatus('user-1', 'log-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('4) config NULL → fallback NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H', async () => {
+      logFindOne.mockResolvedValue(makeLog());
+      llmLogCount.mockResolvedValue(0);
+      configRepo.findOne.mockResolvedValue(null);
+      const r = await service.getStatus('user-1', 'log-1');
+      expect(r.perNoteLimit).toBe(NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H);
+    });
+
+    it('5) status 필터 — blocked/error row 카운트 X (where.status defined)', async () => {
+      logFindOne.mockResolvedValue(makeLog());
+      llmLogCount.mockResolvedValue(0);
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 5,
+      } as FeatureQuotaConfig);
+      await service.getStatus('user-1', 'log-1');
+      const where = llmLogCount.mock.calls[0][0].where;
+      expect(where.status).toBeDefined();
+    });
+
+    it('6) remainingPerNote 음수 안 나옴 (이미 한도 초과 시 0)', async () => {
+      logFindOne.mockResolvedValue(makeLog());
+      llmLogCount.mockResolvedValue(9); // 한도 5 초과
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 5,
+      } as FeatureQuotaConfig);
+      const r = await service.getStatus('user-1', 'log-1');
+      expect(r.perNoteUsed).toBe(9);
+      expect(r.remainingPerNote).toBe(0); // Math.max(0, ...)
+    });
+
+    // ── 5.6.9 — quota_reset_at 적용 (QuotaCheckService.resolveSince24h 위임) ──
+    it('5.6.9-a) getStatus → quotaCheck.resolveSince24h 호출 (single source of truth)', async () => {
+      logFindOne.mockResolvedValue(makeLog());
+      llmLogCount.mockResolvedValue(0);
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 5,
+      } as FeatureQuotaConfig);
+      // 1시간 전 반환 시 reset 효과
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      quotaCheck.resolveSince24h.mockResolvedValueOnce(oneHourAgo);
+      await service.getStatus('user-1', 'log-1');
+      expect(quotaCheck.resolveSince24h).toHaveBeenCalledWith('user-1');
+      const where = llmLogCount.mock.calls[0][0].where;
+      // Between 의 시작 시각이 oneHourAgo 와 같아야 함
+      const between = where.createdAt as { _value: Date[] };
+      expect(between._value[0]).toBe(oneHourAgo);
+    });
+
+    it('5.6.9-b) summarize 도 동일 — perNoteCount 쿼리가 resolveSince24h 사용', async () => {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      quotaCheck.resolveSince24h.mockResolvedValueOnce(oneHourAgo);
+      configRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        tier: 'free',
+        perResourceDayLimit: 5,
+      } as FeatureQuotaConfig);
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValueOnce(0);
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '요약',
+        promptTokens: 10,
+        completionTokens: 5,
+        costUsd: 0.001,
+        latencyMs: 100,
+        callLogId: 'l-1',
+        outputRedacted: false,
+      });
+      await service.summarize('user-1', 'log-1');
+      expect(quotaCheck.resolveSince24h).toHaveBeenCalledWith('user-1');
+      const where = emCount.mock.calls[0][1].where;
+      const between = where.createdAt as { _value: Date[] };
+      expect(between._value[0]).toBe(oneHourAgo);
     });
   });
 });

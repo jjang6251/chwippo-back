@@ -48,6 +48,17 @@ export class UserAiQuota {
   @Column({ type: 'varchar', length: 100 })
   reason: UserAiQuotaReason;
 
+  /**
+   * F6 PR 2 Phase 5.6.9 — admin 가 사용량 reset 시 wildcard 시각 저장.
+   * shape: `{"*": "ISO timestamp"}`. dayUsed 계산 시 GREATEST(24h ago, reset_at) 적용.
+   */
+  @Column({
+    name: 'quota_reset_at',
+    type: 'jsonb',
+    default: () => "'{}'::jsonb",
+  })
+  quotaResetAt: Record<string, string>;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

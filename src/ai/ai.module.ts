@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from '../activity/activity.module';
 import { AdminModule } from '../admin/admin.module';
+import { AlertHistory } from '../admin/entities/alert-history.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
 import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
@@ -16,6 +17,8 @@ import { AdminFeatureQuotasController } from './admin-feature-quotas.controller'
 import { AdminFeatureQuotasService } from './admin-feature-quotas.service';
 import { MyAiQuotasController } from './my-ai-quotas.controller';
 import { AbuserBanService } from './abuser-ban.service';
+import { AdminQuotaResetController } from './admin-quota-reset.controller';
+import { AdminQuotaResetService } from './admin-quota-reset.service';
 import { QuotaCheckService } from './quota-check.service';
 import { openaiClientProvider } from './openai-client.provider';
 import { OpenAIProvider } from './providers/openai.provider';
@@ -31,6 +34,8 @@ import { AnthropicProvider } from './providers/anthropic.provider';
       User,
       UserAiQuota,
       FeatureQuotaConfig,
+      // 5.6.3 — abuser-ban 이 alert_history 에 통합 row insert
+      AlertHistory,
     ]),
     forwardRef(() => ActivityModule),
     // AdminModule: AbuserBanService 가 AdminAuditService.log('auto_ban_ai', ...) 호출
@@ -39,6 +44,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
   controllers: [
     AdminAiUsageController,
     AdminFeatureQuotasController,
+    AdminQuotaResetController,
     MyAiQuotasController,
   ],
   providers: [
@@ -51,6 +57,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     AdminAiUsageService,
     AdminFeatureQuotasService,
     AbuserBanService,
+    AdminQuotaResetService,
     QuotaCheckService,
     DiscordNotifier,
   ],

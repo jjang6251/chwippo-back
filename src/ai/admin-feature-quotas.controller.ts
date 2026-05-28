@@ -31,6 +31,14 @@ class UpdateFeatureQuotaDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  /** 5.6.8 — 리소스별 24h 한도 (NULL=미사용, 1-100). 현재 NoteSummaryService 만 사용 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  perResourceDayLimit?: number;
 }
 
 @Controller('admin/ai-feature-quotas')
