@@ -105,30 +105,35 @@ export class ApplicationsService {
       app.needsDetail =
         app.status === 'IN_PROGRESS' && !(app.jobTitle ?? '').trim();
     }
-    await this.appRepo.save(app);
 
-    // 저장 완료 후 스텝 생성 (cascade 영향 없음)
-    if (wasPlanned && becomesInProgress) {
-      const existingSteps = await this.stepRepo.count({
-        where: { applicationId: id },
-      });
-      if (existingSteps === 0) {
-        await this.createDefaultSteps(this.stepRepo.manager, id, null);
-      }
-    }
+    // 트랜잭션 wrap: app.save + (조건부) default steps 생성 + (조건부) firstStep.save 가
+    // 부분 fail 시 (IN_PROGRESS 전환됐는데 step 0개 → UI 깨짐) 정합성 깨짐.
+    await this.dataSource.transaction(async (em) => {
+      await em.save(app);
 
-    // dto.deadline 받으면 첫 step.scheduled_date에 저장 (호환)
-    if (deadlineSent) {
-      const firstStep = await this.stepRepo.findOne({
-        where: { applicationId: id, orderIndex: 0 },
-      });
-      if (firstStep) {
-        firstStep.scheduledDate = dto.deadline
-          ? new Date(`${dto.deadline}T00:00:00+09:00`)
-          : null;
-        await this.stepRepo.save(firstStep);
+      // 저장 완료 후 스텝 생성 (cascade 영향 없음)
+      if (wasPlanned && becomesInProgress) {
+        const existingSteps = await em.count(ApplicationStep, {
+          where: { applicationId: id },
+        });
+        if (existingSteps === 0) {
+          await this.createDefaultSteps(em, id, null);
+        }
       }
-    }
+
+      // dto.deadline 받으면 첫 step.scheduled_date에 저장 (호환)
+      if (deadlineSent) {
+        const firstStep = await em.findOne(ApplicationStep, {
+          where: { applicationId: id, orderIndex: 0 },
+        });
+        if (firstStep) {
+          firstStep.scheduledDate = dto.deadline
+            ? new Date(`${dto.deadline}T00:00:00+09:00`)
+            : null;
+          await em.save(firstStep);
+        }
+      }
+    });
 
     return this.findOne(userId, id);
   }
