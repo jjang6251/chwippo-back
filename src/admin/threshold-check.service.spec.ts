@@ -99,7 +99,9 @@ describe('ThresholdCheckService', () => {
       logRepo.createQueryBuilder.mockReturnValueOnce(
         makeQb<LlmCallLog>([], { cost: '60.00' }),
       );
-      historyRepo.createQueryBuilder.mockReturnValueOnce(makeQb<AlertHistory>([], null, 0));
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
       discord.notify.mockResolvedValue('sent');
       await service.checkDailyCost(50);
       expect(discord.notify).toHaveBeenCalledTimes(1);
@@ -120,7 +122,9 @@ describe('ThresholdCheckService', () => {
       logRepo.createQueryBuilder.mockReturnValueOnce(
         makeQb<LlmCallLog>([], { total: '100', errors: '20' }),
       );
-      historyRepo.createQueryBuilder.mockReturnValueOnce(makeQb<AlertHistory>([], null, 0));
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
       discord.notify.mockResolvedValue('sent');
       await service.checkHourlyErrorRate(0.1);
       expect(discord.notify).toHaveBeenCalled();
@@ -156,7 +160,9 @@ describe('ThresholdCheckService', () => {
       logRepo.createQueryBuilder
         .mockReturnValueOnce(makeQb<LlmCallLog>([], { cost: '40' }))
         .mockReturnValueOnce(makeQb<LlmCallLog>([], { cost: '10' }));
-      historyRepo.createQueryBuilder.mockReturnValueOnce(makeQb<AlertHistory>([], null, 0));
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
       discord.notify.mockResolvedValue('sent');
       await service.checkVsYesterday(200);
       expect(discord.notify).toHaveBeenCalled();
@@ -165,7 +171,9 @@ describe('ThresholdCheckService', () => {
 
   describe('fireAlert', () => {
     it('dedup 1시간 내 sent 있음 → skipped_dedup (notify 미호출)', async () => {
-      historyRepo.createQueryBuilder.mockReturnValueOnce(makeQb<AlertHistory>([], null, 1));
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 1),
+      );
       const result = await service.fireAlert(
         'daily_cost',
         60,
@@ -180,7 +188,9 @@ describe('ThresholdCheckService', () => {
     });
 
     it('dedup 통과 → notify + history "sent" insert', async () => {
-      historyRepo.createQueryBuilder.mockReturnValueOnce(makeQb<AlertHistory>([], null, 0));
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
       discord.notify.mockResolvedValue('sent');
       const result = await service.fireAlert(
         'daily_cost',
@@ -195,7 +205,9 @@ describe('ThresholdCheckService', () => {
     });
 
     it('discord notify failed → history "failed" insert (best-effort)', async () => {
-      historyRepo.createQueryBuilder.mockReturnValueOnce(makeQb<AlertHistory>([], null, 0));
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
       discord.notify.mockResolvedValue('failed');
       const result = await service.fireAlert(
         'hourly_error_rate',
@@ -210,7 +222,9 @@ describe('ThresholdCheckService', () => {
     });
 
     it('webhook 미설정 → "skipped_no_webhook" history', async () => {
-      historyRepo.createQueryBuilder.mockReturnValueOnce(makeQb<AlertHistory>([], null, 0));
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
       discord.notify.mockResolvedValue('skipped_no_webhook');
       const result = await service.fireAlert(
         'vs_yesterday',

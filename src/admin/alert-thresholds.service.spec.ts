@@ -71,7 +71,10 @@ describe('AlertThresholdsService', () => {
         'update_alert_thresholds',
         'alert_thresholds',
         '1',
-        expect.objectContaining({ before: expect.anything(), after: expect.anything() }),
+        expect.objectContaining({
+          before: expect.anything(),
+          after: expect.anything(),
+        }),
       );
     });
 
