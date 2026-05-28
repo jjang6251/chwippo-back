@@ -39,6 +39,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     suspendedAt: null,
     aiConsentAt: null,
     aiConsentVersion: null,
+    tier: 'free',
     ...overrides,
   };
 }
@@ -490,6 +491,60 @@ describe('AdminUsersService', () => {
         await expect(
           service.updateUser(ADMIN_ID, USER_ID, { nickname: 'a'.repeat(101) }),
         ).rejects.toThrow(BadRequestException);
+      });
+    });
+
+    describe('tier 변경 (F6 PR 2 — F7 결제 전 admin 수동 부여)', () => {
+      it('free → pro 변경: audit update_tier + before·after detail', async () => {
+        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'free' }));
+        mockEntityManager.save.mockResolvedValue(makeUser({ tier: 'pro' }));
+        mockAuditService.log.mockResolvedValue(undefined);
+
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'pro' });
+
+        expect(mockAuditService.log).toHaveBeenCalledWith(
+          ADMIN_ID,
+          'update_tier',
+          'user',
+          USER_ID,
+          { before: 'free', after: 'pro' },
+          expect.anything(),
+        );
+      });
+
+      it('같은 tier 재지정 (free → free) → audit 미발생', async () => {
+        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'free' }));
+        mockAuditService.log.mockResolvedValue(undefined);
+
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'free' });
+
+        expect(mockAuditService.log).not.toHaveBeenCalledWith(
+          expect.anything(),
+          'update_tier',
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+        );
+      });
+
+      it('pro → enterprise 변경: audit', async () => {
+        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'pro' }));
+        mockEntityManager.save.mockResolvedValue(
+          makeUser({ tier: 'enterprise' }),
+        );
+        mockAuditService.log.mockResolvedValue(undefined);
+
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'enterprise' });
+
+        expect(mockAuditService.log).toHaveBeenCalledWith(
+          ADMIN_ID,
+          'update_tier',
+          'user',
+          USER_ID,
+          { before: 'pro', after: 'enterprise' },
+          expect.anything(),
+        );
       });
     });
 

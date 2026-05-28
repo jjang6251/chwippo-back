@@ -87,4 +87,16 @@ export class ActivityLogController {
   ) {
     return this.noteSummary.summarize(user.id, logId, { force: dto.force });
   }
+
+  /**
+   * 5.6.8 — 노트별 요약 잔여 횟수 조회 (mount 시 항상 표시용).
+   * summarize 호출 안 했어도 perNoteUsed/perNoteLimit 알려줌.
+   */
+  @Get('activity-logs/:logId/summarize-status')
+  summarizeStatus(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('logId', ParseUUIDPipe) logId: string,
+  ) {
+    return this.noteSummary.getStatus(user.id, logId);
+  }
 }

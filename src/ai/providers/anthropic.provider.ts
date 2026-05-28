@@ -59,25 +59,46 @@ export class AnthropicProvider implements LlmProvider {
     // Anthropic 의 structured output 패턴: tool_use 강제
     // 단일 tool 정의 + tool_choice 로 강제 호출 → tool.input 이 JSON schema 매칭 보장
     const toolName = req.jsonSchema.name;
+
+    // Phase 4 단계 B — web_search tool 활성화 (옵션)
+    // Anthropic web_search_20250305: allowed_domains 화이트리스트 + max_uses 비용 통제
+    // schema tool 과 함께 등록 — Claude 가 검색 후 결과를 structured output 으로 반환
+    type AnthropicTool = NonNullable<
+      Parameters<Anthropic['messages']['create']>[0]['tools']
+    >[number];
+    const tools: AnthropicTool[] = [
+      {
+        name: toolName,
+        description: `Structured output schema for ${toolName}`,
+        input_schema: req.jsonSchema.schema as Anthropic.Tool.InputSchema,
+      },
+    ];
+    if (req.webSearch) {
+      tools.push({
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: req.webSearch.maxUses,
+        allowed_domains: [...req.webSearch.allowedDomains],
+      } as unknown as AnthropicTool);
+    }
+
     const message = await this.client!.messages.create({
       model: req.model,
       system: req.systemPrompt,
       messages: [{ role: 'user', content: req.userPrompt }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
-      tools: [
-        {
-          name: toolName,
-          description: `Structured output schema for ${toolName}`,
-          input_schema: req.jsonSchema.schema as Anthropic.Tool.InputSchema,
-        },
-      ],
-      tool_choice: { type: 'tool', name: toolName },
+      tools,
+      // web_search 있으면 tool_choice 강제 안 함 (Claude 가 자율적으로 web_search → schema)
+      tool_choice: req.webSearch
+        ? { type: 'auto' }
+        : { type: 'tool', name: toolName },
     });
 
-    // tool_use 블록 추출
+    // tool_use 블록 추출 — structured output schema tool 만 (web_search 결과 X)
     const toolUseBlock = message.content.find(
-      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+      (block): block is Anthropic.ToolUseBlock =>
+        block.type === 'tool_use' && block.name === toolName,
     );
     if (!toolUseBlock) {
       throw new LlmJsonParseError(
@@ -91,7 +112,6 @@ export class AnthropicProvider implements LlmProvider {
     return {
       ...this.toResponse(message),
       json,
-      // tool_use 응답이므로 text 는 빈 문자열 (또는 tool_use 직전 text 블록)
     };
   }
 

@@ -344,16 +344,17 @@ describe('ActivityLogService', () => {
       expect(logRepo.delete).toHaveBeenCalledWith({ id: 'log-1' });
     });
 
-    it('source_refs ≥1 (F6 시나리오 stub) → Conflict + 카운트 메시지', async () => {
+    it('source_refs ≥1 (F6 PR 1·2 시나리오) → Conflict + 카운트 메시지 (자소서·면접 세션·면접 질문 분리)', async () => {
       logRepo.findOne.mockResolvedValue(makeLog());
       dataSource.query.mockImplementation(async (sql: string) => {
         if (sql.includes('information_schema')) return [{ exists: true }];
         if (sql.includes('coverletter_source_refs')) return [{ n: '2' }];
-        if (sql.includes('interview_source_refs')) return [{ n: '1' }];
+        if (sql.includes('interview_prep_sessions')) return [{ n: '1' }];
+        if (sql.includes('interview_prep_questions')) return [{ n: '3' }];
         return [];
       });
       await expect(service.remove('user-1', 'log-1')).rejects.toThrow(
-        /자소서 2건.*면접 1세션/,
+        /자소서 2건.*면접 세션 1개.*면접 질문 3개/,
       );
     });
 
@@ -385,6 +386,69 @@ describe('ActivityLogService', () => {
       expect(
         sqls.some((s) => s.includes('coverletter_source_refs WHERE log_id')),
       ).toBe(false);
+    });
+
+    it('PR 2: interview_prep_sessions.extra_log_ids JSONB @> 검색 + log id 정확 전달', async () => {
+      logRepo.findOne.mockResolvedValue(makeLog({ id: 'log-1' }));
+      logRepo.delete.mockResolvedValue({ raw: [], affected: 1 });
+      const sqls: string[] = [];
+      const params: unknown[][] = [];
+      dataSource.query.mockImplementation(
+        async (sql: string, p?: unknown[]) => {
+          sqls.push(sql);
+          if (p) params.push(p);
+          if (sql.includes('information_schema')) return [{ exists: true }];
+          return [{ n: '0' }];
+        },
+      );
+      await service.remove('user-1', 'log-1');
+      // interview_prep_sessions JSONB @> 쿼리 발생
+      const sessionQuery = sqls.find(
+        (s) =>
+          s.includes('interview_prep_sessions') &&
+          s.includes('extra_log_ids @>'),
+      );
+      expect(sessionQuery).toBeTruthy();
+      // 파라미터에 JSON.stringify(['log-1']) 전달 확인
+      expect(params.some((p) => p[0] === JSON.stringify(['log-1']))).toBe(true);
+    });
+
+    it('PR 2: interview_prep_questions.source_log_ids JSONB @> 검색', async () => {
+      logRepo.findOne.mockResolvedValue(makeLog({ id: 'log-1' }));
+      logRepo.delete.mockResolvedValue({ raw: [], affected: 1 });
+      const sqls: string[] = [];
+      dataSource.query.mockImplementation(async (sql: string) => {
+        sqls.push(sql);
+        if (sql.includes('information_schema')) return [{ exists: true }];
+        return [{ n: '0' }];
+      });
+      await service.remove('user-1', 'log-1');
+      expect(
+        sqls.some(
+          (s) =>
+            s.includes('interview_prep_questions') &&
+            s.includes('source_log_ids @>'),
+        ),
+      ).toBe(true);
+    });
+
+    it('PR 2: interview_prep_* 테이블 없으면 (마이그레이션 안 돈 환경) 통과 + 0 카운트', async () => {
+      logRepo.findOne.mockResolvedValue(makeLog());
+      logRepo.delete.mockResolvedValue({ raw: [], affected: 1 });
+      dataSource.query.mockImplementation(
+        async (sql: string, params: unknown[]) => {
+          // tableExists 가 interview_prep_* 면 false, 다른 건 true
+          if (sql.includes('information_schema')) {
+            const raw = params?.[0];
+            const name = typeof raw === 'string' ? raw : '';
+            if (name.startsWith('interview_prep_')) return [{ exists: false }];
+            return [{ exists: true }];
+          }
+          return [{ n: '0' }];
+        },
+      );
+      await service.remove('user-1', 'log-1');
+      expect(logRepo.delete).toHaveBeenCalledWith({ id: 'log-1' });
     });
   });
 

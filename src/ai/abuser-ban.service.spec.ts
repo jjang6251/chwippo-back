@@ -1,9 +1,10 @@
-import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository } from 'typeorm';
 import { AdminAuditService } from '../admin/admin-audit.service';
+import { AlertHistory } from '../admin/entities/alert-history.entity';
+import { DiscordNotifier } from '../common/discord-notifier';
 import { AbuserBanService } from './abuser-ban.service';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
@@ -24,7 +25,8 @@ describe('AbuserBanService', () => {
   let quotaRepo: jest.Mocked<Repository<UserAiQuota>>;
   let logRepo: jest.Mocked<Repository<LlmCallLog>>;
   let auditService: jest.Mocked<AdminAuditService>;
-  let config: jest.Mocked<ConfigService>;
+  let discord: jest.Mocked<DiscordNotifier>;
+  let historyRepo: jest.Mocked<Repository<AlertHistory>>;
   let fetchSpy: jest.SpyInstance;
 
   const USER_ID = 'user-1';
@@ -33,8 +35,11 @@ describe('AbuserBanService', () => {
     quotaRepo = mock<Repository<UserAiQuota>>();
     logRepo = mock<Repository<LlmCallLog>>();
     auditService = mock<AdminAuditService>();
-    config = mock<ConfigService>();
-    config.get.mockReturnValue(undefined); // default: webhook 미설정
+    discord = mock<DiscordNotifier>();
+    discord.notify.mockResolvedValue('skipped_no_webhook');
+    historyRepo = mock<Repository<AlertHistory>>();
+    historyRepo.create.mockImplementation((d) => d as AlertHistory);
+    historyRepo.save.mockResolvedValue({} as AlertHistory);
 
     fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -46,7 +51,8 @@ describe('AbuserBanService', () => {
         { provide: getRepositoryToken(UserAiQuota), useValue: quotaRepo },
         { provide: getRepositoryToken(LlmCallLog), useValue: logRepo },
         { provide: AdminAuditService, useValue: auditService },
-        { provide: ConfigService, useValue: config },
+        { provide: DiscordNotifier, useValue: discord },
+        { provide: getRepositoryToken(AlertHistory), useValue: historyRepo },
       ],
     }).compile();
     service = module.get<AbuserBanService>(AbuserBanService);
@@ -210,51 +216,56 @@ describe('AbuserBanService', () => {
     });
   });
 
-  describe('notifyDiscord', () => {
-    it('ADMIN_ALERT_WEBHOOK_URL 미설정 → fetch 미호출 (dev 환경 안전)', async () => {
-      config.get.mockReturnValue(undefined);
+  describe('notifyDiscord (DiscordNotifier 위임)', () => {
+    it('ban 발동 시 DiscordNotifier.notify 호출 (content 에 user·feature 포함)', async () => {
       quotaRepo.findOne.mockResolvedValue(null);
       logRepo.count.mockResolvedValue(30);
+      discord.notify.mockResolvedValue('sent');
       await service.checkAndBan(USER_ID, 'note_summary', 30);
-      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(discord.notify).toHaveBeenCalledTimes(1);
+      const content = discord.notify.mock.calls[0][0];
+      expect(content).toContain('AI Auto-Ban');
+      expect(content).toContain(USER_ID);
+      expect(content).toContain('note_summary');
     });
 
-    it('webhook URL 설정 → fetch 호출 (content body 포함)', async () => {
-      config.get.mockImplementation((key: string) =>
-        key === 'ADMIN_ALERT_WEBHOOK_URL'
-          ? 'https://discord.com/api/webhooks/test'
-          : undefined,
-      );
+    it('discord.notify 실패 (skipped_no_webhook) → ban 정상 진행 (best-effort)', async () => {
+      discord.notify.mockResolvedValue('skipped_no_webhook');
       quotaRepo.findOne.mockResolvedValue(null);
       logRepo.count.mockResolvedValue(30);
-      await service.checkAndBan(USER_ID, 'note_summary', 30);
-      expect(fetchSpy).toHaveBeenCalledWith(
-        'https://discord.com/api/webhooks/test',
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'Content-Type': 'application/json',
-          }),
-        }),
-      );
-    });
-
-    it('webhook 실패 → 에러 로깅만, ban 자체는 정상 발동 (best-effort)', async () => {
-      config.get.mockReturnValue('https://discord.com/api/webhooks/test');
-      quotaRepo.findOne.mockResolvedValue(null);
-      logRepo.count.mockResolvedValue(30);
-      fetchSpy.mockRejectedValueOnce(new Error('network error'));
       const r = await service.checkAndBan(USER_ID, 'note_summary', 30);
-      // ban 발동은 성공
       expect(r.banned).toBe(true);
       expect(quotaRepo.upsert).toHaveBeenCalled();
     });
 
-    it('webhook 4xx/5xx 응답 → 에러 로깅만, ban 정상', async () => {
-      config.get.mockReturnValue('https://discord.com/api/webhooks/test');
+    it('5.6.3 — ban 발동 시 alert_history insert (type=abuser_ban + webhook_status)', async () => {
       quotaRepo.findOne.mockResolvedValue(null);
       logRepo.count.mockResolvedValue(30);
-      fetchSpy.mockResolvedValueOnce({ ok: false, status: 500 });
+      discord.notify.mockResolvedValue('sent');
+      await service.checkAndBan(USER_ID, 'note_summary', 30);
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          alertType: 'abuser_ban',
+          webhookStatus: 'sent',
+          message: expect.stringContaining(USER_ID),
+        }),
+      );
+    });
+
+    it('5.6.3 — alert_history insert 실패 → ban 자체는 정상 (best-effort)', async () => {
+      quotaRepo.findOne.mockResolvedValue(null);
+      logRepo.count.mockResolvedValue(30);
+      discord.notify.mockResolvedValue('sent');
+      historyRepo.save.mockRejectedValueOnce(new Error('DB down'));
+      const r = await service.checkAndBan(USER_ID, 'note_summary', 30);
+      expect(r.banned).toBe(true);
+      expect(quotaRepo.upsert).toHaveBeenCalled();
+    });
+
+    it('discord.notify 실패 (failed) → ban 정상', async () => {
+      discord.notify.mockResolvedValue('failed');
+      quotaRepo.findOne.mockResolvedValue(null);
+      logRepo.count.mockResolvedValue(30);
       const r = await service.checkAndBan(USER_ID, 'note_summary', 30);
       expect(r.banned).toBe(true);
     });

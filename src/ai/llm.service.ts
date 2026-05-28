@@ -11,6 +11,7 @@ import {
   LlmProviderName,
 } from './entities/llm-call-log.entity';
 import { calcCostUsd } from './llm-pricing';
+import { buildMockLlmResponse } from './mock-llm-responses';
 import { getModelConfig } from './model-config';
 import { scrubOutputPii, scrubPii } from './pii-scrubber';
 import {
@@ -43,6 +44,11 @@ export interface LlmCallInput {
   preBlockedReason?: string;
   /** PR 0 — structured JSON output 필요 시 schema 전달. callJson 경로 활성화 */
   jsonSchema?: LlmProviderJsonRequest['jsonSchema'];
+  /**
+   * Phase 4 단계 B — web_search tool 활성화 (Anthropic 만 지원, jsonSchema 와 함께 사용).
+   * 화이트리스트 도메인 + max_uses 강제로 비용·법적 risk 제어.
+   */
+  webSearch?: LlmProviderJsonRequest['webSearch'];
 }
 
 export interface LlmCallOk {
@@ -84,7 +90,9 @@ export const CURRENT_AI_CONSENT_VERSION = 'v1';
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
-  private readonly providers: Record<LlmProviderName, LlmProvider>;
+  // 'mock' 은 LlmProviderName union 에 있으나 실제 provider 객체 없음 (mock 분기는 buildMockLlmResponse 가 처리).
+  // FEATURE_MATRIX 는 cfg.provider 로 mock 반환 안 함 → providers map 은 real 2개만.
+  private readonly providers: Record<'openai' | 'anthropic', LlmProvider>;
 
   constructor(
     private readonly openai: OpenAIProvider,
@@ -118,7 +126,54 @@ export class LlmService {
   async call(input: LlmCallInput): Promise<LlmCallResult> {
     const startedAt = Date.now();
     const cfg = getModelConfig(input.feature, this.config);
+    if (cfg.provider === 'mock') {
+      throw new Error(
+        `getModelConfig 가 cfg.provider='mock' 반환 — FEATURE_MATRIX 점검 필요 (feature=${input.feature})`,
+      );
+    }
     const provider = this.providers[cfg.provider];
+
+    // ── 0. Phase 4 dev-only mock — 모든 gate 우회 (UI 테스트 전용) ──
+    // 조건: NODE_ENV === 'development' + API key 미설정 + preBlocked 아님
+    // 의도: 동의·quota·moderation 전부 skip 하고 UI 흐름 통째로 테스트.
+    // 안전장치: production 환경에선 key 빠져도 mock 안 나감 (사용자에게 가짜 답변 노출 차단).
+    if (
+      !input.preBlockedStatus &&
+      process.env.NODE_ENV === 'development' &&
+      !provider.isAvailable
+    ) {
+      this.logger.warn(
+        `[MOCK MODE] ${cfg.provider}.${cfg.model} 호출 (feature=${input.feature}) — API key 미설정, 모든 gate 우회. 실제 호출 원하면 .env 에 ${cfg.provider.toUpperCase()}_API_KEY 추가 후 재시작.`,
+      );
+      const mock = buildMockLlmResponse(input.feature, !!input.jsonSchema);
+      // audit row insert — provider='mock', costUsd=0 (실제 LLM 미호출이지만 감사 가시화 필수)
+      const log = await this.saveAudit({
+        input,
+        model: cfg.model,
+        provider: 'mock',
+        promptHash: null,
+        promptExcerpt: null,
+        status: 'ok',
+        errorMessage: null,
+        promptTokens: mock.promptTokens,
+        completionTokens: mock.completionTokens,
+        costUsd: '0',
+        latencyMs: 0,
+        outputRedacted: false,
+        attempts: 1,
+      });
+      return {
+        status: 'ok',
+        text: mock.text,
+        json: mock.json,
+        promptTokens: mock.promptTokens,
+        completionTokens: mock.completionTokens,
+        costUsd: 0,
+        latencyMs: 0,
+        callLogId: log.id,
+        outputRedacted: false,
+      };
+    }
 
     // ── 1. preBlockedStatus 분기 (quota/moderation 사전 차단) ──
     // consent gate 보다 우선 — preBlocked 가 명시되면 그대로 audit (caller 가 결정한 상태)
@@ -140,6 +195,7 @@ export class LlmService {
     }
 
     // ── 3. provider 가용성 ──
+    // (dev mock 은 위 0단계에서 이미 처리. 여기 도달 = prod/test 또는 preBlocked 케이스)
     if (!provider.isAvailable) {
       const errMsg = `${cfg.provider.toUpperCase()}_API_KEY 미설정`;
       return this.saveBlocked(
@@ -198,6 +254,7 @@ export class LlmService {
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
             jsonSchema: input.jsonSchema,
+            webSearch: input.webSearch,
           });
         } else {
           result = await provider.complete({

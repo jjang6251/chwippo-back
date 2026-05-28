@@ -317,5 +317,85 @@ describe('ActivityService', () => {
         NotFoundException,
       );
     });
+
+    it('PR 2: activity 의 log 가 interview_prep_sessions.extra_log_ids JSONB 참조 → Conflict + ?| 쿼리 발생', async () => {
+      repo.findOne.mockResolvedValue(makeActivity());
+      const qb = {
+        select: jest.fn().mockReturnThis(),
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getRawMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'log-1' }, { id: 'log-2' }]),
+      } as unknown as ReturnType<DataSource['createQueryBuilder']>;
+      dataSource.createQueryBuilder.mockReturnValue(qb);
+      const sqls: string[] = [];
+      dataSource.query.mockImplementation(async (sql: string) => {
+        sqls.push(sql);
+        if (sql.includes('table_name = $1')) return [{ exists: true }];
+        // coverletter 0, interview_prep_sessions 1, interview_prep_questions 0 → Conflict
+        if (sql.includes('coverletter_source_refs')) return [{ n: '0' }];
+        if (sql.includes('interview_prep_sessions')) return [{ n: '1' }];
+        if (sql.includes('interview_prep_questions')) return [{ n: '0' }];
+        if (sql.includes('interview_sessions')) return [{ n: '0' }];
+        return [];
+      });
+      await expect(service.remove('user-1', 'act-1')).rejects.toThrow(
+        ConflictException,
+      );
+      // ?| (any-of) 연산자로 다중 log id 검색 — JSONB containment 다중
+      expect(
+        sqls.some(
+          (s) =>
+            s.includes('interview_prep_sessions') &&
+            s.includes('extra_log_ids ?|'),
+        ),
+      ).toBe(true);
+    });
+
+    it('PR 2: interview_prep_questions.source_log_ids JSONB ?| 검색 발생', async () => {
+      repo.findOne.mockResolvedValue(makeActivity());
+      const qb = {
+        select: jest.fn().mockReturnThis(),
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([{ id: 'log-1' }]),
+      } as unknown as ReturnType<DataSource['createQueryBuilder']>;
+      dataSource.createQueryBuilder.mockReturnValue(qb);
+      const sqls: string[] = [];
+      dataSource.query.mockImplementation(async (sql: string) => {
+        sqls.push(sql);
+        if (sql.includes('table_name = $1')) return [{ exists: true }];
+        return [{ n: '0' }];
+      });
+      await service.remove('user-1', 'act-1');
+      expect(
+        sqls.some(
+          (s) =>
+            s.includes('interview_prep_questions') &&
+            s.includes('source_log_ids ?|'),
+        ),
+      ).toBe(true);
+    });
+
+    it('PR 2: child log 0 → JSONB 쿼리 자체 skip (불필요한 검색 안 함)', async () => {
+      repo.findOne.mockResolvedValue(makeActivity());
+      const qb = {
+        select: jest.fn().mockReturnThis(),
+        from: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([]),
+      } as unknown as ReturnType<DataSource['createQueryBuilder']>;
+      dataSource.createQueryBuilder.mockReturnValue(qb);
+      const sqls: string[] = [];
+      dataSource.query.mockImplementation(async (sql: string) => {
+        sqls.push(sql);
+        if (sql.includes('table_name = $1')) return [{ exists: true }];
+        return [{ n: '0' }];
+      });
+      await service.remove('user-1', 'act-1');
+      // log-level countLogRefs 자체가 호출 안 됨 (logIds 비어 있으면 0 반환)
+      expect(sqls.some((s) => s.includes('source_log_ids ?|'))).toBe(false);
+    });
   });
 });

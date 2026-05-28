@@ -6,24 +6,25 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
-import { Between, DataSource, Repository } from 'typeorm';
+import { Between, DataSource, In, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
-import {
-  endOfTodayKst,
-  startOfMonthKst,
-  startOfTodayKst,
-} from '../common/datetime';
 import { AbuserBanService } from './abuser-ban.service';
+import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
+import { QuotaCheckService } from './quota-check.service';
 
+/**
+ * F6 PR 2 — note-specific 한도만 본 service 에서 관리.
+ * **일·월·cooldown·kill switch 는 QuotaCheckService 단일 진입점에 위임** (admin 통제 가능).
+ *
+ * memory `feedback_admin_quota_control` — 모든 LLM feature 는 admin 통제 가능해야 함.
+ */
 export const NOTE_SUMMARY_LIMITS = {
   PER_NOTE_PER_24H: 5,
-  PER_USER_PER_DAY: 30,
-  PER_USER_PER_MONTH: 300,
   MIN_NOTE_CHARS: 50,
-  MAX_INPUT_CHARS: 8000, // 너무 긴 노트는 잘라서 비용 통제
+  MAX_INPUT_CHARS: 8000,
 } as const;
 
 const SYSTEM_PROMPT = `너는 취준생의 활동 일지를 자소서·면접 작성에 쓸 수 있도록 핵심만 추출하는 요약가다.
@@ -41,10 +42,12 @@ export interface SummarizeNoteResult {
   status: 'ok' | 'cached' | 'blocked';
   summary: string | null;
   cached: boolean;
-  /** blocked 사유 사용자 표시용 메시지 */
   reason?: string;
-  /** 노트당 남은 호출 수 (24h window) */
   remainingPerNote?: number;
+  /** 5.6.8 — admin 통제 per-note 한도. UI 의 "노트당 N/M" 표시 — limit 동적 반영 */
+  perNoteLimit?: number;
+  /** COOLDOWN 시 사용자 UI 가 카운트다운 표시용 */
+  nextAvailableAt?: string;
 }
 
 @Injectable()
@@ -54,15 +57,15 @@ export class NoteSummaryService {
     private readonly logRepo: Repository<ActivityLog>,
     @InjectRepository(LlmCallLog)
     private readonly llmLogRepo: Repository<LlmCallLog>,
+    @InjectRepository(FeatureQuotaConfig)
+    private readonly configRepo: Repository<FeatureQuotaConfig>,
     private readonly llm: LlmService,
     private readonly moderation: ModerationService,
     private readonly dataSource: DataSource,
     private readonly abuserBan: AbuserBanService,
+    private readonly quotaCheck: QuotaCheckService,
   ) {}
 
-  /**
-   * note (Tiptap JSON) 에서 plain text 추출. 50자 미만이면 거부.
-   */
   static extractPlainText(note: Record<string, unknown> | null): string {
     if (!note) return '';
     const parts: string[] = [];
@@ -79,20 +82,6 @@ export class NoteSummaryService {
 
   private hashText(text: string): string {
     return createHash('sha256').update(text).digest('hex');
-  }
-
-  // KST 기준 윈도우 (Asia/Seoul). 서버 OS TZ 와 무관하게 사용자 시간대 기준으로 일·월 한도 계산.
-  // memory feedback-kst-local-date 참고.
-  private startOfToday(): Date {
-    return startOfTodayKst();
-  }
-
-  private startOfMonth(): Date {
-    return startOfMonthKst();
-  }
-
-  private endOfToday(): Date {
-    return endOfTodayKst();
   }
 
   async summarize(
@@ -117,7 +106,7 @@ export class NoteSummaryService {
 
       const hash = this.hashText(text);
 
-      // 캐시 hit (force 가 아니면 LLM 호출 없이 반환, 로그도 없음)
+      // 캐시 hit (force 가 아니면 LLM 호출 없이 반환)
       if (!opts.force && log.noteSummaryHash === hash && log.noteSummary) {
         return {
           status: 'cached',
@@ -126,25 +115,35 @@ export class NoteSummaryService {
         };
       }
 
-      // 노트당 24h 한도
-      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      // 5.6.8 — 노트당 24h 한도는 admin 통제 (feature_quota_configs.per_resource_day_limit)
+      // NULL 또는 row 없음 → fallback NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H (안전)
+      const cfg = await this.configRepo.findOne({
+        where: { feature: 'note_summary', tier: 'free' },
+      });
+      const perNoteLimit =
+        cfg?.perResourceDayLimit ?? NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H;
+
+      // 5.6.9 — quota_reset_at 적용 (QuotaCheckService 단일 진입점)
+      const since24h = await this.quotaCheck.resolveSince24h(userId);
+      // 5.6.8 fix — blocked/error row 제외 (QuotaCheckService 와 동일 정책).
       const perNoteCount = await em.count(LlmCallLog, {
         where: {
           userId,
           feature: 'note_summary',
           resourceType: 'activity_log',
           resourceId: logId,
+          status: In(['ok', 'retry_parsing']),
           createdAt: Between(since24h, new Date()),
         },
       });
-      if (perNoteCount >= NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H) {
+      if (perNoteCount >= perNoteLimit) {
         await this.llm.call({
           userId,
           feature: 'note_summary',
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: text,
           preBlockedStatus: 'blocked_quota',
-          preBlockedReason: `노트당 24시간 한도 (${NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H}회) 초과`,
+          preBlockedReason: `노트당 24시간 한도 (${perNoteLimit}회) 초과`,
           resourceType: 'activity_log',
           resourceId: logId,
         });
@@ -152,73 +151,40 @@ export class NoteSummaryService {
           status: 'blocked',
           summary: null,
           cached: false,
-          reason: `이 노트는 24시간 동안 ${NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H}회 요약을 모두 사용했어요.`,
+          reason: `이 노트는 24시간 동안 ${perNoteLimit}회 요약을 모두 사용했어요.`,
           remainingPerNote: 0,
+          perNoteLimit,
         };
       }
 
-      // 사용자 일·월 한도. Phase 3: user_ai_quotas active override 가 있으면 perDay 축소
-      const override = await this.abuserBan.getActiveOverride(userId);
-      const effectivePerDay =
-        override?.dailyCapOverride != null
-          ? Math.min(
-              NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY,
-              override.dailyCapOverride,
-            )
-          : NOTE_SUMMARY_LIMITS.PER_USER_PER_DAY;
-
-      const dayCount = await em.count(LlmCallLog, {
-        where: {
-          userId,
-          feature: 'note_summary',
-          createdAt: Between(this.startOfToday(), this.endOfToday()),
-        },
-      });
-      if (dayCount >= effectivePerDay) {
+      // 통합 quota check (enabled·day·month·cooldown·abuser override) — admin 통제 단일 진입점
+      const quota = await this.quotaCheck.checkAndPrepare(
+        userId,
+        'note_summary',
+      );
+      if (quota.blocked) {
         await this.llm.call({
           userId,
           feature: 'note_summary',
           systemPrompt: SYSTEM_PROMPT,
           userPrompt: text,
           preBlockedStatus: 'blocked_quota',
-          preBlockedReason: `일 한도 (${effectivePerDay}회) 초과`,
+          preBlockedReason: `${quota.code}: ${quota.reason}`,
           resourceType: 'activity_log',
           resourceId: logId,
         });
-        // Phase 3: ban trigger 시도 (3일 연속 도달 시 발동, fire & forget)
-        void this.abuserBan
-          .checkAndBan(userId, 'note_summary', effectivePerDay)
-          .catch(() => undefined);
+        // DAY_LIMIT 도달 시 abuser ban 트리거 (3일 연속 발동 평가, fire & forget)
+        if (quota.code === 'DAY_LIMIT') {
+          void this.abuserBan
+            .checkAndBan(userId, 'note_summary', 1)
+            .catch(() => undefined);
+        }
         return {
           status: 'blocked',
           summary: null,
           cached: false,
-          reason: `오늘 사용 가능한 요약 횟수를 모두 사용했어요 (${effectivePerDay}회).`,
-        };
-      }
-      const monthCount = await em.count(LlmCallLog, {
-        where: {
-          userId,
-          feature: 'note_summary',
-          createdAt: Between(this.startOfMonth(), new Date()),
-        },
-      });
-      if (monthCount >= NOTE_SUMMARY_LIMITS.PER_USER_PER_MONTH) {
-        await this.llm.call({
-          userId,
-          feature: 'note_summary',
-          systemPrompt: SYSTEM_PROMPT,
-          userPrompt: text,
-          preBlockedStatus: 'blocked_quota',
-          preBlockedReason: `월 한도 (${NOTE_SUMMARY_LIMITS.PER_USER_PER_MONTH}회) 초과`,
-          resourceType: 'activity_log',
-          resourceId: logId,
-        });
-        return {
-          status: 'blocked',
-          summary: null,
-          cached: false,
-          reason: `이번 달 사용 가능한 요약 횟수를 모두 사용했어요 (${NOTE_SUMMARY_LIMITS.PER_USER_PER_MONTH}회).`,
+          reason: quota.reason,
+          nextAvailableAt: quota.nextAvailableAt?.toISOString(),
         };
       }
 
@@ -278,9 +244,54 @@ export class NoteSummaryService {
         status: 'ok',
         summary: result.text,
         cached: false,
-        remainingPerNote:
-          NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H - perNoteCount - 1,
+        remainingPerNote: perNoteLimit - perNoteCount - 1,
+        perNoteLimit,
       };
     });
+  }
+
+  /**
+   * 5.6.8 — 노트별 현황만 조회 (mount 시 사용). LLM 호출 0.
+   * - log 존재·소유 검증
+   * - 24h 내 호출 횟수 + admin 통제 한도
+   */
+  async getStatus(
+    userId: string,
+    logId: string,
+  ): Promise<{
+    perNoteUsed: number;
+    perNoteLimit: number;
+    remainingPerNote: number;
+  }> {
+    const log = await this.logRepo.findOne({ where: { id: logId } });
+    if (!log) throw new NotFoundException('노트를 찾을 수 없습니다.');
+    if (log.userId !== userId)
+      throw new ForbiddenException('본인 노트만 조회할 수 있어요.');
+
+    const cfg = await this.configRepo.findOne({
+      where: { feature: 'note_summary', tier: 'free' },
+    });
+    const perNoteLimit =
+      cfg?.perResourceDayLimit ?? NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H;
+
+    // 5.6.9 — quota_reset_at 적용 (summarize 와 동일 정책)
+    const since24h = await this.quotaCheck.resolveSince24h(userId);
+    // 5.6.8 fix — summarize 와 동일 status 필터 (ok·retry_parsing 만 카운트)
+    const perNoteUsed = await this.llmLogRepo.count({
+      where: {
+        userId,
+        feature: 'note_summary',
+        resourceType: 'activity_log',
+        resourceId: logId,
+        status: In(['ok', 'retry_parsing']),
+        createdAt: Between(since24h, new Date()),
+      },
+    });
+
+    return {
+      perNoteUsed,
+      perNoteLimit,
+      remainingPerNote: Math.max(0, perNoteLimit - perNoteUsed),
+    };
   }
 }
