@@ -1,8 +1,8 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, In, Repository } from 'typeorm';
 import { AdminAuditService } from '../admin/admin-audit.service';
+import { DiscordNotifier } from '../common/discord-notifier';
 import { LlmCallLog, LlmFeature } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
 
@@ -38,7 +38,7 @@ export class AbuserBanService {
     private readonly logRepo: Repository<LlmCallLog>,
     @Inject(forwardRef(() => AdminAuditService))
     private readonly auditService: AdminAuditService,
-    private readonly config: ConfigService,
+    private readonly discord: DiscordNotifier,
   ) {}
 
   /**
@@ -147,25 +147,7 @@ export class AbuserBanService {
     feature: LlmFeature,
     validUntil: Date,
   ): Promise<void> {
-    const webhookUrl = this.config.get<string>('ADMIN_ALERT_WEBHOOK_URL');
-    if (!webhookUrl) return; // 미설정 → skip (dev 환경 OK)
-
     const content = `🚨 AI Auto-Ban\nuser=${userId}\nfeature=${feature}\nuntil=${validUntil.toISOString()}\ndaily_cap=${BAN_DAILY_CAP}`;
-    try {
-      const res = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-      });
-      if (!res.ok) {
-        this.logger.warn(
-          `Discord webhook returned ${res.status} (user=${userId})`,
-        );
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Discord webhook failed (user=${userId}): ${(err as Error).message}`,
-      );
-    }
+    await this.discord.notify(content);
   }
 }

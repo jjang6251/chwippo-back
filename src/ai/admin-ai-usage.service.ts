@@ -223,8 +223,7 @@ export class AdminAiUsageService {
       cost: string;
     }>();
     return rows.map((r) => ({
-      hour:
-        r.hour instanceof Date ? r.hour.toISOString() : String(r.hour),
+      hour: r.hour instanceof Date ? r.hour.toISOString() : String(r.hour),
       calls: Number(r.calls),
       costUsd: Number(r.cost),
     }));
@@ -237,10 +236,7 @@ export class AdminAiUsageService {
       .createQueryBuilder('l')
       .select('l.feature', 'feature')
       .addSelect('COUNT(*)', 'total')
-      .addSelect(
-        'COUNT(*) FILTER (WHERE l.output_redacted = TRUE)',
-        'redacted',
-      )
+      .addSelect('COUNT(*) FILTER (WHERE l.output_redacted = TRUE)', 'redacted')
       .where('l.created_at BETWEEN :start AND :end', { start, end })
       .andWhere("l.status IN ('ok', 'retry_parsing')")
       .groupBy('l.feature')
@@ -265,16 +261,12 @@ export class AdminAiUsageService {
    */
   async cacheHitRate(): Promise<CacheHitRateResponse> {
     const [ns, cr] = await Promise.all([
-      this.dataSource.query<
-        Array<{ total: string; with_summary: string }>
-      >(
+      this.dataSource.query<Array<{ total: string; with_summary: string }>>(
         `SELECT COUNT(*) AS total,
                 COUNT(*) FILTER (WHERE note_summary IS NOT NULL) AS with_summary
            FROM activity_logs`,
       ),
-      this.dataSource.query<
-        Array<{ rows: string; total_hits: string }>
-      >(
+      this.dataSource.query<Array<{ rows: string; total_hits: string }>>(
         `SELECT COUNT(*) AS rows, COALESCE(SUM(hit_count), 0) AS total_hits
            FROM company_research_cache
           WHERE opt_out = FALSE`,

@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from '../activity/activity.module';
 import { AdminModule } from '../admin/admin.module';
+import { DiscordNotifier } from '../common/discord-notifier';
 import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
@@ -51,6 +52,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     AdminFeatureQuotasService,
     AbuserBanService,
     QuotaCheckService,
+    DiscordNotifier,
   ],
   exports: [
     LlmService,
@@ -58,6 +60,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     NoteSummaryService,
     AbuserBanService, // ApplicationsModule(ai-coverletter-draft) 에서 quota override 통합
     QuotaCheckService, // PR 2 — 모든 LLM caller 가 호출하는 단일 quota 진입점
+    DiscordNotifier, // PR 2 Phase 5.4 — alert threshold cron 에서 공유
     TypeOrmModule,
   ],
 })

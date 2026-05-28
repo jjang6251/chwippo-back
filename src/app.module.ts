@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { envValidationSchema } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
@@ -26,6 +27,8 @@ import { HealthController } from './health/health.controller';
       validationSchema: envValidationSchema,
     }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    // F6 PR 2 Phase 5.4 — ThresholdCheckService cron (10분)
+    ScheduleModule.forRoot(),
     DatabaseModule,
     AuthModule,
     ApplicationsModule,

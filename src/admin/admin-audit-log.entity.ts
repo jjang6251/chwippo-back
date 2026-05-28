@@ -30,7 +30,10 @@ export type AuditAction =
   | 'update_ai_quota'
   // F6 PR 2 — admin 이 user.tier 변경 (free ↔ pro ↔ enterprise, F7 결제 전 수동 부여)
   // targetType = 'user', targetId = userId, detail: { before, after }
-  | 'update_tier';
+  | 'update_tier'
+  // F6 PR 2 Phase 5.4 — admin 이 alert_thresholds 변경 (daily_cost · hourly_error_rate · vs_yesterday · enabled)
+  // targetType = 'alert_thresholds', targetId = '1', detail: { before, after }
+  | 'update_alert_thresholds';
 
 @Entity('admin_audit_logs')
 export class AdminAuditLog {
