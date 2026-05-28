@@ -90,7 +90,9 @@ export const CURRENT_AI_CONSENT_VERSION = 'v1';
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
-  private readonly providers: Record<LlmProviderName, LlmProvider>;
+  // 'mock' 은 LlmProviderName union 에 있으나 실제 provider 객체 없음 (mock 분기는 buildMockLlmResponse 가 처리).
+  // FEATURE_MATRIX 는 cfg.provider 로 mock 반환 안 함 → providers map 은 real 2개만.
+  private readonly providers: Record<'openai' | 'anthropic', LlmProvider>;
 
   constructor(
     private readonly openai: OpenAIProvider,
@@ -124,6 +126,11 @@ export class LlmService {
   async call(input: LlmCallInput): Promise<LlmCallResult> {
     const startedAt = Date.now();
     const cfg = getModelConfig(input.feature, this.config);
+    if (cfg.provider === 'mock') {
+      throw new Error(
+        `getModelConfig 가 cfg.provider='mock' 반환 — FEATURE_MATRIX 점검 필요 (feature=${input.feature})`,
+      );
+    }
     const provider = this.providers[cfg.provider];
 
     // ── 0. Phase 4 dev-only mock — 모든 gate 우회 (UI 테스트 전용) ──
