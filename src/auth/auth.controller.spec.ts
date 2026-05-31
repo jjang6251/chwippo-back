@@ -368,6 +368,8 @@ describe('AuthController', () => {
       role: 'user',
       onboardedAt: null,
       termsAgreedAt: new Date('2026-01-01'),
+      aiConsentAt: null,
+      aiConsentVersion: null,
     };
 
     it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
@@ -402,6 +404,8 @@ describe('AuthController', () => {
           role: 'user',
           onboardedAt: null,
           termsAgreedAt: authenticatedUser.termsAgreedAt,
+          aiConsentAt: null,
+          aiConsentVersion: null,
         },
       });
     });

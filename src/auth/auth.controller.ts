@@ -26,6 +26,8 @@ interface AuthenticatedUser {
   role: string;
   onboardedAt: Date | null;
   termsAgreedAt: Date | null;
+  aiConsentAt: Date | null;
+  aiConsentVersion: string | null;
 }
 
 interface KakaoCallbackUser {
@@ -165,6 +167,8 @@ export class AuthController {
         role: user.role,
         onboardedAt: user.onboardedAt ?? null,
         termsAgreedAt: user.termsAgreedAt ?? null,
+        aiConsentAt: user.aiConsentAt ?? null,
+        aiConsentVersion: user.aiConsentVersion ?? null,
       },
     };
   }

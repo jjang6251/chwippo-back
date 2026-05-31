@@ -796,7 +796,11 @@ describe('LlmService', () => {
         userPrompt: 'u',
         jsonSchema: {
           name: 'noop',
-          schema: { type: 'object', properties: {}, additionalProperties: true },
+          schema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: true,
+          },
         },
       });
       expect(r.status).toBe('ok');
@@ -817,6 +821,140 @@ describe('LlmService', () => {
       const saved = (logRepo.save as jest.Mock).mock.calls[0][0];
       // FEATURE_MATRIX.note_summary.model = 'gpt-4o-mini' (light 강제)
       expect(saved.model).toMatch(/gpt-4o-mini|gpt-4o/);
+    });
+  });
+
+  // ── Phase 3 — provider fallback (5xx · timeout · network) ──
+  describe('fallback path', () => {
+    /**
+     * 사전 조건: 두 provider 모두 available. anthropic feature (coverletter_draft_v2) 사용 →
+     * 1차 anthropic 실패 시 자동 openai retry.
+     */
+    const setupRecoverable = (status?: number) => {
+      const err = new Error(
+        status ? `${status} server error` : 'timeout',
+      ) as Error & {
+        status?: number;
+      };
+      if (status) err.status = status;
+      anthropic.callJson = jest.fn().mockRejectedValue(err);
+      anthropic.complete = jest.fn().mockRejectedValue(err);
+    };
+
+    it('anthropic 500 → openai retry → ok + wasFallback=true', async () => {
+      setupRecoverable(500);
+      openai.complete.mockResolvedValue({
+        text: 'fallback ok',
+        promptTokens: 10,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2', // anthropic feature
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+      if (r.status === 'ok') {
+        expect(r.wasFallback).toBe(true);
+        expect(r.text).toBe('fallback ok');
+      }
+      // audit row 2건: 1차 실패 + 2차 success
+      const calls = (logRepo.save as jest.Mock).mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      const lastSave = calls[calls.length - 1][0];
+      expect(lastSave.status).toBe('ok');
+      expect(lastSave.errorMessage).toMatch(/FALLBACK_FROM/);
+    });
+
+    it('timeout (status 없음) → openai retry → ok', async () => {
+      setupRecoverable(); // no status, message='timeout'
+      openai.complete.mockResolvedValue({
+        text: 'ok',
+        promptTokens: 1,
+        completionTokens: 1,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+      if (r.status === 'ok') expect(r.wasFallback).toBe(true);
+    });
+
+    it('anthropic 429 (rate limit) → fallback X (raw error)', async () => {
+      setupRecoverable(429);
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      expect(openai.complete).not.toHaveBeenCalled();
+    });
+
+    it('anthropic 400 (bad request) → fallback X', async () => {
+      setupRecoverable(400);
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      expect(openai.complete).not.toHaveBeenCalled();
+    });
+
+    it('anthropic 500 + openai 500 → 둘 다 fail → error', async () => {
+      setupRecoverable(500);
+      const openaiErr = new Error('500 openai') as Error & { status?: number };
+      openaiErr.status = 500;
+      openai.complete.mockRejectedValue(openaiErr);
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+    });
+
+    it('fallback provider isAvailable=false → fallback skip', async () => {
+      setupRecoverable(500);
+      openai.isAvailable = false;
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      expect(openai.complete).not.toHaveBeenCalled();
+    });
+
+    it('openai feature (note_summary) 500 → anthropic 으로 fallback', async () => {
+      const err = new Error('500') as Error & { status?: number };
+      err.status = 500;
+      openai.complete.mockRejectedValue(err);
+      anthropic.complete.mockResolvedValue({
+        text: 'cross-provider fallback',
+        promptTokens: 5,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary', // openai feature
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+      if (r.status === 'ok') expect(r.wasFallback).toBe(true);
     });
   });
 });

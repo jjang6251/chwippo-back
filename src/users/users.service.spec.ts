@@ -330,6 +330,81 @@ describe('UsersService', () => {
     });
   });
 
+  // ── agreeAiConsent (Phase 5 — AI 사용 동의, PIPA 26조) ────
+  describe('agreeAiConsent', () => {
+    it('정상: 현재 버전으로 동의 → aiConsentAt + aiConsentVersion 갱신', async () => {
+      const user = makeUser({ aiConsentAt: null, aiConsentVersion: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.update.mockResolvedValue({} as any);
+      await service.agreeAiConsent('user-uuid-1', 'v1');
+      expect(userRepo.update).toHaveBeenCalledWith(
+        'user-uuid-1',
+        expect.objectContaining({
+          aiConsentAt: expect.any(Date),
+          aiConsentVersion: 'v1',
+        }),
+      );
+    });
+
+    it('멱등: 이미 동의된 user 재호출 — timestamp 갱신', async () => {
+      const user = makeUser({
+        aiConsentAt: new Date('2025-01-01'),
+        aiConsentVersion: 'v1',
+      });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.update.mockResolvedValue({} as any);
+      await service.agreeAiConsent('user-uuid-1', 'v1');
+      expect(userRepo.update).toHaveBeenCalled();
+    });
+
+    it('wrong version → BadRequestException', async () => {
+      await expect(
+        service.agreeAiConsent('user-uuid-1', 'v999'),
+      ).rejects.toThrow(BadRequestException);
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('없는 user → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+      await expect(
+        service.agreeAiConsent('user-unknown', 'v1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── withdrawAiConsent (Phase 5 — PIPA 26조 동등 보장) ────
+  describe('withdrawAiConsent', () => {
+    it('정상 철회 — aiConsentAt + aiConsentVersion 둘 다 NULL', async () => {
+      const user = makeUser({
+        aiConsentAt: new Date('2025-01-01'),
+        aiConsentVersion: 'v1',
+      });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.update.mockResolvedValue({} as any);
+      await service.withdrawAiConsent('user-uuid-1');
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        aiConsentAt: null,
+        aiConsentVersion: null,
+      });
+    });
+
+    it('멱등: 이미 철회된 user 재호출 OK (예외 X)', async () => {
+      const user = makeUser({ aiConsentAt: null, aiConsentVersion: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.update.mockResolvedValue({} as any);
+      await expect(
+        service.withdrawAiConsent('user-uuid-1'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('없는 user → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+      await expect(service.withdrawAiConsent('user-unknown')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
   // ── countByDate ────────────────────────────────────────
   describe('countByDate', () => {
     it('QueryBuilder getCount() 결과를 반환', async () => {

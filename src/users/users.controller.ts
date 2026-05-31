@@ -11,6 +11,7 @@ import { UsersService } from './users.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateNicknameDto } from './dto/update-nickname.dto';
 import { UpdateDashboardConfigDto } from './dto/update-dashboard-config.dto';
+import { AgreeAiConsentDto } from './dto/agree-ai-consent.dto';
 
 interface AuthUser {
   id: string;
@@ -30,6 +31,21 @@ export class UsersController {
   @HttpCode(204)
   async markOnboarded(@CurrentUser() user: AuthUser): Promise<void> {
     await this.usersService.markOnboarded(user.id);
+  }
+
+  @Post('me/ai-consent')
+  @HttpCode(204)
+  async agreeAiConsent(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: AgreeAiConsentDto,
+  ): Promise<void> {
+    await this.usersService.agreeAiConsent(user.id, dto.version);
+  }
+
+  @Delete('me/ai-consent')
+  @HttpCode(204)
+  async withdrawAiConsent(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.usersService.withdrawAiConsent(user.id);
   }
 
   @Patch('me/nickname')

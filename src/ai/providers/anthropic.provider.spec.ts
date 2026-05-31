@@ -43,7 +43,7 @@ describe('AnthropicProvider', () => {
         expect.objectContaining({
           apiKey: 'sk-ant-real',
           maxRetries: 0,
-          timeout: 30_000,
+          timeout: 90_000,
         }),
       );
     });

@@ -25,7 +25,9 @@ export type LlmFeature =
   | 'interview_prep_session'
   | 'interview_prep_followup'
   // PR 2 Phase 4 단계 B — 회사·직무 조사 (Anthropic Claude haiku + web_search tool)
-  | 'company_research';
+  | 'company_research'
+  // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn, structured output, suggestedUpdates 적용)
+  | 'coverletter_chat';
 
 /** F6 PR 2 Phase 5.6 — 'mock' 은 NODE_ENV='development' + API key 미설정 시 LlmService 의 mock 분기 (UI 흐름 테스트 전용). production 절대 X */
 export type LlmProviderName = 'openai' | 'anthropic' | 'mock';

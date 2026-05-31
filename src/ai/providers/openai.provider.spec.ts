@@ -45,7 +45,7 @@ describe('OpenAIProvider', () => {
         expect.objectContaining({
           apiKey: 'sk-real',
           maxRetries: 0,
-          timeout: 30_000,
+          timeout: 90_000,
         }),
       );
     });

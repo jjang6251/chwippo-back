@@ -24,6 +24,14 @@ export interface ModelConfig {
   /** output 토큰 cap (provider 의 max_tokens 파라미터). 모든 feature 명시 강제 */
   maxOutputTokens: number;
   temperature: number;
+  /**
+   * (옵션) 1차 provider 가 5xx · timeout · network 에러 시 fallback provider 로 1회 retry.
+   * 동일 prompt 그대로 호출. 429 · 400 schema · blocked_* 는 fallback 미적용.
+   * fallback 사용 시 model 은 fallback provider 의 default (gpt-4o-mini / claude-haiku-4-5).
+   */
+  fallbackProvider?: LlmProviderName;
+  fallbackModelEnvKey?: string;
+  fallbackDefaultModel?: string;
 }
 
 /**
@@ -122,7 +130,8 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     modelEnvKey: 'OPENAI_MODEL_LIGHT',
     defaultModel: 'gpt-4o-mini',
     maxInputTokens: 16_000,
-    maxOutputTokens: 3_000,
+    // Hybrid: main 5-8개 × (질문+답변 ~500자) + followup 10-16개 × (~250자) ≈ 7000자 JSON 필요
+    maxOutputTokens: 4_500,
     temperature: 0.5,
   },
   interview_prep_followup: {
@@ -143,6 +152,17 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     maxOutputTokens: 2_500, // 8 항목 JSON 응답 충분
     temperature: 0.2, // 사실 기반 정보 — 낮게
   },
+  // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn + structured output)
+  // 메시지 이력 6개 truncate, 컨텍스트 = 회사조사 + N문항 + source_refs + 메시지 이력
+  coverletter_chat: {
+    provider: 'anthropic',
+    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
+    defaultModel: 'claude-haiku-4-5',
+    maxInputTokens: 16_000,
+    // reply (~500자) + suggestedUpdates 4개 (각 1000자, 자소서 4문항 동시 채움) ≈ 5000자 JSON 필요
+    maxOutputTokens: 5_000,
+    temperature: 0.5,
+  },
 };
 
 export function getModelConfig(
@@ -162,4 +182,38 @@ export function getModelConfig(
     ...cfg,
     model: config.get<string>(cfg.modelEnvKey) ?? cfg.defaultModel,
   };
+}
+
+/**
+ * Provider 5xx · timeout · network 에러 시 사용할 fallback provider 설정 자동 결정.
+ * - anthropic → openai (gpt-4o-mini)
+ * - openai → anthropic (claude-haiku-4-5)
+ * - mock → fallback 미사용 (null)
+ *
+ * fallback 시 maxOutputTokens · temperature 는 원본 그대로 (모델만 교체).
+ * web_search 같은 anthropic 전용 도구는 fallback 시 자동 비활성 (LlmService 가 webSearch 인자 무시).
+ */
+export function getFallbackConfig(
+  cfg: ModelConfig & { model: string },
+  config: ConfigService,
+): (ModelConfig & { model: string }) | null {
+  if (cfg.provider === 'anthropic') {
+    return {
+      ...cfg,
+      provider: 'openai',
+      modelEnvKey: 'OPENAI_MODEL_LIGHT',
+      defaultModel: 'gpt-4o-mini',
+      model: config.get<string>('OPENAI_MODEL_LIGHT') ?? 'gpt-4o-mini',
+    };
+  }
+  if (cfg.provider === 'openai') {
+    return {
+      ...cfg,
+      provider: 'anthropic',
+      modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
+      defaultModel: 'claude-haiku-4-5',
+      model: config.get<string>('ANTHROPIC_MODEL_LIGHT') ?? 'claude-haiku-4-5',
+    };
+  }
+  return null;
 }

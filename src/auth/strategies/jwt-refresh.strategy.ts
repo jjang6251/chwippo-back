@@ -52,6 +52,8 @@ export class JwtRefreshStrategy extends PassportStrategy(
       role: user.role,
       onboardedAt: user.onboardedAt ?? null,
       termsAgreedAt: user.termsAgreedAt ?? null,
+      aiConsentAt: user.aiConsentAt ?? null,
+      aiConsentVersion: user.aiConsentVersion ?? null,
     };
   }
 }

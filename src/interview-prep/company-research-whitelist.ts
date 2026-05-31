@@ -15,22 +15,18 @@
  * 회사 공식 도메인 동적 추가는 후속 (Application 에 website_url 컬럼 신설 시).
  */
 export const COMPANY_RESEARCH_ALLOWED_DOMAINS = [
-  // 공시·공식
+  // 공시·공식 — robots.txt 공개, Anthropic crawler 허용
   'dart.fss.or.kr',
-  // 주요 언론사
-  'chosun.com',
-  'joongang.co.kr',
-  'donga.com',
-  'hankyung.com',
-  'mk.co.kr',
-  'sedaily.com',
-  // 포털 뉴스
-  'news.naver.com',
-  'news.daum.net',
-  'n.news.naver.com',
-  // 백과사전
+  // 백과사전 — CC BY-SA, crawler 친화적
   'ko.wikipedia.org',
   'en.wikipedia.org',
+  // 정부·공공 데이터
+  'data.go.kr',
+  // Note: 한국 6대 신문사 (chosun·joongang·donga·hankyung·mk·sedaily) +
+  // 포털 뉴스 (news.naver·news.daum) 는 Anthropic ClaudeBot crawler 가 차단되어
+  // allowed_domains 에 포함 시 400 invalid_request_error 발생.
+  // → 신문·블로그 정보가 필요한 경우 LlmService.call 에 webSearch: false 로 fallback,
+  //    Claude 학습 데이터 기반 회사 정보 활용 (정확도↓ but 차단 회피)
 ] as const;
 
 /**
