@@ -12,7 +12,7 @@ import {
 } from './entities/llm-call-log.entity';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
-import { getModelConfig } from './model-config';
+import { getFallbackConfig, getModelConfig } from './model-config';
 import { scrubOutputPii, scrubPii } from './pii-scrubber';
 import {
   LlmJsonParseError,
@@ -61,7 +61,30 @@ export interface LlmCallOk {
   latencyMs: number;
   callLogId: string;
   outputRedacted: boolean;
+  /** PR Phase 3 — 1차 provider 실패 후 fallback provider 로 retry 성공한 경우 true */
+  wasFallback?: boolean;
 }
+
+/**
+ * PR Phase 4 — Streaming JSON call 의 chunk event (Anthropic tool_use 전용).
+ * - 'partial': chunk 도착 시. json 은 buffer 누적의 partial parse 결과 (예: { reply: "안녕..." } 진행 중)
+ * - 'done': stream 종료. final json + audit row 저장 후 callLogId 포함
+ * - 'error': provider 실패. error message
+ */
+export type LlmStreamEvent<T = unknown> =
+  | { type: 'partial'; json: Partial<T> }
+  | {
+      type: 'done';
+      json: T;
+      text: string;
+      promptTokens: number;
+      completionTokens: number;
+      costUsd: number;
+      latencyMs: number;
+      callLogId: string;
+      outputRedacted: boolean;
+    }
+  | { type: 'error'; message: string };
 
 export interface LlmCallBlocked {
   status: Extract<
@@ -339,6 +362,112 @@ export class LlmService {
         this.logger.error(
           `LLM call failed (feature=${input.feature}, provider=${cfg.provider}): ${message}`,
         );
+
+        // === PR Phase 3 — fallback provider retry ===
+        // 5xx · timeout · network error 만 fallback. 429/400/401/403 은 fallback X (비용·버그·인증 문제).
+        const errStatus = (err as { status?: number })?.status;
+        const isRecoverable =
+          !errStatus ||
+          errStatus >= 500 ||
+          errStatus === 408 ||
+          /timeout/i.test(message);
+        const fallbackCfg = getFallbackConfig(cfg, this.config);
+        if (isRecoverable && fallbackCfg) {
+          const fbProvider =
+            this.providers[fallbackCfg.provider as 'openai' | 'anthropic'];
+          if (fbProvider?.isAvailable) {
+            // 1차 실패 audit row 먼저 저장 (관측성)
+            await this.saveAudit({
+              input,
+              model: cfg.model,
+              provider: cfg.provider,
+              promptHash,
+              promptExcerpt,
+              status: 'error',
+              errorMessage: `[FALLBACK_TRIGGERED] ${message}`,
+              promptTokens: 0,
+              completionTokens: 0,
+              costUsd: '0',
+              latencyMs: Date.now() - startedAt,
+              outputRedacted: false,
+              attempts,
+            });
+            try {
+              this.logger.warn(
+                `Fallback ${cfg.provider} → ${fallbackCfg.provider} (feature=${input.feature})`,
+              );
+              const fbStart = Date.now();
+              let fbResult: {
+                text: string;
+                promptTokens: number;
+                completionTokens: number;
+                json?: unknown;
+              };
+              if (input.jsonSchema) {
+                fbResult = await fbProvider.callJson({
+                  model: fallbackCfg.model,
+                  systemPrompt,
+                  userPrompt,
+                  maxTokens: cfg.maxOutputTokens,
+                  temperature: cfg.temperature,
+                  jsonSchema: input.jsonSchema,
+                  // webSearch 은 anthropic 전용 — fallback (보통 openai) 으로 가면 제외
+                });
+              } else {
+                fbResult = await fbProvider.complete({
+                  model: fallbackCfg.model,
+                  systemPrompt,
+                  userPrompt,
+                  maxTokens: cfg.maxOutputTokens,
+                  temperature: cfg.temperature,
+                });
+              }
+              const fbScrub = scrubOutputPii(fbResult.text);
+              const fbCost = calcCostUsd(
+                fallbackCfg.model,
+                fbResult.promptTokens,
+                fbResult.completionTokens,
+              );
+              const fbLatency = Date.now() - fbStart;
+              const fbLog = await this.saveAudit({
+                input,
+                model: fallbackCfg.model,
+                provider: fallbackCfg.provider,
+                promptHash,
+                promptExcerpt,
+                status: 'ok',
+                errorMessage: `[FALLBACK_FROM:${cfg.provider}]`,
+                promptTokens: fbResult.promptTokens,
+                completionTokens: fbResult.completionTokens,
+                costUsd: fbCost.toString(),
+                latencyMs: fbLatency,
+                outputRedacted: fbScrub.hasPii,
+                attempts: attempts + 1,
+              });
+              return {
+                status: 'ok',
+                text: fbScrub.text,
+                json: fbResult.json,
+                promptTokens: fbResult.promptTokens,
+                completionTokens: fbResult.completionTokens,
+                costUsd: fbCost,
+                latencyMs: fbLatency,
+                callLogId: fbLog.id,
+                outputRedacted: fbScrub.hasPii,
+                wasFallback: true,
+              };
+            } catch (fbErr) {
+              const fbMsg =
+                fbErr instanceof Error ? fbErr.message : 'fallback unknown';
+              this.logger.error(
+                `Fallback ALSO failed (${fallbackCfg.provider}): ${fbMsg}`,
+              );
+              // 양쪽 다 실패 → 원래 error path 로 (아래 saveAudit + return)
+            }
+          }
+        }
+        // === end fallback ===
+
         const log = await this.saveAudit({
           input,
           model: cfg.model,
@@ -364,6 +493,154 @@ export class LlmService {
     }
     // 도달 불가 (while attempts<2 안에서 항상 return 또는 throw)
     throw new Error('LlmService.call unreachable');
+  }
+
+  /**
+   * PR Phase 4 — Streaming JSON call.
+   *
+   * **흐름:**
+   * 1. consent gate (call 과 동일)
+   * 2. getModelConfig → anthropic 만 지원 (provider != 'anthropic' 면 즉시 error event yield)
+   * 3. PII 스크럽 + input cap check
+   * 4. AnthropicProvider.callJsonStream — async iterable
+   *    - 'partial' event 마다 yield (caller 가 SSE 로 forward)
+   *    - 'done' event 시 audit row + done event yield (callLogId 포함)
+   * 5. provider error → 'error' event + audit
+   *
+   * **Phase 3 fallback 비적용** — streaming 중 실패는 caller 가 non-stream fallback 으로 별도 처리 가능.
+   * 단순화 위해 우선 anthropic 만, recoverable error 발생 시 'error' event.
+   *
+   * **사용 예 (controller):**
+   * ```ts
+   * for await (const event of llm.callStream({...})) {
+   *   res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+   * }
+   * res.end()
+   * ```
+   */
+  async *callStream<T = unknown>(
+    input: LlmCallInput,
+  ): AsyncGenerator<LlmStreamEvent<T>> {
+    if (!input.jsonSchema) {
+      yield { type: 'error', message: 'callStream 은 jsonSchema 필수' };
+      return;
+    }
+    const startedAt = Date.now();
+
+    // 1. consent gate
+    const consentResult = await this.checkConsent(input.userId);
+    if (consentResult) {
+      yield { type: 'error', message: consentResult };
+      return;
+    }
+
+    // 2. provider 결정 — anthropic 만 streaming 지원
+    const cfg = getModelConfig(input.feature, this.config);
+    if (cfg.provider !== 'anthropic') {
+      yield {
+        type: 'error',
+        message: `streaming 은 anthropic 전용 (현재 ${cfg.provider})`,
+      };
+      return;
+    }
+    if (!this.anthropic.isAvailable) {
+      yield { type: 'error', message: 'ANTHROPIC_API_KEY 미설정' };
+      return;
+    }
+
+    // 3. PII 스크럽 + 본인 이름 블랙리스트
+    const nicknames = await this.getUserNameBlacklist(input.userId);
+    const systemPrompt = scrubPii(input.systemPrompt, {
+      blacklistedNames: nicknames,
+    }).text;
+    const userPrompt = scrubPii(input.userPrompt, {
+      blacklistedNames: nicknames,
+    }).text;
+
+    // 4. input cap
+    const inputTokens = estimateTokens(systemPrompt + '\n' + userPrompt);
+    if (inputTokens > cfg.maxInputTokens) {
+      yield {
+        type: 'error',
+        message: `입력 길이 초과 (${inputTokens} > ${cfg.maxInputTokens})`,
+      };
+      return;
+    }
+
+    const promptHash = this.hashPrompt(systemPrompt, userPrompt);
+    const promptExcerpt = userPrompt.slice(0, 200);
+
+    // 5. streaming
+    try {
+      for await (const event of this.anthropic.callJsonStream<T>({
+        model: cfg.model,
+        systemPrompt,
+        userPrompt,
+        maxTokens: cfg.maxOutputTokens,
+        temperature: cfg.temperature,
+        jsonSchema: input.jsonSchema,
+      })) {
+        if (event.type === 'partial') {
+          yield { type: 'partial', json: event.json };
+        } else {
+          // done — final json + audit
+          const outputScrub = scrubOutputPii(event.response.text);
+          const costUsd = calcCostUsd(
+            cfg.model,
+            event.response.promptTokens,
+            event.response.completionTokens,
+          );
+          const latencyMs = Date.now() - startedAt;
+          const log = await this.saveAudit({
+            input,
+            model: cfg.model,
+            provider: cfg.provider,
+            promptHash,
+            promptExcerpt,
+            status: 'ok',
+            errorMessage: '[STREAMING]',
+            promptTokens: event.response.promptTokens,
+            completionTokens: event.response.completionTokens,
+            costUsd: costUsd.toString(),
+            latencyMs,
+            outputRedacted: outputScrub.hasPii,
+            attempts: 1,
+          });
+          yield {
+            type: 'done',
+            json: event.json,
+            text: outputScrub.text,
+            promptTokens: event.response.promptTokens,
+            completionTokens: event.response.completionTokens,
+            costUsd,
+            latencyMs,
+            callLogId: log.id,
+            outputRedacted: outputScrub.hasPii,
+          };
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'streaming unknown';
+      this.logger.error(
+        `Streaming failed (feature=${input.feature}): ${message}`,
+      );
+      await this.saveAudit({
+        input,
+        model: cfg.model,
+        provider: cfg.provider,
+        promptHash,
+        promptExcerpt,
+        status: 'error',
+        errorMessage: `[STREAMING_ERROR] ${message}`,
+        promptTokens: 0,
+        completionTokens: 0,
+        costUsd: '0',
+        latencyMs: Date.now() - startedAt,
+        outputRedacted: false,
+        attempts: 1,
+      });
+      yield { type: 'error', message };
+    }
   }
 
   // ── private helpers ──

@@ -354,6 +354,154 @@ describe('CompanyResearchService', () => {
     });
   });
 
+  // ── F1 자소서 풀페이지 — application 단위 ──
+  describe('getCachedForApplication / fetchForApplication', () => {
+    const APP_ID = 'app-uuid-1';
+
+    it('getCachedForApplication: 다른 user → NotFound (IDOR 차단)', async () => {
+      appRepo.findOne.mockResolvedValueOnce(null);
+      await expect(
+        service.getCachedForApplication(USER_ID, APP_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(appRepo.findOne).toHaveBeenCalledWith({
+        where: { id: APP_ID, userId: USER_ID },
+      });
+    });
+
+    it('getCachedForApplication: cache miss → null', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce(null);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(r).toBeNull();
+    });
+
+    it('getCachedForApplication: cache hit (유효) → ok + isCached=true', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce({
+        id: 'cache-1',
+        aiResearch: { businessSummary: 'cached' },
+        sources: [],
+        expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+        updatedAt: new Date(),
+        optOut: false,
+        hitCount: 0,
+      } as never);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      if (!r || r.status !== 'ok') throw new Error('expected ok');
+      expect(r.isCached).toBe(true);
+    });
+
+    it('getCachedForApplication: opt_out → opt_out status', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce({
+        optOut: true,
+      } as never);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      if (!r || r.status !== 'opt_out') throw new Error('expected opt_out');
+    });
+
+    it('getCachedForApplication: expired cache → null (재fetch 유도)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce({
+        optOut: false,
+        expiresAt: new Date(Date.now() - 1000), // 만료
+        aiResearch: {},
+        sources: [],
+      } as never);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(r).toBeNull();
+    });
+
+    it('fetchForApplication: 다른 user → NotFound', async () => {
+      appRepo.findOne.mockResolvedValueOnce(null);
+      await expect(
+        service.fetchForApplication(USER_ID, APP_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('fetchForApplication: cache hit → LLM 미호출 + isCached=true', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce({
+        id: 'cache-1',
+        aiResearch: { businessSummary: 'cached' },
+        sources: [],
+        expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+        updatedAt: new Date(),
+        optOut: false,
+        hitCount: 0,
+      } as never);
+      const r = await service.fetchForApplication(USER_ID, APP_ID);
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.isCached).toBe(true);
+      expect(llm.call).not.toHaveBeenCalled();
+    });
+
+    it('fetchForApplication: resourceType=application_coverletter audit 명시', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce(null); // cache miss
+      quotaCheck.checkAndPrepare.mockResolvedValueOnce({
+        blocked: false,
+      } as never);
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '',
+        json: {
+          businessSummary: 'fresh',
+          recentTrends: 'r',
+          interviewKeywords: ['k'],
+        },
+        promptTokens: 100,
+        completionTokens: 50,
+        costUsd: 0.001,
+        latencyMs: 1000,
+        callLogId: 'log-1',
+        outputRedacted: false,
+      });
+      cacheRepo.create.mockReturnValueOnce({} as never);
+      cacheRepo.save.mockResolvedValueOnce({
+        updatedAt: new Date(),
+      } as never);
+      const r = await service.fetchForApplication(USER_ID, APP_ID);
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(llm.call).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resourceType: 'application_coverletter',
+          resourceId: APP_ID,
+        }),
+      );
+    });
+  });
+
   // ── quota ──
   describe('quota', () => {
     it('DAY_LIMIT → blocked + abuser ban 트리거 + audit row', async () => {

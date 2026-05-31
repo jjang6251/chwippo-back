@@ -21,7 +21,8 @@ export class OpenAIProvider implements LlmProvider {
     const apiKey = this.config.get<string>('OPENAI_API_KEY');
     if (apiKey) {
       // PR 0 — maxRetries=0 강제: SDK transport retry 차단 (callJson retry 와 곱셈 방지)
-      this.client = new OpenAI({ apiKey, maxRetries: 0, timeout: 30_000 });
+      // 면접 질문 생성 등 large output (5000+ 토큰) 응답이 30초 초과 가능 → 90초.
+      this.client = new OpenAI({ apiKey, maxRetries: 0, timeout: 90_000 });
       this.isAvailable = true;
     } else {
       this.client = null;

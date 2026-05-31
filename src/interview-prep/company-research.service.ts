@@ -175,6 +175,67 @@ export class CompanyResearchService {
   }
 
   /**
+   * application → companyName/jobCategory 추출. 본인 소유 검증.
+   * 자소서 풀페이지 (`/board/:appId/coverletter`) 에서 사용.
+   */
+  private async resolveCompanyFromApplication(
+    userId: string,
+    applicationId: string,
+  ): Promise<{ companyName: string; jobCategory: string | null }> {
+    const app = await this.appRepo.findOne({
+      where: { id: applicationId, userId },
+    });
+    if (!app) throw new NotFoundException('지원 카드를 찾을 수 없습니다.');
+    return {
+      companyName: app.companyName,
+      jobCategory: app.jobCategory ?? null,
+    };
+  }
+
+  /**
+   * 자소서 풀페이지 — 캐시만 조회 (없으면 null, LLM 호출 X)
+   */
+  async getCachedForApplication(
+    userId: string,
+    applicationId: string,
+  ): Promise<CompanyResearchResult | null> {
+    const { companyName, jobCategory } =
+      await this.resolveCompanyFromApplication(userId, applicationId);
+    const row = await this.findCacheRow(companyName, jobCategory);
+    if (!row) return null;
+    if (row.optOut) {
+      return {
+        status: 'opt_out',
+        reason: '이 회사는 정보 수집 동의가 철회됐어요.',
+      };
+    }
+    if (row.expiresAt < new Date()) return null;
+    return {
+      status: 'ok',
+      research: row.aiResearch,
+      sources: row.sources,
+      isCached: true,
+      cachedAt: row.updatedAt,
+    };
+  }
+
+  /**
+   * 자소서 풀페이지 — 캐시 우선 fetch, miss/expired 시 LLM 호출.
+   * fetchForSession 과 동일 흐름 (quota check + LLM 호출 + cache upsert).
+   */
+  async fetchForApplication(
+    userId: string,
+    applicationId: string,
+  ): Promise<CompanyResearchResult> {
+    const { companyName, jobCategory } =
+      await this.resolveCompanyFromApplication(userId, applicationId);
+    return this.fetchByCompany(userId, companyName, jobCategory, {
+      resourceType: 'application_coverletter',
+      resourceId: applicationId,
+    });
+  }
+
+  /**
    * 캐시만 조회 (없으면 null). 프론트 첫 진입 시 사용 — LLM 호출 X
    */
   async getCachedForSession(
@@ -215,7 +276,22 @@ export class CompanyResearchService {
       userId,
       sessionId,
     );
+    return this.fetchByCompany(userId, companyName, jobCategory, {
+      resourceType: 'interview_prep_session',
+      resourceId: sessionId,
+    });
+  }
 
+  /**
+   * 회사명·직무로 직접 fetch (resource 메타 명시).
+   * fetchForSession / fetchForApplication 공통 흐름.
+   */
+  private async fetchByCompany(
+    userId: string,
+    companyName: string,
+    jobCategory: string | null,
+    resource: { resourceType: string; resourceId: string },
+  ): Promise<CompanyResearchResult> {
     // 1. cache 조회
     const cached = await this.findCacheRow(companyName, jobCategory);
     if (cached) {
@@ -226,7 +302,6 @@ export class CompanyResearchService {
         };
       }
       if (cached.expiresAt > new Date()) {
-        // hit — count++ + 반환
         cached.hitCount += 1;
         await this.cacheRepo.save(cached);
         return {
@@ -237,7 +312,6 @@ export class CompanyResearchService {
           cachedAt: cached.updatedAt,
         };
       }
-      // expired — 아래 LLM 호출로 갱신
     }
 
     // 2. quota check
@@ -251,8 +325,8 @@ export class CompanyResearchService {
         feature: 'company_research',
         systemPrompt: '',
         userPrompt: '',
-        resourceType: 'interview_prep_session',
-        resourceId: sessionId,
+        resourceType: resource.resourceType,
+        resourceId: resource.resourceId,
         preBlockedStatus: 'blocked_quota',
         preBlockedReason: `${quota.code}: ${quota.reason}`,
       });
@@ -268,13 +342,13 @@ export class CompanyResearchService {
       return { status: 'blocked', reason: quota.reason };
     }
 
-    // 3. LLM 호출 (web_search + structured output)
+    // 3. LLM 호출
     const userPrompt =
       `# 회사명\n${companyName}\n\n` +
       (jobCategory ? `# 직무\n${jobCategory}\n\n` : '') +
       `위 회사·직무에 대해 화이트리스트 도메인을 검색해 8 항목을 정확히 채워주세요. 모르면 빈 문자열/빈 배열.`;
 
-    const result = await this.llm.call({
+    let result = await this.llm.call({
       userId,
       feature: 'company_research',
       systemPrompt: SYSTEM_PROMPT,
@@ -282,11 +356,34 @@ export class CompanyResearchService {
       jsonSchema: RESEARCH_JSON_SCHEMA,
       webSearch: {
         allowedDomains: [...COMPANY_RESEARCH_ALLOWED_DOMAINS],
-        maxUses: 3, // 비용 통제 — 호출 1회당 검색 최대 3번
+        maxUses: 3,
       },
-      resourceType: 'interview_prep_session',
-      resourceId: sessionId,
+      resourceType: resource.resourceType,
+      resourceId: resource.resourceId,
     });
+
+    // Fallback — Anthropic 가 화이트리스트 도메인 crawl 거부 (400) 시
+    // web_search 없이 1회 retry. Claude 학습 데이터 기반 정보 활용.
+    // 카카오뱅크 같은 유명 회사는 학습 데이터로 충분, 작은 회사는 부족하지만 차단 회피.
+    if (
+      result.status !== 'ok' &&
+      result.errorMessage?.includes('not accessible to our user agent')
+    ) {
+      this.logger.warn(
+        `web_search 도메인 차단 (company=${companyName}) → 도구 없이 retry`,
+      );
+      result = await this.llm.call({
+        userId,
+        feature: 'company_research',
+        systemPrompt: SYSTEM_PROMPT,
+        userPrompt:
+          userPrompt +
+          '\n\n(검색 도구를 사용할 수 없습니다. 학습 데이터 기반으로 가능한 정보만 채우세요. 확실하지 않으면 빈 문자열/빈 배열.)',
+        jsonSchema: RESEARCH_JSON_SCHEMA,
+        resourceType: resource.resourceType,
+        resourceId: resource.resourceId,
+      });
+    }
 
     if (result.status !== 'ok') {
       return {
@@ -296,9 +393,6 @@ export class CompanyResearchService {
     }
 
     const aiResearch = (result.json as CompanyResearchData) ?? {};
-
-    // sources URLs 추출 — Claude 가 web_search 한 결과의 인용 URL.
-    // 단순화: 응답 텍스트에서 URL 패턴 정규식 추출 + 화이트리스트 필터.
     const sources = this.extractSources(result.text);
 
     // 4. cache upsert

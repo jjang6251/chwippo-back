@@ -43,6 +43,7 @@
     "helmet": "^8.1.0",
     "joi": "^18.1.2",
     "openai": "^6.39.0",
+    "partial-json": "^0.1.7",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-kakao": "^1.0.1",
