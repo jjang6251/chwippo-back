@@ -126,12 +126,13 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     temperature: 0.2,
   },
   interview_prep_session: {
-    provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_LIGHT',
-    defaultModel: 'gpt-4o-mini',
+    // F1 v2 (2026-06-01) — anthropic 전환 + main 20 균등 분배 + streaming SSE (Phase 3)
+    provider: 'anthropic',
+    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
+    defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 16_000,
-    // Hybrid: main 5-8개 × (질문+답변 ~500자) + followup 10-16개 × (~250자) ≈ 7000자 JSON 필요
-    maxOutputTokens: 4_500,
+    // main 20개 × (질문 ~80자 + 답변 ~300자 = ~380자) + 일부 followup 1개 = ~8000자 JSON 필요
+    maxOutputTokens: 7_000,
     temperature: 0.5,
   },
   interview_prep_followup: {
