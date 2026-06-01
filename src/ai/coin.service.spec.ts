@@ -413,18 +413,19 @@ describe('CoinService', () => {
   // ───────────────────────────────────────────────────────────────────
 
   describe('Reset / 신규 user / 다음 reset 시각', () => {
-    it('29) calcNextResetAt — Free → 다음 매월 1일 KST', () => {
+    it('29) calcNextResetAt — Free → 다음 매월 1일 KST 자정', () => {
       const next = service.calcNextResetAt('free', null);
-      // 다음 매월 1일 0시 KST 인지 확인 (toLocaleString 으로 KST 환산)
-      const kstStr = next.toLocaleString('en-CA', {
+      // KST 자정 = UTC -9시. 즉 UTC 의 hour 가 15 (전월 마지막일 15:00 UTC = 다음 월 1일 0시 KST).
+      // toLocaleString hour 형식이 Node ICU 버전 따라 '00' / '24' 다르게 출력 → toISOString + UTC 검증으로 우회.
+      expect(next.getUTCHours()).toBe(15); // UTC 15시 = KST 0시
+      expect(next.getUTCMinutes()).toBe(0);
+      // KST 의 day 가 1 인지 확인 (UTC date + 9시간 후 = KST 의 1일 0시 → UTC 는 전월 마지막일 15시)
+      // 또는 toLocaleString day 부분만 검증:
+      const kstDay = next.toLocaleString('en-CA', {
         timeZone: 'Asia/Seoul',
-        year: 'numeric',
-        month: '2-digit',
         day: '2-digit',
-        hour: '2-digit',
-        hour12: false,
       });
-      expect(kstStr).toMatch(/^\d{4}-\d{2}-01, 00$/);
+      expect(kstDay).toBe('01');
     });
 
     it('30) calcNextResetAt — Lite/Standard → plan_started_at + 30일', () => {
