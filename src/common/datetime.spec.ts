@@ -83,13 +83,17 @@ describe('common/datetime — KST-fixed 헬퍼', () => {
       expect(start.getUTCHours()).toBe(15); // KST 00:00 = UTC 전날 15:00
     });
 
-    it('end = 다음달 1일 - 1ms (월말 경계)', () => {
-      const start = startOfMonthKst();
+    it('end = 다음달 1일 - 1ms (월말 경계, KST 기준)', () => {
       const end = endOfMonthKst();
-      // 다음 달 1일과 1ms 차이
-      const nextMonth = new Date(start.getTime());
-      nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
-      expect(end.getTime()).toBe(nextMonth.getTime() - 1);
+      // end + 1ms = 다음 달 1일 KST 00:00 → KST 날짜가 'YYYY-MM-01' (다음 달)
+      const oneMsAfter = new Date(end.getTime() + 1);
+      const oneMsAfterYmd = toKstDateString(oneMsAfter);
+      const [y, m] = todayKst().split('-').map(Number);
+      const nextY = m === 12 ? y + 1 : y;
+      const nextM = m === 12 ? 1 : m + 1;
+      expect(oneMsAfterYmd).toBe(
+        `${nextY}-${String(nextM).padStart(2, '0')}-01`,
+      );
     });
 
     it('end 의 KST 날짜는 이번 달 마지막 일 (자정 직전)', () => {
