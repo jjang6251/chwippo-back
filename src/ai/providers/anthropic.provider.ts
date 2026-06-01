@@ -212,10 +212,24 @@ export class AnthropicProvider implements LlmProvider {
       .map((block) => block.text)
       .join('')
       .trim();
+
+    // PR_B1 — usage 전체 필드 정확 추출 (token 계산 critical, 마진 보호)
+    const usage = message.usage;
+    // server_tool_use 의 web_search_requests 합산. SDK 타입 누락 가능성 대비 unknown cast
+    const serverToolUse = (
+      usage as unknown as {
+        server_tool_use?: { web_search_requests?: number };
+      }
+    )?.server_tool_use;
+    const webSearchCount = serverToolUse?.web_search_requests ?? 0;
+
     return {
       text,
-      promptTokens: message.usage?.input_tokens ?? 0,
-      completionTokens: message.usage?.output_tokens ?? 0,
+      promptTokens: usage?.input_tokens ?? 0,
+      completionTokens: usage?.output_tokens ?? 0,
+      cacheCreationTokens: usage?.cache_creation_input_tokens ?? 0,
+      cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+      webSearchCount,
       finishReason: this.mapStopReason(message.stop_reason),
     };
   }

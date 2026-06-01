@@ -90,6 +90,9 @@ describe('AnthropicProvider', () => {
         text: '안녕 하세요',
         promptTokens: 30,
         completionTokens: 10,
+        cacheCreationTokens: 0, // PR_B1 — usage 누락 시 0
+        cacheReadTokens: 0,
+        webSearchCount: 0,
         finishReason: 'stop',
       });
       expect(mockCreate).toHaveBeenCalledWith({

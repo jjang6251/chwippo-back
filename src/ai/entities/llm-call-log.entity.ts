@@ -72,6 +72,32 @@ export class LlmCallLog {
   @Column({ name: 'completion_tokens', type: 'int', default: 0 })
   completionTokens: number;
 
+  /** PR_B1 — Anthropic prompt cache write 토큰 ($1.25/M, input × 1.25) */
+  @Column({ name: 'cache_creation_tokens', type: 'int', default: 0 })
+  cacheCreationTokens: number;
+
+  /** PR_B1 — Anthropic prompt cache hit 토큰 ($0.10/M, input × 0.10 — 90% 할인) */
+  @Column({ name: 'cache_read_tokens', type: 'int', default: 0 })
+  cacheReadTokens: number;
+
+  /** PR_B1 — Anthropic web_search tool 사용 횟수 ($10/1000 = $0.01/search) */
+  @Column({ name: 'web_search_count', type: 'int', default: 0 })
+  webSearchCount: number;
+
+  /** PR_B1 — 차감된 코인 (0 = 차감 X — preBlocked·error·charges_coins=false 등) */
+  @Column({
+    name: 'coin_cost',
+    type: 'numeric',
+    precision: 6,
+    scale: 2,
+    default: 0,
+  })
+  coinCost: string;
+
+  /** PR_B1 — cost USD 분해 (`{input, output, cache_creation, cache_read, web_search}` 5 키) */
+  @Column({ name: 'cost_breakdown', type: 'jsonb', nullable: true })
+  costBreakdown: Record<string, number> | null;
+
   @Column({
     name: 'cost_usd',
     type: 'numeric',

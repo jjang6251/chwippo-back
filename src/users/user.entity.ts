@@ -60,6 +60,14 @@ export class User {
   })
   aiConsentVersion: string | null;
 
+  /** PR_B1 — 코인 시스템 onboarding modal 표시 여부. NULL → 첫 로그인 시 modal 노출 → 닫으면 NOW 저장 */
+  @Column({
+    name: 'onboarded_coin_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  onboardedCoinAt: Date | null;
+
   /**
    * F6 PR 2 Phase 1 — 사용자 결제 tier ('free'/'pro'/'enterprise').
    * `feature_quota_configs` 의 tier 별 한도가 적용됨. admin 이 'free' 한도 조절 시 'pro' 영향 0 (유료 보호).
