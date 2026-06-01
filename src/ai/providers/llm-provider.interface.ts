@@ -40,6 +40,12 @@ export interface LlmProviderResponse {
   text: string;
   promptTokens: number;
   completionTokens: number;
+  /** PR_B1 — Anthropic prompt cache write (input × 1.25 cost). 다른 provider 0 */
+  cacheCreationTokens?: number;
+  /** PR_B1 — Anthropic prompt cache hit (input × 0.10 cost). 다른 provider 0 */
+  cacheReadTokens?: number;
+  /** PR_B1 — Anthropic web_search tool 사용 횟수 ($0.01/search). 다른 provider 0 */
+  webSearchCount?: number;
   finishReason: 'stop' | 'length' | 'content_filter' | 'tool_use' | 'other';
 }
 

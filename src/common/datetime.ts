@@ -129,6 +129,21 @@ export function startOfMonthKst(tz: Tz = APP_TIMEZONE): Date {
   return new Date(`${y}-${m}-01T00:00:00${offset}`);
 }
 
+/**
+ * PR_B1 — 다음 매월 1일 0시 KST 의 `Date`.
+ * 코인 시스템 의 Free tier 갱신 시각 (lazy reset / cron / 신규 user 가입 시) 계산용.
+ */
+export function startOfNextMonthKst(tz: Tz = APP_TIMEZONE): Date {
+  const ymd = todayKst(tz);
+  const [y, m] = ymd.split('-').map(Number);
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  const offset = getTimezoneOffsetString(tz);
+  return new Date(
+    `${nextY}-${String(nextM).padStart(2, '0')}-01T00:00:00${offset}`,
+  );
+}
+
 /** 이번 달의 끝 (다음 달 1일 - 1ms) — KST 기준 month 가 UTC month 와 다른 edge (KST 매월 1일 0~9시 = UTC 전월) 대비 */
 export function endOfMonthKst(tz: Tz = APP_TIMEZONE): Date {
   const ymd = todayKst(tz);

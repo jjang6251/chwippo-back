@@ -6,11 +6,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
+import { CoinService } from '../ai/coin.service';
+import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
+import { TierConfig } from '../ai/entities/tier-config.entity';
 import { LlmService } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { Application } from '../applications/application.entity';
+import { startOfTodayKst } from '../common/datetime';
 import { COMPANY_RESEARCH_ALLOWED_DOMAINS } from './company-research-whitelist';
 import { CompanyResearchCache } from './entities/company-research-cache.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
@@ -125,9 +129,14 @@ export class CompanyResearchService {
     private readonly sessionRepo: Repository<InterviewPrepSession>,
     @InjectRepository(Application)
     private readonly appRepo: Repository<Application>,
+    @InjectRepository(LlmCallLog)
+    private readonly llmCallLogRepo: Repository<LlmCallLog>,
+    @InjectRepository(TierConfig)
+    private readonly tierRepo: Repository<TierConfig>,
     private readonly llm: LlmService,
     private readonly quotaCheck: QuotaCheckService,
     private readonly abuserBan: AbuserBanService,
+    private readonly coinService: CoinService,
   ) {}
 
   /** 정규화: lowercase + trim. 같은 회사 다른 표기 (대소문자·공백) cache 공유 */
@@ -314,7 +323,43 @@ export class CompanyResearchService {
       }
     }
 
-    // 2. quota check
+    // PR_B1 — 회사 조사 tier 별 cap (cache miss 일 N회). web_search_count > 0 인 호출만 카운트
+    const balance = await this.coinService.getBalanceWithLazyReset(userId);
+    const tierConfig = await this.tierRepo.findOne({
+      where: { tier: balance.tier },
+    });
+    if (tierConfig) {
+      const todayCacheMissCount = await this.llmCallLogRepo.count({
+        where: {
+          userId,
+          feature: 'company_research',
+          webSearchCount: MoreThan(0),
+          createdAt: MoreThanOrEqual(startOfTodayKst()),
+        },
+      });
+      if (todayCacheMissCount >= tierConfig.companyResearchDailyCap) {
+        return {
+          status: 'blocked',
+          reason: `오늘 회사 조사 한도 도달 (${tierConfig.companyResearchDailyCap}/${tierConfig.companyResearchDailyCap}). 내일 다시 시도하거나 Pro 결제로 한도 확장 가능`,
+        };
+      }
+    }
+
+    // PR_B1 — cache 재조회 (race window: cap check 도중 다른 user 가 채웠을 수 있음)
+    const cacheRetry = await this.findCacheRow(companyName, jobCategory);
+    if (cacheRetry && cacheRetry.expiresAt > new Date() && !cacheRetry.optOut) {
+      cacheRetry.hitCount += 1;
+      await this.cacheRepo.save(cacheRetry);
+      return {
+        status: 'ok',
+        research: cacheRetry.aiResearch,
+        sources: cacheRetry.sources,
+        isCached: true,
+        cachedAt: cacheRetry.updatedAt,
+      };
+    }
+
+    // 2. quota check (3중 가드 — cooldown·feature_quota_configs)
     const quota = await this.quotaCheck.checkAndPrepare(
       userId,
       'company_research',

@@ -4,6 +4,9 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository, SelectQueryBuilder } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
+import { CoinService } from '../ai/coin.service';
+import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
+import { TierConfig } from '../ai/entities/tier-config.entity';
 import { LlmService } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { Application } from '../applications/application.entity';
@@ -125,6 +128,28 @@ describe('CompanyResearchService', () => {
     quotaCheck.checkAndPrepare.mockResolvedValue({ blocked: false });
     abuserBan.checkAndBan.mockResolvedValue({ banned: false });
 
+    // PR_B1 — 새 의존성 mock
+    const llmCallLogRepo = mock<Repository<LlmCallLog>>();
+    llmCallLogRepo.count.mockResolvedValue(0); // 회사 조사 cap 통과 default
+    const tierRepo = mock<Repository<TierConfig>>();
+    tierRepo.findOne.mockResolvedValue({
+      tier: 'free',
+      monthlyCoinLimit: '100.0',
+      inputTokenCapPerCall: 8000,
+      defaultCooldownSeconds: 3,
+      companyResearchDailyCap: 2,
+      noteSummaryCooldownMinutes: 60,
+      priceKrw: 0,
+      active: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const coinService = {
+      getBalanceWithLazyReset: jest
+        .fn()
+        .mockResolvedValue({ balance: 100, tier: 'free' }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CompanyResearchService,
@@ -137,9 +162,12 @@ describe('CompanyResearchService', () => {
           useValue: sessionRepo,
         },
         { provide: getRepositoryToken(Application), useValue: appRepo },
+        { provide: getRepositoryToken(LlmCallLog), useValue: llmCallLogRepo },
+        { provide: getRepositoryToken(TierConfig), useValue: tierRepo },
         { provide: LlmService, useValue: llm },
         { provide: QuotaCheckService, useValue: quotaCheck },
         { provide: AbuserBanService, useValue: abuserBan },
+        { provide: CoinService, useValue: coinService },
       ],
     }).compile();
     service = module.get<CompanyResearchService>(CompanyResearchService);

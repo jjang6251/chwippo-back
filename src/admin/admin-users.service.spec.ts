@@ -39,6 +39,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     suspendedAt: null,
     aiConsentAt: null,
     aiConsentVersion: null,
+    onboardedCoinAt: null,
     tier: 'free',
     ...overrides,
   };

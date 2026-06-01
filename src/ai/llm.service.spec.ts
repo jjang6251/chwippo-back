@@ -5,6 +5,7 @@ import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
+import { CoinService } from './coin.service';
 import { CURRENT_AI_CONSENT_VERSION, LlmService } from './llm.service';
 import {
   LlmJsonParseError,
@@ -56,6 +57,7 @@ describe('LlmService', () => {
     suspendedAt: null,
     aiConsentAt: new Date(),
     aiConsentVersion: CURRENT_AI_CONSENT_VERSION,
+    onboardedCoinAt: null,
     tier: 'free',
     ...overrides,
   });
@@ -68,6 +70,11 @@ describe('LlmService', () => {
     model: 'gpt-4o-mini',
     promptTokens: 0,
     completionTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    webSearchCount: 0,
+    coinCost: '0',
+    costBreakdown: null,
     costUsd: '0',
     latencyMs: 0,
     status: 'ok',
@@ -115,6 +122,22 @@ describe('LlmService', () => {
       return undefined;
     });
 
+    // PR_B1 — CoinService mock (canCharge 항상 통과, charge 0 코인)
+    const coinService = {
+      canCharge: jest.fn().mockResolvedValue({ ok: true }),
+      charge: jest.fn().mockResolvedValue({
+        coinCost: 0,
+        costUsd: 0,
+        breakdown: {
+          input: 0,
+          output: 0,
+          cache_creation: 0,
+          cache_read: 0,
+          web_search: 0,
+        },
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LlmService,
@@ -123,6 +146,7 @@ describe('LlmService', () => {
         { provide: getRepositoryToken(LlmCallLog), useValue: mockLogRepo },
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: ConfigService, useValue: config },
+        { provide: CoinService, useValue: coinService },
       ],
     }).compile();
 

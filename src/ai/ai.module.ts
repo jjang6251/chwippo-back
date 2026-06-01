@@ -8,6 +8,14 @@ import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
+import { TierConfig } from './entities/tier-config.entity';
+import { FeatureCoinMeta } from './entities/feature-coin-meta.entity';
+import { UserCoinBalance } from './entities/user-coin-balance.entity';
+import { UserPlanHistory } from './entities/user-plan-history.entity';
+import { CoinService } from './coin.service';
+import { UserCoinService } from './user-coin.service';
+import { CoinResetCron } from './coin-reset.cron';
+import { MyCoinController } from './my-coin.controller';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
 import { NoteSummaryService } from './note-summary.service';
@@ -36,6 +44,11 @@ import { AnthropicProvider } from './providers/anthropic.provider';
       FeatureQuotaConfig,
       // 5.6.3 — abuser-ban 이 alert_history 에 통합 row insert
       AlertHistory,
+      // PR_B1 — 코인 시스템
+      TierConfig,
+      FeatureCoinMeta,
+      UserCoinBalance,
+      UserPlanHistory,
     ]),
     forwardRef(() => ActivityModule),
     // AdminModule: AbuserBanService 가 AdminAuditService.log('auto_ban_ai', ...) 호출
@@ -46,6 +59,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     AdminFeatureQuotasController,
     AdminQuotaResetController,
     MyAiQuotasController,
+    MyCoinController, // PR_B1
   ],
   providers: [
     openaiClientProvider, // ModerationService 가 사용 (moderations API)
@@ -59,6 +73,9 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     AbuserBanService,
     AdminQuotaResetService,
     QuotaCheckService,
+    CoinService, // PR_B1
+    UserCoinService, // PR_B1
+    CoinResetCron, // PR_B1
     DiscordNotifier,
   ],
   exports: [
@@ -67,6 +84,8 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     NoteSummaryService,
     AbuserBanService, // ApplicationsModule(ai-coverletter-draft) 에서 quota override 통합
     QuotaCheckService, // PR 2 — 모든 LLM caller 가 호출하는 단일 quota 진입점
+    CoinService, // PR_B1 — admin·결제 module 에서 차감·tier 변경 호출
+    UserCoinService, // PR_B1 — admin tier 변경 + history
     DiscordNotifier, // PR 2 Phase 5.4 — alert threshold cron 에서 공유
     TypeOrmModule,
   ],

@@ -10,6 +10,7 @@ import {
   LlmFeature,
   LlmProviderName,
 } from './entities/llm-call-log.entity';
+import { CoinService } from './coin.service';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
 import { getFallbackConfig, getModelConfig } from './model-config';
@@ -63,6 +64,14 @@ export interface LlmCallOk {
   outputRedacted: boolean;
   /** PR Phase 3 — 1차 provider 실패 후 fallback provider 로 retry 성공한 경우 true */
   wasFallback?: boolean;
+  /** PR_B1 — Anthropic prompt cache write 토큰 */
+  cacheCreationTokens?: number;
+  /** PR_B1 — Anthropic prompt cache hit 토큰 (90% 할인) */
+  cacheReadTokens?: number;
+  /** PR_B1 — Anthropic web_search tool 사용 횟수 */
+  webSearchCount?: number;
+  /** PR_B1 — 차감된 코인 (0 = 차감 X — charges_coins=false 또는 COIN_SYSTEM_ENABLED=false) */
+  coinCost?: number;
 }
 
 /**
@@ -125,6 +134,7 @@ export class LlmService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly config: ConfigService,
+    private readonly coinService: CoinService, // PR_B1 — canCharge + charge
   ) {
     this.providers = {
       openai: this.openai,
@@ -217,6 +227,23 @@ export class LlmService {
       );
     }
 
+    // ── 2.5. PR_B1 — 코인 잔여 추정 check (평균 × 1.2 잔여 ≥ 진행) ──
+    //   COIN_SYSTEM_ENABLED=false 또는 charges_coins=false feature → 항상 통과
+    const coinCheck = await this.coinService.canCharge(
+      input.userId,
+      input.feature,
+    );
+    if (!coinCheck.ok) {
+      return this.saveBlocked(
+        input,
+        cfg.model,
+        cfg.provider,
+        'blocked_quota',
+        coinCheck.reason ?? '코인이 부족해요',
+        startedAt,
+      );
+    }
+
     // ── 3. provider 가용성 ──
     // (dev mock 은 위 0단계에서 이미 처리. 여기 도달 = prod/test 또는 preBlocked 케이스)
     if (!provider.isAvailable) {
@@ -267,6 +294,9 @@ export class LlmService {
           text: string;
           promptTokens: number;
           completionTokens: number;
+          cacheCreationTokens?: number;
+          cacheReadTokens?: number;
+          webSearchCount?: number;
           json?: unknown;
         };
         if (input.jsonSchema) {
@@ -320,6 +350,19 @@ export class LlmService {
           });
         }
 
+        // ── 8.5. PR_B1 — 코인 차감 (status='ok' 만) ──
+        const chargeResult = await this.coinService.charge(
+          input.userId,
+          input.feature,
+          {
+            inputTokens: result.promptTokens,
+            outputTokens: result.completionTokens,
+            cacheCreationTokens: result.cacheCreationTokens,
+            cacheReadTokens: result.cacheReadTokens,
+            webSearchCount: result.webSearchCount,
+          },
+        );
+
         const log = await this.saveAudit({
           input,
           model: cfg.model,
@@ -330,6 +373,11 @@ export class LlmService {
           errorMessage: null,
           promptTokens: result.promptTokens,
           completionTokens: result.completionTokens,
+          cacheCreationTokens: result.cacheCreationTokens ?? 0,
+          cacheReadTokens: result.cacheReadTokens ?? 0,
+          webSearchCount: result.webSearchCount ?? 0,
+          coinCost: chargeResult.coinCost.toString(),
+          costBreakdown: chargeResult.breakdown,
           costUsd: costUsd.toString(),
           latencyMs,
           outputRedacted: outputScrub.hasPii,
@@ -342,6 +390,10 @@ export class LlmService {
           json: result.json,
           promptTokens: result.promptTokens,
           completionTokens: result.completionTokens,
+          cacheCreationTokens: result.cacheCreationTokens,
+          cacheReadTokens: result.cacheReadTokens,
+          webSearchCount: result.webSearchCount,
+          coinCost: chargeResult.coinCost,
           costUsd,
           latencyMs,
           callLogId: log.id,
@@ -714,7 +766,7 @@ export class LlmService {
     provider: LlmProviderName,
     status: Extract<
       LlmCallStatus,
-      'blocked_consent' | 'blocked_input_cap' | 'error'
+      'blocked_consent' | 'blocked_input_cap' | 'blocked_quota' | 'error'
     >,
     errorMessage: string,
     startedAt: number,
@@ -756,6 +808,16 @@ export class LlmService {
     latencyMs: number;
     outputRedacted: boolean;
     attempts: number;
+    /** PR_B1 — Anthropic prompt cache write 토큰 */
+    cacheCreationTokens?: number;
+    /** PR_B1 — Anthropic prompt cache hit 토큰 */
+    cacheReadTokens?: number;
+    /** PR_B1 — Anthropic web_search tool 호출 횟수 */
+    webSearchCount?: number;
+    /** PR_B1 — 차감된 코인 (NUMERIC, string) */
+    coinCost?: string;
+    /** PR_B1 — cost USD 분해 5 키 (input/output/cache_creation/cache_read/web_search) */
+    costBreakdown?: Record<string, number>;
   }): Promise<LlmCallLog> {
     return this.logRepo.save(
       this.logRepo.create({
@@ -765,6 +827,11 @@ export class LlmService {
         model: args.model,
         promptTokens: args.promptTokens,
         completionTokens: args.completionTokens,
+        cacheCreationTokens: args.cacheCreationTokens ?? 0,
+        cacheReadTokens: args.cacheReadTokens ?? 0,
+        webSearchCount: args.webSearchCount ?? 0,
+        coinCost: args.coinCost ?? '0',
+        costBreakdown: args.costBreakdown ?? null,
         costUsd: args.costUsd,
         latencyMs: args.latencyMs,
         status: args.status,
