@@ -129,12 +129,17 @@ export function startOfMonthKst(tz: Tz = APP_TIMEZONE): Date {
   return new Date(`${y}-${m}-01T00:00:00${offset}`);
 }
 
-/** 이번 달의 끝 (다음 달 1일 - 1ms) */
+/** 이번 달의 끝 (다음 달 1일 - 1ms) — KST 기준 month 가 UTC month 와 다른 edge (KST 매월 1일 0~9시 = UTC 전월) 대비 */
 export function endOfMonthKst(tz: Tz = APP_TIMEZONE): Date {
-  const start = startOfMonthKst(tz);
-  const next = new Date(start.getTime());
-  next.setUTCMonth(next.getUTCMonth() + 1);
-  return new Date(next.getTime() - 1);
+  const ymd = todayKst(tz);
+  const [y, m] = ymd.split('-').map(Number);
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  const offset = getTimezoneOffsetString(tz);
+  const nextMonthStart = new Date(
+    `${nextY}-${String(nextM).padStart(2, '0')}-01T00:00:00${offset}`,
+  );
+  return new Date(nextMonthStart.getTime() - 1);
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -158,6 +163,13 @@ export function getKstWeekSunday(
   tz: Tz = APP_TIMEZONE,
 ): string {
   return ymdAddDays(getKstWeekMonday(dateStr, tz), 6);
+}
+
+/** 이번 주 월요일 자정 (KST 기준) 의 `Date` 객체 — admin 통계·집계 윈도우용 */
+export function startOfKstWeek(tz: Tz = APP_TIMEZONE): Date {
+  const monday = getKstWeekMonday(undefined, tz);
+  const offset = getTimezoneOffsetString(tz);
+  return new Date(`${monday}T00:00:00${offset}`);
 }
 
 // ────────────────────────────────────────────────────────────────────────
