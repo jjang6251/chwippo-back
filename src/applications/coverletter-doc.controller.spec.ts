@@ -268,6 +268,7 @@ describe('CoverletterDocController', () => {
       chat.chat.mockResolvedValueOnce({
         userMessage: { id: 'm-u' } as never,
         assistantMessage: { id: 'm-a', content: '⚠️ 한도 초과' } as never,
+        assistantStatus: 'blocked_quota',
       });
       const r = await controller.sendChat(
         { id: 'u-1', role: 'user' },
@@ -281,6 +282,7 @@ describe('CoverletterDocController', () => {
       chat.chat.mockResolvedValueOnce({
         userMessage: { id: 'm-u' } as never,
         assistantMessage: { id: 'm-a', content: '⚠️ AI 응답 오류' } as never,
+        assistantStatus: 'error',
       });
       const r = await controller.sendChat(
         { id: 'u-1', role: 'user' },
@@ -297,6 +299,7 @@ describe('CoverletterDocController', () => {
           id: 'm-a',
           suggestedUpdates: [{ clId: 'cl-1', newAnswer: '답변' }],
         } as never,
+        assistantStatus: 'ok',
       });
       const r = await controller.sendChat(
         { id: 'u-1', role: 'user' },

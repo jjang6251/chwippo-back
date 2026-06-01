@@ -14,6 +14,7 @@ import {
   type CoverletterInput,
   type StepNoteInput,
 } from './interview-context-builder';
+import { CompanyResearchService } from './company-research.service';
 import { InterviewPrepQuestion } from './entities/interview-prep-question.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
 import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
@@ -55,6 +56,8 @@ export interface GenerateFollowupResult {
 }
 
 interface AiQuestionItem {
+  /** F1 v2 — 카테고리 enum (INTERVIEW_CATEGORIES 의 18종 중 1). 옛 응답은 undefined */
+  category?: string;
   question: string;
   suggested_answer: string;
   source_log_ids: string[];
@@ -75,6 +78,35 @@ interface AiFollowupResponse {
   source_log_ids: string[];
 }
 
+/**
+ * 면접 질문 카테고리 enum — deep research 2026-06-01 verified.
+ * 1차 (Incruit 2024 · 잡코리아 · 잡소설) + 2차 (직무별 verified) 결과 통합.
+ *
+ * Base (모든 직무 공통): 자기소개·지원동기·인성·실패·협업·임원/가치·컬처핏
+ * 직무별 (jobCategory fork): 개발=CS / 기획=비즈니스추론 / 마케팅=데이터·트렌드 / 영업=고객·실적 / 디자인=포트폴리오·프로세스
+ * 자소서 기반 추궁 = 자료 기반 깊이 있는 질문 (자소서 답변 인용)
+ */
+export const INTERVIEW_CATEGORIES = [
+  'self_intro', // 자기소개 (PEC 3단)
+  'motivation', // 지원동기
+  'personality', // 인성/장단점
+  'failure', // 실패 극복
+  'collaboration', // 협업·갈등
+  'executive', // 임원/가치관
+  'culture_fit', // 컬처핏 (회사 조사 활용)
+  'cs_tech', // CS 기술 (개발 직무)
+  'business_reasoning', // 비즈니스 추론·재무 (기획)
+  'data_metrics', // 데이터/지표 (마케팅)
+  'trend_ai', // AI 시대 트렌드 (마케팅)
+  'customer_handling', // 고객 대응 (영업)
+  'performance', // 실적/목표 달성 (영업)
+  'portfolio_decision', // 포트폴리오 의사결정 근거 (디자인)
+  'design_process', // 디자인 프로세스·방법론 (디자인)
+  'coverletter_based', // 자소서 기반 추궁
+  'company_industry', // 회사·산업 (회사 조사 활용)
+  'reverse_question', // 역질문
+] as const;
+
 const SESSION_JSON_SCHEMA = {
   name: 'interview_prep_session',
   schema: {
@@ -82,11 +114,20 @@ const SESSION_JSON_SCHEMA = {
     properties: {
       questions: {
         type: 'array',
-        minItems: 5,
-        maxItems: 8,
+        // F1 v2 — 2-stage 분할 (총 20). 한 stage 당 9-11개.
+        //   Stage 1 = Base 카테고리 (자기소개·지원동기·인성·실패·협업·임원·컬처핏·회사·역질문) ≈10
+        //   Stage 2 = 직무 fork + coverletter_based 깊이 추궁 ≈10
+        minItems: 8,
+        maxItems: 12,
         items: {
           type: 'object',
           properties: {
+            category: {
+              type: 'string',
+              enum: [...INTERVIEW_CATEGORIES],
+              description:
+                '질문 카테고리. SystemPrompt 의 카테고리 매트릭스 가이드 참조.',
+            },
             question: { type: 'string' },
             suggested_answer: { type: 'string' },
             source_log_ids: {
@@ -97,8 +138,10 @@ const SESSION_JSON_SCHEMA = {
             },
             follow_ups: {
               type: 'array',
-              minItems: 1,
-              maxItems: 2,
+              minItems: 0,
+              maxItems: 0,
+              description:
+                'follow_ups 는 무조건 빈 배열 — main 에 집중. 사용자가 필요 시 on-demand 호출.',
               items: {
                 type: 'object',
                 properties: {
@@ -115,6 +158,7 @@ const SESSION_JSON_SCHEMA = {
             },
           },
           required: [
+            'category',
             'question',
             'suggested_answer',
             'source_log_ids',
@@ -128,6 +172,21 @@ const SESSION_JSON_SCHEMA = {
     additionalProperties: false,
   },
 };
+
+// F1 v2 — 2-stage 분할 hint. SYSTEM_PROMPT 본문 끝에 append 하여 stage 별 동작 강제.
+//   호출 양식: stage1 → stage2 순차. quota 는 generateSession 진입에서 1번 체크 (2회 호출 묶음).
+//   audit row 는 2개 생성 (cost 정확). callLogId 는 stage1 의 것을 client 에 반환.
+const STAGE1_HINT = `
+
+# 이번 호출 — Stage 1 (Base 카테고리)
+- Base 카테고리만 9-11개 생성: self_intro · motivation · personality · failure · collaboration · executive · culture_fit · company_industry · reverse_question.
+- 직무 fork (cs_tech · business_reasoning · data_metrics · trend_ai · customer_handling · performance · portfolio_decision · design_process) 와 coverletter_based 는 만들지 마라 (다음 stage 에서 생성).`;
+
+const STAGE2_HINT = `
+
+# 이번 호출 — Stage 2 (직무 fork + 자소서 깊이)
+- Base 카테고리 (self_intro · motivation · personality · failure · collaboration · executive · culture_fit · company_industry · reverse_question) 는 Stage 1 에서 이미 생성됨. 절대 다시 만들지 마라.
+- 직무 fork 카테고리 (jobCategory 기반, 카테고리 가이드 의 '직무 fork' 섹션 따름) + coverletter_based (자소서·활동 일지에서 깊이 있는 추궁) 합쳐 9-11개 생성.`;
 
 const FOLLOWUP_JSON_SCHEMA = {
   name: 'interview_prep_followup',
@@ -181,6 +240,8 @@ export class InterviewPrepAiService {
     private readonly quotaCheck: QuotaCheckService,
     private readonly abuserBan: AbuserBanService,
     private readonly questionsService: InterviewPrepQuestionsService,
+    // F1 v2 — 회사 조사 cache 를 면접 prompt 에 inject (컬처핏·회사·산업 카테고리 질문)
+    private readonly companyResearch: CompanyResearchService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -288,6 +349,15 @@ export class InterviewPrepAiService {
       .filter((s) => s.notes?.trim())
       .map((s) => ({ stepName: s.name, notes: s.notes }));
 
+    // F1 v2 — 회사 조사 cache fetch (위키·DART 8 항목, status='ok' 시만). cache miss·opt_out·error 시 null.
+    const researchCache = await this.companyResearch
+      .getCachedForApplication(userId, session.applicationId)
+      .catch(() => null);
+    const companyResearch =
+      researchCache && researchCache.status === 'ok' && researchCache.research
+        ? researchCache.research
+        : null;
+
     const ctx = buildInterviewContext({
       application: {
         companyName: app.companyName,
@@ -297,6 +367,7 @@ export class InterviewPrepAiService {
       interviewType: session.interviewType,
       jobDescription: session.jobDescription,
       emphasisPoints: session.emphasisPoints,
+      companyResearch,
       coverletters,
       sourceLogs,
       extraLogs,
@@ -304,23 +375,24 @@ export class InterviewPrepAiService {
       sessionMemo: session.myMemo,
     });
 
-    // LLM 호출 (callJson + jsonSchema)
-    const result = await this.llm.call({
+    // F1 v2 — 2-stage 분할 호출. quota 1번 (위에서 통과), audit row 2개 (cost 정확).
+    // Stage 1 (base) 가 실패하면 전체 blocked. Stage 2 (fork) 가 실패하면 Stage 1 결과만 저장 (partial OK — 사용자 가치 우선).
+    const stage1 = await this.llm.call({
       userId,
       feature: 'interview_prep_session',
-      systemPrompt: ctx.systemPrompt,
+      systemPrompt: ctx.systemPrompt + STAGE1_HINT,
       userPrompt: ctx.userPrompt,
       jsonSchema: SESSION_JSON_SCHEMA,
       resourceType: 'interview_prep_session',
       resourceId: sessionId,
     });
 
-    if (result.status !== 'ok') {
+    if (stage1.status !== 'ok') {
       return {
         status: 'blocked',
-        reason: this.formatBlockReason(result.status, result.errorMessage),
+        reason: this.formatBlockReason(stage1.status, stage1.errorMessage),
         meta: {
-          callLogId: result.callLogId,
+          callLogId: stage1.callLogId,
           coverlettersUsed: ctx.meta.coverlettersUsed,
           logsUsed: ctx.meta.logsUsed,
           droppedCount: ctx.meta.droppedCount,
@@ -331,13 +403,13 @@ export class InterviewPrepAiService {
       };
     }
 
-    const parsed = result.json as AiSessionResponse | undefined;
-    if (!parsed?.questions || parsed.questions.length === 0) {
+    const stage1Parsed = stage1.json as AiSessionResponse | undefined;
+    if (!stage1Parsed?.questions || stage1Parsed.questions.length === 0) {
       return {
         status: 'blocked',
         reason: '질문 생성 결과가 비어있어요. 다시 시도해 주세요.',
         meta: {
-          callLogId: result.callLogId,
+          callLogId: stage1.callLogId,
           coverlettersUsed: ctx.meta.coverlettersUsed,
           logsUsed: ctx.meta.logsUsed,
           droppedCount: ctx.meta.droppedCount,
@@ -347,6 +419,29 @@ export class InterviewPrepAiService {
         },
       };
     }
+
+    // Stage 2 — 직무 fork + 자소서 깊이. 실패해도 stage 1 만 저장 (partial OK).
+    const stage2 = await this.llm.call({
+      userId,
+      feature: 'interview_prep_session',
+      systemPrompt: ctx.systemPrompt + STAGE2_HINT,
+      userPrompt: ctx.userPrompt,
+      jsonSchema: SESSION_JSON_SCHEMA,
+      resourceType: 'interview_prep_session',
+      resourceId: sessionId,
+    });
+    const stage2Parsed =
+      stage2.status === 'ok'
+        ? (stage2.json as AiSessionResponse | undefined)
+        : undefined;
+    const stage2Questions = stage2Parsed?.questions ?? [];
+    if (stage2.status !== 'ok' || stage2Questions.length === 0) {
+      this.logger.warn(
+        `interview_prep_session stage2 실패 (user=${userId}, session=${sessionId}, status=${stage2.status}): stage1 ${stage1Parsed.questions.length}개만 저장`,
+      );
+    }
+
+    const allQuestions = [...stage1Parsed.questions, ...stage2Questions];
 
     // hallucination 방어 — candidate 풀 안 id 만 filter
     const validIds = new Set(ctx.meta.candidateLogIds);
@@ -358,13 +453,14 @@ export class InterviewPrepAiService {
     let followupCount = 0;
     await this.dataSource.transaction(async (em) => {
       await em.delete(InterviewPrepQuestion, { sessionId });
-      for (let mi = 0; mi < parsed.questions.length; mi++) {
-        const main = parsed.questions[mi];
+      for (let mi = 0; mi < allQuestions.length; mi++) {
+        const main = allQuestions[mi];
         const mainRow = em.create(InterviewPrepQuestion, {
           sessionId,
           parentQuestionId: null,
           depth: 0,
           orderIndex: mi,
+          category: main.category ?? null,
           questionText: main.question,
           suggestedAnswer: main.suggested_answer,
           sourceLogIds: filterIds(main.source_log_ids ?? []),
@@ -393,7 +489,7 @@ export class InterviewPrepAiService {
     return {
       status: 'ok',
       meta: {
-        callLogId: result.callLogId,
+        callLogId: stage1.callLogId,
         coverlettersUsed: ctx.meta.coverlettersUsed,
         logsUsed: ctx.meta.logsUsed,
         droppedCount: ctx.meta.droppedCount,

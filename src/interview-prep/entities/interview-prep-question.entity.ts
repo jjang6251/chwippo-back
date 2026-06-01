@@ -65,6 +65,13 @@ export class InterviewPrepQuestion {
   @Column({ name: 'question_text', type: 'text' })
   questionText: string;
 
+  /**
+   * F1 v2 — 질문 카테고리 (INTERVIEW_CATEGORIES 18종 중 1). 옛 세션은 NULL.
+   * 마이그레이션 1780000000000-add-category-to-interview-prep-questions
+   */
+  @Column({ name: 'category', type: 'varchar', length: 40, nullable: true })
+  category: string | null;
+
   /** AI 가 생성한 모범 답안 (사용자 my_memo 와 분리) */
   @Column({ name: 'suggested_answer', type: 'text', nullable: true })
   suggestedAnswer: string | null;
