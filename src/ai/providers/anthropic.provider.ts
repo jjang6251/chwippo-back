@@ -56,7 +56,15 @@ export class AnthropicProvider implements LlmProvider {
     this.assertAvailable();
     const message = await this.client!.messages.create({
       model: req.model,
-      system: req.systemPrompt,
+      // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
+      //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
+      system: [
+        {
+          type: 'text',
+          text: req.systemPrompt,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: [{ role: 'user', content: req.userPrompt }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
@@ -96,7 +104,15 @@ export class AnthropicProvider implements LlmProvider {
 
     const message = await this.client!.messages.create({
       model: req.model,
-      system: req.systemPrompt,
+      // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
+      //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
+      system: [
+        {
+          type: 'text',
+          text: req.systemPrompt,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: [{ role: 'user', content: req.userPrompt }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
@@ -161,7 +177,15 @@ export class AnthropicProvider implements LlmProvider {
 
     const stream = this.client!.messages.stream({
       model: req.model,
-      system: req.systemPrompt,
+      // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
+      //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
+      system: [
+        {
+          type: 'text',
+          text: req.systemPrompt,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: [{ role: 'user', content: req.userPrompt }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,

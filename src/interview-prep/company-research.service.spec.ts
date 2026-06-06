@@ -183,7 +183,11 @@ describe('CompanyResearchService', () => {
 
       expect(r.status).toBe('ok');
       expect(r.isCached).toBe(true);
-      expect(r.research).toEqual({ businessSummary: '메신저·결제·모빌리티' });
+      // PR 보강 — buildResultFromCache 가 interviewKeywords 후처리 (legacy string → 객체)
+      expect(r.research).toEqual({
+        businessSummary: '메신저·결제·모빌리티',
+        interviewKeywords: [],
+      });
       expect(llm.call).not.toHaveBeenCalled();
       // hit_count 증가
       expect(cacheRepo.save).toHaveBeenCalledWith(
@@ -191,11 +195,11 @@ describe('CompanyResearchService', () => {
       );
     });
 
-    it('cache miss → LLM 호출 → upsert (90일 TTL)', async () => {
+    it('cache miss → LLM 호출 → upsert (30일 TTL — PR 보강)', async () => {
       cacheQb.getOne.mockResolvedValueOnce(null);
       llm.call.mockResolvedValue({
         status: 'ok',
-        text: 'see https://ko.wikipedia.org/wiki/카카오 for details',
+        text: '',
         json: {
           businessSummary: '메신저',
           coreValues: '책임감',
@@ -204,7 +208,23 @@ describe('CompanyResearchService', () => {
           financials: '매출 ↑',
           competitors: '네이버',
           jobInsights: '백엔드 Go/Java',
-          interviewKeywords: ['협업', '책임'],
+          interviewKeywords: [
+            { keyword: '협업', category: 'talent' },
+            { keyword: '책임', category: 'talent' },
+          ],
+          companyProfile: {},
+          talentProfile: [],
+          productsAndTech: {},
+          inferredFields: [],
+          // PR 보강 — sources 객체 배열 (json schema)
+          sources: [
+            {
+              id: 1,
+              title: '카카오 위키',
+              url: 'https://ko.wikipedia.org/wiki/카카오',
+              domain: 'ko.wikipedia.org',
+            },
+          ],
         },
         promptTokens: 500,
         completionTokens: 300,
@@ -219,11 +239,15 @@ describe('CompanyResearchService', () => {
       expect(r.status).toBe('ok');
       expect(r.isCached).toBe(false);
       expect(r.research?.businessSummary).toBe('메신저');
-      expect(r.sources).toContain('https://ko.wikipedia.org/wiki/카카오');
-      // 90일 TTL upsert
+      // PR 보강 — sources 객체 배열, ResearchSource[] 매칭
+      const sources = r.sources ?? [];
+      expect(sources.length).toBeGreaterThan(0);
+      expect(sources[0]).toMatchObject({
+        url: 'https://ko.wikipedia.org/wiki/카카오',
+      });
       expect(cacheRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          companyName: '카카오', // 정규화 (이미 lowercase)
+          companyName: '카카오',
           jobCategory: '백엔드',
         }),
       );
@@ -336,11 +360,11 @@ describe('CompanyResearchService', () => {
       expect(savedCall.companyName).toBe('kakao');
     });
 
-    it('sources 추출 — 화이트리스트 외 URL filter', async () => {
+    it('sources 추출 — 화이트리스트 외 도메인 filter (PR 보강)', async () => {
       cacheQb.getOne.mockResolvedValueOnce(null);
       llm.call.mockResolvedValue({
         status: 'ok',
-        text: 'refs: https://ko.wikipedia.org/wiki/x and https://jobplanet.co.kr/companies/123 and https://random-site.com/page',
+        text: '',
         json: {
           businessSummary: 'x',
           coreValues: '',
@@ -350,6 +374,31 @@ describe('CompanyResearchService', () => {
           competitors: '',
           jobInsights: '',
           interviewKeywords: [],
+          companyProfile: {},
+          talentProfile: [],
+          productsAndTech: {},
+          inferredFields: [],
+          // 화이트리스트 (ko.wikipedia.org) + jobplanet (외부) + random-site 섞임
+          sources: [
+            {
+              id: 1,
+              title: '위키',
+              url: 'https://ko.wikipedia.org/wiki/x',
+              domain: 'ko.wikipedia.org',
+            },
+            {
+              id: 2,
+              title: '잡플래닛',
+              url: 'https://jobplanet.co.kr/companies/123',
+              domain: 'jobplanet.co.kr',
+            },
+            {
+              id: 3,
+              title: '랜덤',
+              url: 'https://random-site.com/page',
+              domain: 'random-site.com',
+            },
+          ],
         },
         promptTokens: 10,
         completionTokens: 5,
@@ -361,7 +410,11 @@ describe('CompanyResearchService', () => {
 
       const r = await service.fetchForSession(USER_ID, SESSION_ID);
       // 화이트리스트 (ko.wikipedia.org) 만 통과. jobplanet, random-site 제거
-      expect(r.sources).toEqual(['https://ko.wikipedia.org/wiki/x']);
+      const sources = r.sources ?? [];
+      expect(sources.length).toBe(1);
+      expect(sources[0]).toMatchObject({
+        url: 'https://ko.wikipedia.org/wiki/x',
+      });
     });
   });
 
@@ -697,6 +750,212 @@ describe('CompanyResearchService', () => {
       // 화이트리스트 (opt_out=false) 필터 + DESC 정렬 SQL 검증
       expect(cacheQb.where).toHaveBeenCalledWith('c.opt_out = FALSE');
       expect(cacheQb.orderBy).toHaveBeenCalledWith('c.hit_count', 'DESC');
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // PR 보강 — helper 메서드 spec (Phase 1)
+  // ────────────────────────────────────────────────────────────────────
+
+  describe('PR 보강 helper — extractCompanyDomain', () => {
+    it('C1) 정상 https URL → www. 제거 + 채용 서브도메인 자동 추가', () => {
+      const r = service['extractCompanyDomain'](
+        'https://www.kakaopay.com/recruit',
+      );
+      expect(r).toEqual([
+        'kakaopay.com',
+        'careers.kakaopay.com',
+        'about.kakaopay.com',
+        'recruit.kakaopay.com',
+      ]);
+    });
+
+    it('C2) jobUrl null/undefined → 빈 배열 (정적 화이트리스트만)', () => {
+      expect(service['extractCompanyDomain'](null)).toEqual([]);
+      expect(service['extractCompanyDomain'](undefined)).toEqual([]);
+      expect(service['extractCompanyDomain']('')).toEqual([]);
+      expect(service['extractCompanyDomain']('   ')).toEqual([]);
+    });
+
+    it('C3) 잘못된 URL (파싱 실패) → 빈 배열 (정적 fallback)', () => {
+      expect(service['extractCompanyDomain']('not-a-url')).toEqual([]);
+      expect(service['extractCompanyDomain']('http://')).toEqual([]);
+    });
+
+    it('C4) javascript: / data: / file: protocol → 차단 (보안)', () => {
+      expect(service['extractCompanyDomain']('javascript:alert(1)')).toEqual(
+        [],
+      );
+      expect(service['extractCompanyDomain']('data:text/html,x')).toEqual([]);
+      expect(service['extractCompanyDomain']('file:///etc/passwd')).toEqual([]);
+    });
+  });
+
+  describe('PR 보강 helper — validateSources', () => {
+    it('E1) 화이트리스트 매칭 + id 중복 제거', () => {
+      const r = service['validateSources'](
+        [
+          {
+            id: 1,
+            title: 'a',
+            url: 'https://ko.wikipedia.org/x',
+            domain: 'ko.wikipedia.org',
+          },
+          {
+            id: 1,
+            title: 'b',
+            url: 'https://ko.wikipedia.org/y',
+            domain: 'ko.wikipedia.org',
+          },
+        ],
+        ['ko.wikipedia.org'],
+      );
+      expect(r.length).toBe(1);
+    });
+
+    it('E2) 화이트리스트 외 도메인 strip', () => {
+      const r = service['validateSources'](
+        [
+          {
+            id: 1,
+            title: '잡플',
+            url: 'https://jobplanet.co.kr/x',
+            domain: 'jobplanet.co.kr',
+          },
+        ],
+        ['ko.wikipedia.org'],
+      );
+      expect(r).toEqual([]);
+    });
+
+    it('E3) 미래 publishedAt → strip (fake)', () => {
+      const future = new Date(Date.now() + 86400000 * 365).toISOString();
+      const r = service['validateSources'](
+        [
+          {
+            id: 1,
+            title: 'a',
+            url: 'https://ko.wikipedia.org/x',
+            domain: 'ko.wikipedia.org',
+            publishedAt: future,
+          },
+        ],
+        ['ko.wikipedia.org'],
+      );
+      expect(r).toEqual([]);
+    });
+
+    it('E4) http/https 외 protocol → strip', () => {
+      const r = service['validateSources'](
+        [
+          {
+            id: 1,
+            title: 'a',
+            url: 'javascript:alert(1)',
+            domain: 'evil',
+          },
+        ],
+        ['evil'],
+      );
+      expect(r).toEqual([]);
+    });
+
+    it('E5) url 파싱 실패 → strip', () => {
+      const r = service['validateSources'](
+        [
+          {
+            id: 1,
+            title: 'a',
+            url: 'not-a-url',
+            domain: 'x',
+          },
+        ],
+        ['x'],
+      );
+      expect(r).toEqual([]);
+    });
+
+    it('E6) 필수 필드 (id/title/url/domain) 누락 → strip', () => {
+      const r = service['validateSources'](
+        [
+          { id: 1, title: '', url: 'https://x.com', domain: 'x.com' },
+          { title: 'a', url: 'https://x.com', domain: 'x.com' } as never,
+        ],
+        ['x.com'],
+      );
+      expect(r).toEqual([]);
+    });
+  });
+
+  describe('PR 보강 helper — stripOrphanFootnotes', () => {
+    it('E7) 본문 [4] 인데 validIds=[1,2,3] → [4] strip', () => {
+      const r = service['stripOrphanFootnotes'](
+        {
+          businessSummary: '회사는 X [1] 이고 추정 [4] 이다',
+          coreValues: '도전 [2] 신뢰',
+        },
+        [1, 2, 3],
+      );
+      expect(r.businessSummary).toBe('회사는 X [1] 이고 추정  이다');
+      expect(r.coreValues).toBe('도전 [2] 신뢰');
+    });
+
+    it('E8) 본문 [N] 없으면 그대로', () => {
+      const r = service['stripOrphanFootnotes'](
+        { businessSummary: '회사는 X 이다' },
+        [1, 2],
+      );
+      expect(r.businessSummary).toBe('회사는 X 이다');
+    });
+
+    it('E9) validIds=[] → 모든 [N] strip', () => {
+      const r = service['stripOrphanFootnotes'](
+        { businessSummary: '회사 [1] 이고 [2] 이다' },
+        [],
+      );
+      expect(r.businessSummary).toBe('회사  이고  이다');
+    });
+
+    it('E10) undefined/null 필드 → empty string', () => {
+      const r = service['stripOrphanFootnotes'](
+        { businessSummary: undefined },
+        [],
+      );
+      expect(r.businessSummary).toBe('');
+    });
+  });
+
+  describe('PR 보강 helper — formatKstToday', () => {
+    it('H1) YYYY-MM-DD 형식 + 10자', () => {
+      const r = service['formatKstToday']();
+      expect(r).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(r.length).toBe(10);
+    });
+  });
+
+  describe('PR 보강 helper — isValidFieldName', () => {
+    it('G1) schema 의 11 항목 모두 valid', () => {
+      const valid = [
+        'businessSummary',
+        'coreValues',
+        'visionMission',
+        'recentTrends',
+        'financials',
+        'competitors',
+        'jobInsights',
+        'interviewKeywords',
+        'companyProfile',
+        'talentProfile',
+        'productsAndTech',
+      ];
+      valid.forEach((f) => expect(service['isValidFieldName'](f)).toBe(true));
+    });
+
+    it('G2) schema 외 field name → false (sanitize)', () => {
+      expect(service['isValidFieldName']('fakeField')).toBe(false);
+      expect(service['isValidFieldName']('sources')).toBe(false);
+      expect(service['isValidFieldName']('inferredFields')).toBe(false);
+      expect(service['isValidFieldName']('__proto__')).toBe(false);
     });
   });
 });
