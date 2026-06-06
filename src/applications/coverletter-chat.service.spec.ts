@@ -66,6 +66,8 @@ describe('CoverletterChatService', () => {
       companyName: '네이버',
       jobCategory: '백엔드',
       jobTitle: '신입',
+      // PR_B1c — 자소서 chat 가드 통과 (모든 기존 spec 의 default)
+      coverletterGenerationStatus: 'completed',
       ...overrides,
     }) as Application;
 

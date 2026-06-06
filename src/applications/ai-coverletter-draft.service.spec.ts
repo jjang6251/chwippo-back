@@ -76,6 +76,8 @@ describe('AiCoverletterDraftService', () => {
       id: 'app-1',
       companyName: '카카오',
       jobCategory: '백엔드',
+      // PR_B1c — 자소서 draft 가드 통과 (모든 기존 spec 의 default)
+      coverletterGenerationStatus: 'completed',
     } as Application,
   });
 

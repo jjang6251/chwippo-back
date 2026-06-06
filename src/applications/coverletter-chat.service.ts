@@ -224,6 +224,21 @@ export class CoverletterChatService {
     return app;
   }
 
+  /**
+   * PR_B1c — 자소서 생성 (회사조사 + 50 코인 차감) 완료 여부 가드.
+   * 자소서 chat/draft 호출 시 회사조사 trigger 안 했으면 차단 → frontend UI 우회 방지.
+   *
+   * 사용자가 50 코인 차감 + 회사조사 완료 (status='completed') 한 application 에 대해서만
+   * AI 자소서 호출 허용. 'idle'/'in_progress'/'failed' 면 BadRequest.
+   */
+  private assertGenerationCompleted(app: Application): void {
+    if (app.coverletterGenerationStatus !== 'completed') {
+      throw new BadRequestException(
+        '먼저 자소서 생성을 진행해 주세요 (회사 정보 조사가 필요해요).',
+      );
+    }
+  }
+
   /** 메시지 이력 — 최근 N개 (default 100), ASC 정렬 */
   async listMessages(
     userId: string,
@@ -249,8 +264,9 @@ export class CoverletterChatService {
     applicationId: string,
     dto: ChatSendDto,
   ): Promise<ChatResult> {
-    // 1. application 소유 검증
+    // 1. application 소유 검증 + 회사조사 완료 가드 (PR_B1c)
     const app = await this.assertOwn(userId, applicationId);
+    this.assertGenerationCompleted(app);
 
     // 2. 사용자 입력 검증
     const trimmed = dto.userMessage?.trim() ?? '';
@@ -594,6 +610,7 @@ export class CoverletterChatService {
   > {
     // 1-9 단계: chat() 과 동일 — 입력 검증 + context build + quota + user save
     const app = await this.assertOwn(userId, applicationId);
+    this.assertGenerationCompleted(app); // PR_B1c — 회사조사 완료 필수
     const trimmed = dto.userMessage?.trim() ?? '';
     if (trimmed.length === 0) {
       yield { type: 'error', message: '메시지를 입력해 주세요.' };

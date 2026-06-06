@@ -36,6 +36,17 @@ export class FeatureCoinMeta {
   @Column({ name: 'avg_coin_cost', type: 'numeric', precision: 6, scale: 1 })
   avgCoinCost: string; // NUMERIC → string
 
+  /**
+   * PR_B1c — 고정 차감 코인 (token 환산 무시). NULL → token 환산 사용 (기존 동작).
+   * 사용 예: company_research = 50 (cache hit/miss 무관 50 코인). user 가 50 코인 차감 인지.
+   */
+  @Column({
+    name: 'fixed_coin_cost',
+    type: 'int',
+    nullable: true,
+  })
+  fixedCoinCost: number | null;
+
   @Column({ type: 'text', nullable: true })
   description: string | null;
 

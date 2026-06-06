@@ -3,6 +3,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
+import { CoinService } from '../ai/coin.service';
+import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
@@ -16,6 +18,15 @@ describe('ApplicationsService', () => {
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
   let checklistRepo: jest.Mocked<Repository<StepChecklistItem>>;
   let dataSource: { transaction: jest.Mock; query: jest.Mock };
+  // PR_B1c
+  let coinSvc: {
+    canCharge: jest.Mock;
+    charge: jest.Mock;
+    refund: jest.Mock;
+  };
+  let researchSvc: {
+    fetchForApplication: jest.Mock;
+  };
 
   const makeApp = (overrides: Partial<Application> = {}): Application =>
     ({
@@ -85,6 +96,26 @@ describe('ApplicationsService', () => {
       query: jest.fn(),
     };
 
+    // PR_B1c — CoinService + CompanyResearchService mock
+    const mockCoinService = {
+      canCharge: jest.fn().mockResolvedValue({ ok: true }),
+      charge: jest.fn().mockResolvedValue({
+        coinCost: 50,
+        costUsd: 0.045,
+        breakdown: {},
+      }),
+      // CTO H1 — 좀비 방지 환불 mock (H1-Z 시리즈)
+      refund: jest.fn().mockResolvedValue({ refunded: 50 }),
+    };
+    const mockCompanyResearch = {
+      fetchForApplication: jest.fn().mockResolvedValue({
+        status: 'ok',
+        research: {},
+        sources: [],
+        isCached: false,
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ApplicationsService,
@@ -99,8 +130,15 @@ describe('ApplicationsService', () => {
         },
         // checklistRepo는 module.get로 따로 받지 않고 위 inline mock 그대로 사용
         { provide: DataSource, useValue: mockDataSource },
+        { provide: CoinService, useValue: mockCoinService },
+        { provide: CompanyResearchService, useValue: mockCompanyResearch },
       ],
     }).compile();
+
+    coinSvc = module.get<typeof mockCoinService>(CoinService);
+    researchSvc = module.get<typeof mockCompanyResearch>(
+      CompanyResearchService,
+    );
 
     service = module.get<ApplicationsService>(ApplicationsService);
     appRepo = module.get(getRepositoryToken(Application));
@@ -772,6 +810,570 @@ describe('ApplicationsService', () => {
       ).rejects.toThrow(NotFoundException);
       expect(checklistRepo.findOne).not.toHaveBeenCalled();
       expect(checklistRepo.remove).not.toHaveBeenCalled();
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // PR_B1c — generateCoverletter (자소서 생성 시 회사조사 atomic + 50 코인 차감)
+  // ────────────────────────────────────────────────────────────────────
+
+  describe('generateCoverletter — PR_B1c', () => {
+    /** atomic UPDATE WHERE status IN ('idle','failed') affected 모킹 helper */
+    const mockAtomicUpdate = (affected: number) => {
+      const qb = {
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue({ affected }),
+      };
+      appRepo.createQueryBuilder = jest.fn().mockReturnValue(qb) as never;
+      return qb;
+    };
+
+    beforeEach(() => {
+      appRepo.update = jest.fn().mockResolvedValue({ affected: 1 }) as never;
+    });
+
+    it("B1) 정상 cache miss — status 'idle' → 'in_progress' → 'completed' + LlmService 자동 charge (수동 charge 안 함)", async () => {
+      mockAtomicUpdate(1); // UPDATE 성공
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+
+      expect(r.status).toBe('completed');
+      // cache miss → 수동 charge 호출 안 함 (LlmService 가 자동 처리)
+      expect(coinSvc.charge).not.toHaveBeenCalled();
+      // 마지막 update 는 status='completed'
+      expect(appRepo.update).toHaveBeenLastCalledWith(
+        { id: 'app-uuid-1' },
+        {
+          coverletterGenerationStatus: 'completed',
+          coverletterResearchOutdatedAt: null,
+        },
+      );
+    });
+
+    it("B2) 정상 cache hit — 수동 charge 호출 (50 코인) + status 'completed'", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: true, // cache hit
+      });
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+
+      expect(r.status).toBe('completed');
+      // cache hit → 수동 charge 호출
+      expect(coinSvc.charge).toHaveBeenCalledWith(
+        'user-uuid-1',
+        'company_research',
+        { inputTokens: 0, outputTokens: 0 },
+      );
+    });
+
+    it("B3) race — UPDATE affected=0 + 현재 status='in_progress' → already_in_progress", async () => {
+      mockAtomicUpdate(0); // 다른 호출이 먼저 차지
+      appRepo.findOne.mockResolvedValueOnce(
+        makeApp({ coverletterGenerationStatus: 'in_progress' }),
+      );
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(r.status).toBe('already_in_progress');
+      expect(researchSvc.fetchForApplication).not.toHaveBeenCalled();
+      expect(coinSvc.charge).not.toHaveBeenCalled();
+    });
+
+    it("B4) 이미 완료 — UPDATE affected=0 + status='completed' → already_completed", async () => {
+      mockAtomicUpdate(0);
+      appRepo.findOne.mockResolvedValueOnce(
+        makeApp({
+          coverletterGenerationStatus: 'completed',
+          coverletterResearchOutdatedAt: null,
+        }),
+      );
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(r.status).toBe('already_completed');
+    });
+
+    it("B5) status='failed' → UPDATE WHERE status IN ('idle','failed') affected=1 → 재시도 진행", async () => {
+      mockAtomicUpdate(1); // 'failed' 도 allowed
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(r.status).toBe('completed');
+    });
+
+    it('B6) canCharge=false → status idle 롤백 + coin_insufficient', async () => {
+      mockAtomicUpdate(1);
+      coinSvc.canCharge.mockResolvedValueOnce({
+        ok: false,
+        reason: '코인 부족 (50 필요, 30 잔여)',
+      });
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(r.status).toBe('coin_insufficient');
+      expect(r.reason).toContain('50');
+      // status='idle' 롤백
+      expect(appRepo.update).toHaveBeenCalledWith(
+        { id: 'app-uuid-1' },
+        {
+          coverletterGenerationStatus: 'idle',
+          coverletterGenerationStartedAt: null,
+        },
+      );
+      expect(researchSvc.fetchForApplication).not.toHaveBeenCalled();
+    });
+
+    it("B7) LLM 실패 (companyResearch throw) → status='failed' + throw", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockRejectedValueOnce(
+        new Error('anthropic 5xx'),
+      );
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow('anthropic 5xx');
+      // status='failed' 저장 확인
+      expect(appRepo.update).toHaveBeenLastCalledWith(
+        { id: 'app-uuid-1' },
+        { coverletterGenerationStatus: 'failed' },
+      );
+    });
+
+    it('B8) 다른 user 의 application — UPDATE affected=0 + findOne null → NotFoundException', async () => {
+      mockAtomicUpdate(0);
+      appRepo.findOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-other'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('B9) UPDATE 의 WHERE 절에 user_id 포함 (IDOR 방어)', async () => {
+      const qb = mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+
+      expect(qb.where).toHaveBeenCalledWith(
+        expect.stringContaining('user_id = :userId'),
+        expect.objectContaining({
+          userId: 'user-uuid-1',
+          id: 'app-uuid-1',
+          allowed: ['idle', 'failed'],
+        }),
+      );
+    });
+
+    it("B10) atomic UPDATE set 에 status='in_progress' + started_at NOW()", async () => {
+      const qb = mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+
+      expect(qb.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          coverletterGenerationStatus: 'in_progress',
+        }),
+      );
+    });
+
+    it('B11) 동시 2 호출 — race 시뮬 (한 번만 UPDATE 성공)', async () => {
+      // PR_B1c Phase C — lazy stuck timeout UPDATE 도 createQueryBuilder 호출.
+      // set() 의 status='in_progress' 여부로 atomic vs lazy 구분 + atomic 만 race 카운트.
+      let atomicCalls = 0;
+      appRepo.createQueryBuilder = jest.fn().mockImplementation(() => {
+        const qb: {
+          update: jest.Mock;
+          set: jest.Mock;
+          where: jest.Mock;
+          execute: jest.Mock;
+          _isAtomic?: boolean;
+        } = {
+          update: jest.fn(),
+          set: jest.fn(),
+          where: jest.fn(),
+          execute: jest.fn(),
+        };
+        qb.update.mockReturnValue(qb);
+        qb.set.mockImplementation((values: Partial<Application>) => {
+          qb._isAtomic = values.coverletterGenerationStatus === 'in_progress';
+          return qb;
+        });
+        qb.where.mockReturnValue(qb);
+        qb.execute.mockImplementation(async () => {
+          if (!qb._isAtomic) return { affected: 0 }; // lazy timeout — 무관
+          atomicCalls++;
+          return atomicCalls === 1 ? { affected: 1 } : { affected: 0 };
+        });
+        return qb;
+      }) as never;
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+      appRepo.findOne.mockResolvedValueOnce(
+        makeApp({ coverletterGenerationStatus: 'in_progress' }),
+      );
+
+      const [r1, r2] = await Promise.all([
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ]);
+
+      const statuses = [r1.status, r2.status].sort();
+      expect(statuses).toContain('completed');
+      expect(statuses).toContain('already_in_progress');
+    });
+
+    it('B12) unexpected status (예: 코드 버그) → Error throw', async () => {
+      mockAtomicUpdate(0);
+      // 진짜로는 가능하지 않은 상태 (idle/in_progress/completed/failed 외) — defensive
+      appRepo.findOne.mockResolvedValueOnce(
+        makeApp({
+          coverletterGenerationStatus: 'unknown' as never,
+        }),
+      );
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow('unexpected status');
+    });
+
+    it('B13) canCharge=true + LLM 성공 — completed status update 만 한 번 (롤백 안 함)', async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+
+      // 첫번째: 'in_progress' (createQueryBuilder atomic) — appRepo.update 안 호출
+      // 두번째: 'completed' (appRepo.update)
+      expect(appRepo.update).toHaveBeenCalledTimes(1);
+      expect(appRepo.update).toHaveBeenCalledWith(
+        { id: 'app-uuid-1' },
+        {
+          coverletterGenerationStatus: 'completed',
+          coverletterResearchOutdatedAt: null,
+        },
+      );
+    });
+
+    it('B14) cache hit + canCharge=false — 잔여 부족이라도 cache hit 흐름 따름? — 실제로는 canCharge 가 먼저 차단', async () => {
+      mockAtomicUpdate(1);
+      coinSvc.canCharge.mockResolvedValueOnce({
+        ok: false,
+        reason: '잔여 30, 필요 50',
+      });
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      // canCharge 단계에서 차단 → cache 조회 안 함
+      expect(r.status).toBe('coin_insufficient');
+      expect(researchSvc.fetchForApplication).not.toHaveBeenCalled();
+      expect(coinSvc.charge).not.toHaveBeenCalled();
+    });
+
+    it('B15) 호출 후 정확히 fetchForApplication 1회만 호출 (재시도 X)', async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+
+      expect(researchSvc.fetchForApplication).toHaveBeenCalledTimes(1);
+      expect(researchSvc.fetchForApplication).toHaveBeenCalledWith(
+        'user-uuid-1',
+        'app-uuid-1',
+      );
+    });
+
+    // ─────────────────────────────────────────────────────
+    // Phase B — result.status='blocked'/'opt_out' 처리 (Critical 3)
+    // ─────────────────────────────────────────────────────
+
+    it("Phase B1) result.status='blocked' (moderation) → 'failed' + throw + 코인 차감 X", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'blocked',
+        reason: 'moderation flagged',
+      });
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow('moderation flagged');
+      // status='failed' 저장
+      expect(appRepo.update).toHaveBeenLastCalledWith(
+        { id: 'app-uuid-1' },
+        { coverletterGenerationStatus: 'failed' },
+      );
+      // 수동 charge 호출 X
+      expect(coinSvc.charge).not.toHaveBeenCalled();
+    });
+
+    it("Phase B2) result.status='opt_out' (동의 안 함) → 'failed' + throw + 코인 차감 X", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'opt_out',
+        reason: 'AI 사용 동의 필요',
+      });
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow('동의');
+      expect(appRepo.update).toHaveBeenLastCalledWith(
+        { id: 'app-uuid-1' },
+        { coverletterGenerationStatus: 'failed' },
+      );
+      expect(coinSvc.charge).not.toHaveBeenCalled();
+    });
+
+    it("Phase B3) result.status='ok' + isCached=true → completed + outdated_at NULL reset", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: true,
+      });
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(r.status).toBe('completed');
+      // outdated_at NULL reset 포함
+      expect(appRepo.update).toHaveBeenLastCalledWith(
+        { id: 'app-uuid-1' },
+        {
+          coverletterGenerationStatus: 'completed',
+          coverletterResearchOutdatedAt: null,
+        },
+      );
+    });
+
+    // ─────────────────────────────────────────────────────
+    // Phase D — outdated_at 인 application 재조사 진행 (Medium 5)
+    // ─────────────────────────────────────────────────────
+
+    it("Phase D1) outdated_at not null + status='completed' → atomic WHERE 통과 → 재진행", async () => {
+      // WHERE 절에 outdated_at IS NOT NULL 분기 — affected=1 가정
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      const r = await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(r.status).toBe('completed');
+      // outdated_at NULL reset
+      expect(appRepo.update).toHaveBeenLastCalledWith(
+        { id: 'app-uuid-1' },
+        {
+          coverletterGenerationStatus: 'completed',
+          coverletterResearchOutdatedAt: null,
+        },
+      );
+    });
+
+    it('Phase D2) atomic WHERE 의 SQL 에 outdated_at IS NOT NULL 분기 포함', async () => {
+      const qb = mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+
+      // atomic where 절에 outdated_at 분기 포함 확인
+      expect(qb.where).toHaveBeenCalledWith(
+        expect.stringContaining('outdated_at'),
+        expect.any(Object),
+      );
+    });
+
+    // ─────────────────────────────────────────────────────
+    // CTO 검토 H1 — 좀비 in_progress 방지
+    // ─────────────────────────────────────────────────────
+
+    it("H1-Z1) status='completed' UPDATE 실패 → 코인 환불 + status='failed' + throw", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: true, // cache hit → manual charge 50 발생 후 UPDATE 실패
+      });
+      appRepo.update = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('DB hiccup'))
+        .mockResolvedValue({ affected: 1 }) as never;
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow('DB hiccup');
+      expect(coinSvc.refund).toHaveBeenCalledWith(
+        'user-uuid-1',
+        'company_research',
+        expect.stringContaining('UPDATE 실패'),
+      );
+      expect(appRepo.update).toHaveBeenCalledWith(
+        { id: 'app-uuid-1' },
+        { coverletterGenerationStatus: 'failed' },
+      );
+    });
+
+    it("H1-Z2) status='completed' 실패 + 환불도 실패 → throw 만 (logger.error best-effort)", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: true,
+      });
+      coinSvc.refund.mockRejectedValueOnce(new Error('refund DB down'));
+      appRepo.update = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('DB hiccup'))
+        .mockResolvedValue({ affected: 1 }) as never;
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow('DB hiccup');
+      expect(coinSvc.refund).toHaveBeenCalled();
+    });
+
+    it("H1-Z3) status='completed' + status='failed' 둘 다 실패 → cron 에 위임 (best-effort)", async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+      appRepo.update = jest
+        .fn()
+        .mockRejectedValue(new Error('DB hiccup')) as never;
+
+      await expect(
+        service.generateCoverletter('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow('DB hiccup');
+      expect(coinSvc.refund).toHaveBeenCalled();
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // PR_B1c Phase D — update endpoint 의 outdated 감지 (Medium 5)
+  // ────────────────────────────────────────────────────────────────────
+
+  describe('update — outdated 감지 (PR_B1c Phase D)', () => {
+    /** save 가 받은 entity 캡처용 helper */
+    let savedEntity: Application | undefined;
+
+    beforeEach(() => {
+      savedEntity = undefined;
+      dataSource.transaction = jest.fn().mockImplementation(async (cb) => {
+        const em = {
+          save: jest.fn().mockImplementation(async (entity: Application) => {
+            savedEntity = entity;
+            return entity;
+          }),
+          count: jest.fn().mockResolvedValue(1),
+          findOne: jest.fn().mockResolvedValue(null),
+          delete: jest.fn(),
+          create: jest.fn(),
+        };
+        await cb(em);
+      });
+      appRepo.findOne.mockResolvedValue(
+        makeApp({
+          companyName: '카카오',
+          jobTitle: '백엔드',
+          jobCategory: 'IT개발',
+          coverletterGenerationStatus: 'completed',
+        }),
+      );
+    });
+
+    it("D1) status='completed' + companyName 변경 → outdated_at = NOW()", async () => {
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        companyName: '네이버',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeInstanceOf(Date);
+    });
+
+    it("D2) status='completed' + jobTitle 변경 → outdated_at = NOW()", async () => {
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        jobTitle: '프론트엔드',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeInstanceOf(Date);
+    });
+
+    it("D3) status='completed' + jobCategory 변경 → outdated_at = NOW()", async () => {
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        jobCategory: '디자인',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeInstanceOf(Date);
+    });
+
+    it("D4) status='completed' + memo 만 변경 → outdated_at 그대로 NULL", async () => {
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        memo: '면접 메모',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeUndefined();
+    });
+
+    it("D5) status='completed' + status 변경 (PASSED) → outdated_at 무관 NULL", async () => {
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        status: 'PASSED',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeUndefined();
+    });
+
+    it("D6) status='completed' + 동일 회사명 patch → outdated_at 그대로 (diff 없음)", async () => {
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        companyName: '카카오', // 기존 값 그대로
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeUndefined();
+    });
+
+    it("D7) status='idle' + companyName 변경 → outdated_at 무관 (재조사 자유)", async () => {
+      appRepo.findOne.mockResolvedValueOnce(
+        makeApp({
+          companyName: '카카오',
+          coverletterGenerationStatus: 'idle',
+        }),
+      );
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        companyName: '네이버',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeUndefined();
+    });
+
+    it("D8) status='failed' + companyName 변경 → outdated_at 무관 (이미 미완료)", async () => {
+      appRepo.findOne.mockResolvedValueOnce(
+        makeApp({
+          companyName: '카카오',
+          coverletterGenerationStatus: 'failed',
+        }),
+      );
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        companyName: '네이버',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeUndefined();
+    });
+
+    it("D9) status='completed' + 회사 + 직무 동시 변경 → outdated_at = NOW() (한 번만)", async () => {
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        companyName: '네이버',
+        jobTitle: '프론트엔드',
+      });
+      expect(savedEntity?.coverletterResearchOutdatedAt).toBeInstanceOf(Date);
     });
   });
 });

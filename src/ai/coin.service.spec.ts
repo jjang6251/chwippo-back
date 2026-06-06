@@ -239,6 +239,7 @@ describe('CoinService', () => {
         feature: 'coverletter_draft_v2',
         chargesCoins: true,
         avgCoinCost: '10',
+        fixedCoinCost: null,
         description: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -295,6 +296,7 @@ describe('CoinService', () => {
         feature: 'company_research',
         chargesCoins: false,
         avgCoinCost: '0',
+        fixedCoinCost: null,
         description: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -331,6 +333,7 @@ describe('CoinService', () => {
         feature: 'coverletter_chat',
         chargesCoins: true,
         avgCoinCost: '3',
+        fixedCoinCost: null,
         description: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -356,6 +359,7 @@ describe('CoinService', () => {
         feature: 'company_research',
         chargesCoins: false,
         avgCoinCost: '0',
+        fixedCoinCost: null,
         description: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -405,6 +409,200 @@ describe('CoinService', () => {
       expect(r.breakdown).toHaveProperty('cache_creation');
       expect(r.breakdown).toHaveProperty('cache_read');
       expect(r.breakdown).toHaveProperty('web_search');
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────
+  // PR_B1c — fixed_coin_cost 모드 (token 환산 무시, 고정 차감)
+  // ───────────────────────────────────────────────────────────────────
+
+  describe('fixed_coin_cost 모드 (PR_B1c)', () => {
+    beforeEach(() => {
+      // company_research = charges_coins=true, fixed_coin_cost=50
+      featureMetaRepo.findOne.mockResolvedValue({
+        feature: 'company_research',
+        chargesCoins: true,
+        avgCoinCost: '50',
+        fixedCoinCost: 50,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    });
+
+    it('A1) fixed_coin_cost=50 → token 무관 50 차감 (cache hit 도 동일)', async () => {
+      dataSource.query.mockResolvedValueOnce(undefined);
+      const r = await service.charge(USER_ID, 'company_research', {
+        inputTokens: 0, // cache hit
+        outputTokens: 0,
+      });
+      expect(r.coinCost).toBe(50);
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE user_coin_balances'),
+        [50, USER_ID],
+      );
+    });
+
+    it('A2) fixed_coin_cost=50 + 큰 호출 (input 50K + ws 3) → 그래도 50 차감 (token 환산 무시)', async () => {
+      dataSource.query.mockResolvedValueOnce(undefined);
+      const r = await service.charge(USER_ID, 'company_research', {
+        inputTokens: 50_000,
+        outputTokens: 2_000,
+        webSearchCount: 3,
+      });
+      expect(r.coinCost).toBe(50);
+    });
+
+    it('A3) fixed_coin_cost=NULL → 기존 token 환산 사용', async () => {
+      featureMetaRepo.findOne.mockResolvedValueOnce({
+        feature: 'coverletter_chat',
+        chargesCoins: true,
+        avgCoinCost: '3',
+        fixedCoinCost: null,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      dataSource.query.mockResolvedValueOnce(undefined);
+      const r = await service.charge(USER_ID, 'coverletter_chat', {
+        inputTokens: 1000,
+        outputTokens: 200,
+      });
+      // 1000 + 200×5 = 2000 → 2.0 코인 (token 환산)
+      expect(r.coinCost).toBe(2);
+    });
+
+    it('A4) charges_coins=false → fixed_coin_cost 있어도 차감 0', async () => {
+      featureMetaRepo.findOne.mockResolvedValueOnce({
+        feature: 'company_research',
+        chargesCoins: false,
+        avgCoinCost: '0',
+        fixedCoinCost: 50,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const r = await service.charge(USER_ID, 'company_research', {
+        inputTokens: 1000,
+        outputTokens: 0,
+      });
+      expect(r.coinCost).toBe(0);
+      expect(dataSource.query).not.toHaveBeenCalled();
+    });
+
+    it('A5) COIN_SYSTEM_ENABLED=false → fixed_coin_cost 있어도 차감 0', async () => {
+      const old = process.env.COIN_SYSTEM_ENABLED;
+      process.env.COIN_SYSTEM_ENABLED = 'false';
+      const r = await service.charge(USER_ID, 'company_research', {
+        inputTokens: 0,
+        outputTokens: 0,
+      });
+      expect(r.coinCost).toBe(0);
+      expect(dataSource.query).not.toHaveBeenCalled();
+      process.env.COIN_SYSTEM_ENABLED = old;
+    });
+
+    it('A6) canCharge — fixed_coin_cost=50, 잔여 50 (정확) → ok=true', async () => {
+      balanceRepo.findOne.mockResolvedValueOnce({
+        userId: USER_ID,
+        tier: 'free',
+        balance: '50.0',
+        cycleStartAt: new Date(),
+        nextResetAt: new Date(Date.now() + 86400000),
+        planStartedAt: null,
+        planExpiresAt: null,
+      } as unknown as UserCoinBalance);
+      const r = await service.canCharge(USER_ID, 'company_research');
+      expect(r.ok).toBe(true);
+    });
+
+    it('A7) canCharge — fixed_coin_cost=50, 잔여 49 → ok=false + reason (필요 50, 잔여 49)', async () => {
+      balanceRepo.findOne.mockResolvedValueOnce({
+        userId: USER_ID,
+        tier: 'free',
+        balance: '49.0',
+        cycleStartAt: new Date(),
+        nextResetAt: new Date(Date.now() + 86400000),
+        planStartedAt: null,
+        planExpiresAt: null,
+      } as unknown as UserCoinBalance);
+      const r = await service.canCharge(USER_ID, 'company_research');
+      expect(r.ok).toBe(false);
+      expect(r.reason).toContain('50');
+      expect(r.reason).toContain('49');
+    });
+
+    it('A8) atomic — 동시 2 호출 모두 50 차감 (mock 검증)', async () => {
+      dataSource.query.mockResolvedValue(undefined);
+      const [r1, r2] = await Promise.all([
+        service.charge(USER_ID, 'company_research', {
+          inputTokens: 0,
+          outputTokens: 0,
+        }),
+        service.charge(USER_ID, 'company_research', {
+          inputTokens: 0,
+          outputTokens: 0,
+        }),
+      ]);
+      expect(r1.coinCost).toBe(50);
+      expect(r2.coinCost).toBe(50);
+      expect(dataSource.query).toHaveBeenCalledTimes(2);
+    });
+
+    // ─────────────────────────────────────────────────────
+    // CTO 검토 H1 — refund (좀비 방지)
+    // ─────────────────────────────────────────────────────
+
+    it('H1-R1) refund — fixed_coin_cost=50 인 feature → balance += 50 + log', async () => {
+      dataSource.query.mockResolvedValueOnce(undefined);
+      const r = await service.refund(
+        USER_ID,
+        'company_research',
+        'status update 실패',
+      );
+      expect(r.refunded).toBe(50);
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('balance + $1'),
+        [50, USER_ID],
+      );
+    });
+
+    it('H1-R2) refund — charges_coins=false → 환불 0 (차감 자체 없었음)', async () => {
+      featureMetaRepo.findOne.mockResolvedValueOnce({
+        feature: 'company_research',
+        chargesCoins: false,
+        avgCoinCost: '0',
+        fixedCoinCost: 50,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const r = await service.refund(USER_ID, 'company_research', 'test');
+      expect(r.refunded).toBe(0);
+      expect(dataSource.query).not.toHaveBeenCalled();
+    });
+
+    it('H1-R3) refund — fixed_coin_cost=NULL → 환불 0 (지원 X)', async () => {
+      featureMetaRepo.findOne.mockResolvedValueOnce({
+        feature: 'coverletter_chat',
+        chargesCoins: true,
+        avgCoinCost: '3',
+        fixedCoinCost: null,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const r = await service.refund(USER_ID, 'coverletter_chat', 'test');
+      expect(r.refunded).toBe(0);
+      expect(dataSource.query).not.toHaveBeenCalled();
+    });
+
+    it('H1-R4) refund — COIN_SYSTEM_ENABLED=false → 환불 0', async () => {
+      const old = process.env.COIN_SYSTEM_ENABLED;
+      process.env.COIN_SYSTEM_ENABLED = 'false';
+      const r = await service.refund(USER_ID, 'company_research', 'test');
+      expect(r.refunded).toBe(0);
+      process.env.COIN_SYSTEM_ENABLED = old;
     });
   });
 

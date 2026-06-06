@@ -481,6 +481,20 @@ export class LlmService {
                 fbResult.completionTokens,
               );
               const fbLatency = Date.now() - fbStart;
+
+              // PR_B1c CTO 검토 C1 — fallback 도 코인 차감 (silent leak 차단).
+              //   정상 경로 (line 354) 만 charge → fallback 분기에서 빠져있었음.
+              //   fixed_coin_cost feature 면 token 무관 차감 (company_research = 50).
+              const fbChargeResult = await this.coinService.charge(
+                input.userId,
+                input.feature,
+                {
+                  inputTokens: fbResult.promptTokens,
+                  outputTokens: fbResult.completionTokens,
+                  // fallback (openai) 는 cache_creation·cache_read·web_search 없음
+                },
+              );
+
               const fbLog = await this.saveAudit({
                 input,
                 model: fallbackCfg.model,
@@ -495,6 +509,8 @@ export class LlmService {
                 latencyMs: fbLatency,
                 outputRedacted: fbScrub.hasPii,
                 attempts: attempts + 1,
+                coinCost: fbChargeResult.coinCost.toString(),
+                costBreakdown: fbChargeResult.breakdown,
               });
               return {
                 status: 'ok',
@@ -502,6 +518,7 @@ export class LlmService {
                 json: fbResult.json,
                 promptTokens: fbResult.promptTokens,
                 completionTokens: fbResult.completionTokens,
+                coinCost: fbChargeResult.coinCost,
                 costUsd: fbCost,
                 latencyMs: fbLatency,
                 callLogId: fbLog.id,
@@ -586,6 +603,16 @@ export class LlmService {
       return;
     }
 
+    // 1.5. PR_B1 — 코인 잔여 추정 check
+    const coinCheck = await this.coinService.canCharge(
+      input.userId,
+      input.feature,
+    );
+    if (!coinCheck.ok) {
+      yield { type: 'error', message: coinCheck.reason ?? '코인이 부족해요' };
+      return;
+    }
+
     // 2. provider 결정 — anthropic 만 streaming 지원
     const cfg = getModelConfig(input.feature, this.config);
     if (cfg.provider !== 'anthropic') {
@@ -635,7 +662,7 @@ export class LlmService {
         if (event.type === 'partial') {
           yield { type: 'partial', json: event.json };
         } else {
-          // done — final json + audit
+          // done — final json + audit + PR_B1 coin charge
           const outputScrub = scrubOutputPii(event.response.text);
           const costUsd = calcCostUsd(
             cfg.model,
@@ -643,6 +670,20 @@ export class LlmService {
             event.response.completionTokens,
           );
           const latencyMs = Date.now() - startedAt;
+
+          // PR_B1 — 코인 차감 (status='ok' 만, cache_*·web_search 포함 정확 합산)
+          const chargeResult = await this.coinService.charge(
+            input.userId,
+            input.feature,
+            {
+              inputTokens: event.response.promptTokens,
+              outputTokens: event.response.completionTokens,
+              cacheCreationTokens: event.response.cacheCreationTokens,
+              cacheReadTokens: event.response.cacheReadTokens,
+              webSearchCount: event.response.webSearchCount,
+            },
+          );
+
           const log = await this.saveAudit({
             input,
             model: cfg.model,
@@ -653,6 +694,11 @@ export class LlmService {
             errorMessage: '[STREAMING]',
             promptTokens: event.response.promptTokens,
             completionTokens: event.response.completionTokens,
+            cacheCreationTokens: event.response.cacheCreationTokens ?? 0,
+            cacheReadTokens: event.response.cacheReadTokens ?? 0,
+            webSearchCount: event.response.webSearchCount ?? 0,
+            coinCost: chargeResult.coinCost.toString(),
+            costBreakdown: chargeResult.breakdown,
             costUsd: costUsd.toString(),
             latencyMs,
             outputRedacted: outputScrub.hasPii,
