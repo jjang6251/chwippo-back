@@ -142,14 +142,17 @@ export class CoinService {
     const meta = await this.featureMetaRepo.findOne({ where: { feature } });
     if (!meta?.chargesCoins) return { ok: true }; // 회사조사·노트요약 (우리 부담)
 
-    const avgCoin = parseFloat(meta.avgCoinCost);
-    const estimate = Math.ceil(avgCoin * 1.2 * 10) / 10; // 0.1 단위
+    // PR_B1c — fixed_coin_cost 우선 (token 환산 무시). NULL 이면 기존 avg × 1.2 buffer
+    const estimate =
+      meta.fixedCoinCost !== null
+        ? meta.fixedCoinCost
+        : Math.ceil(parseFloat(meta.avgCoinCost) * 1.2 * 10) / 10;
 
     const balance = await this.getBalanceWithLazyReset(userId);
     if (balance.balance < estimate) {
       return {
         ok: false,
-        reason: `🪙 코인이 부족해요 (필요 약 ${estimate}코인, 잔여 ${balance.balance})`,
+        reason: `🪙 코인이 부족해요 (필요 ${estimate}코인, 잔여 ${balance.balance})`,
       };
     }
     return { ok: true };
@@ -199,7 +202,11 @@ export class CoinService {
       };
     }
 
-    const coinCost = this.calculateCoin(tokens);
+    // PR_B1c — fixed_coin_cost 우선 (token 환산 무시). NULL 이면 기존 token 환산
+    const coinCost =
+      meta.fixedCoinCost !== null
+        ? meta.fixedCoinCost
+        : this.calculateCoin(tokens);
     if (coinCost === 0) {
       return {
         coinCost: 0,
@@ -219,6 +226,38 @@ export class CoinService {
       costUsd: costInfo.totalUsd,
       breakdown: costInfo.breakdown,
     };
+  }
+
+  /**
+   * PR_B1c CTO 검토 H1 — 차감 후 후속 작업 실패 시 환불 (좀비 in_progress 방지).
+   *
+   * **호출 시점**: ApplicationsService.generateCoverletter 의 status='completed' UPDATE 실패 시
+   *   (코인은 이미 차감됐는데 status 가 'in_progress' 영구 잔류 = 좀비).
+   *
+   * **동작**: feature 의 fixed_coin_cost 가져와 그만큼 balance += amount.
+   *   fixed_coin_cost NULL 인 feature → caller 가 직접 amount 전달 필요 (현재 미지원).
+   *
+   * **best-effort**: refund 자체 실패는 logger.error 만 + throw 안 함 (caller 가 throw 처리).
+   */
+  async refund(
+    userId: string,
+    feature: LlmFeature,
+    reason: string,
+  ): Promise<{ refunded: number }> {
+    if (process.env.COIN_SYSTEM_ENABLED === 'false') return { refunded: 0 };
+    const meta = await this.featureMetaRepo.findOne({ where: { feature } });
+    if (!meta?.chargesCoins || meta.fixedCoinCost === null) {
+      return { refunded: 0 };
+    }
+    const amount = meta.fixedCoinCost;
+    await this.dataSource.query(
+      'UPDATE user_coin_balances SET balance = balance + $1, updated_at = NOW() WHERE user_id = $2',
+      [amount, userId],
+    );
+    this.logger.log(
+      `[CoinService.refund] user=${userId} feature=${feature} amount=${amount} reason="${reason}"`,
+    );
+    return { refunded: amount };
   }
 
   // ──────────────────────────────────────────────────────────────

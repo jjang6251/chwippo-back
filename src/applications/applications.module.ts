@@ -24,6 +24,7 @@ import { AiCoverletterDraftService } from './ai-coverletter-draft.service';
 import { CoverletterDocController } from './coverletter-doc.controller';
 import { CoverletterChatService } from './coverletter-chat.service';
 import { CoverletterChatCleanupCron } from './coverletter-chat-cleanup.cron';
+import { CoverletterGenerationStuckCron } from './coverletter-generation-stuck.cron';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { CoverletterChatCleanupCron } from './coverletter-chat-cleanup.cron';
     AiCoverletterDraftService,
     CoverletterChatService,
     CoverletterChatCleanupCron,
+    CoverletterGenerationStuckCron,
   ],
   // F5 hard delete 가드가 ActivityLog/Reflection 서비스에서
   // CoverletterSourceRef Repository 를 조회하므로 TypeOrmModule export 필요

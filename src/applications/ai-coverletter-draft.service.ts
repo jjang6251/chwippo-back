@@ -143,6 +143,13 @@ export class AiCoverletterDraftService {
       throw new NotFoundException('지원 카드를 찾을 수 없습니다.');
     }
 
+    // PR_B1c — 회사조사 완료 가드 (자소서 생성 안 한 application 의 draft 차단)
+    if (clWithApp.application.coverletterGenerationStatus !== 'completed') {
+      throw new BadRequestException(
+        '먼저 자소서 생성을 진행해 주세요 (회사 정보 조사가 필요해요).',
+      );
+    }
+
     // 2. selected refs IDOR batch
     const selectedIds = input.selectedSourceRefIds ?? [];
     const selectedRefs =
