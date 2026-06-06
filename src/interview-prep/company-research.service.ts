@@ -42,6 +42,14 @@ import { InterviewPrepSession } from './entities/interview-prep-session.entity';
  * - cache miss 결과도 캐싱 (60일) — 같은 회사 무한 재시도 차단
  */
 
+/**
+ * PR_B1c 후속 — 회사조사 결과 품질 보강 Phase 1.
+ *
+ * **8 항목 (기존)** + **3 신규** = 11 항목:
+ * - companyProfile: 설립·본사·산업·규모 (hero card 데이터)
+ * - talentProfile: 인재상·문화 키워드 (회사 채용 페이지 원문)
+ * - productsAndTech: 주요 제품·기술 스택 (직무 면접 학습용)
+ */
 export interface CompanyResearchData {
   businessSummary?: string;
   coreValues?: string;
@@ -50,37 +58,115 @@ export interface CompanyResearchData {
   financials?: string;
   competitors?: string;
   jobInsights?: string;
-  interviewKeywords?: string[];
+  interviewKeywords?: InterviewKeyword[];
+  // PR 보강 — 신규 3 항목
+  companyProfile?: CompanyProfile;
+  talentProfile?: string[];
+  productsAndTech?: ProductsAndTech;
+}
+
+/** PR 보강 — 회사 기본 정보 (hero card 표시) */
+export interface CompanyProfile {
+  founded?: string; // "1985"
+  hq?: string; // "서울 송파구"
+  industry?: string; // "IT서비스"
+  size?: string; // "대기업 (1.5만명)"
+}
+
+/** PR 보강 — 제품·기술 스택 */
+export interface ProductsAndTech {
+  products?: string[];
+  techStack?: string[];
+}
+
+/**
+ * PR 보강 — interviewKeywords 카테고리별 색상 매핑.
+ * 'tech' = 파랑 / 'talent' = 초록 / 'business' = 보라 / 'role' = 주황 / 'issue' = 빨강
+ */
+export interface InterviewKeyword {
+  keyword: string;
+  category: 'tech' | 'talent' | 'business' | 'role' | 'issue';
+}
+
+/** PR 보강 — 출처 객체 (Perplexity 식 inline footnote) */
+export interface ResearchSource {
+  id: number; // 본문의 [N] 마커와 매칭
+  title: string;
+  url: string;
+  domain: string;
+  publishedAt?: string; // ISO date or YYYY-MM
 }
 
 export interface CompanyResearchResult {
   status: 'ok' | 'blocked' | 'opt_out';
   research?: CompanyResearchData;
-  sources?: string[];
+  /** PR 보강 — 객체 배열로 확장 (기존 string[] 호환 위해 union 유지) */
+  sources?: ResearchSource[] | string[];
+  /** PR 보강 — confirmed/inferred 분리 (LLM 추정 항목 명시) */
+  inferredFields?: string[];
   isCached?: boolean;
   cachedAt?: Date;
   reason?: string;
 }
 
-const SYSTEM_PROMPT = `너는 한국 취준생을 위한 기업 면접 준비 보조다.
+/**
+ * PR 보강 Phase 1 — system prompt 강화 + few-shot example.
+ *
+ * 1. 기준일 KST 동적 inject
+ * 2. 11 항목 + sources/inferredFields optional
+ * 3. Few-shot — 카카오 예시 1건 inline (LLM 응답 형식 학습)
+ * 4. 항목 길이 가이드는 prompt cache 활용 (Anthropic ephemeral cache_read 90% 할인)
+ */
+function buildSystemPrompt(kstToday: string): string {
+  return `너는 한국 취준생을 위한 기업 면접 준비 보조다.
 
-회사·직무 정보를 web_search 로 조사해 다음 8 항목을 JSON 으로 반환:
-- businessSummary: 사업 영역 한 줄
-- coreValues: 인재상·핵심가치
-- visionMission: 회사 비전·미션
-- recentTrends: 최근 사업 동향·신사업 (지난 1년)
-- financials: 재무·매출 트렌드 3년
-- competitors: 경쟁사·시장 포지셔닝
-- jobInsights: 직무 일반 정보 (해당 직무 요구 스킬·트렌드)
-- interviewKeywords: 예상 면접 질문 키워드 (회사·직무 특화) 배열
+**오늘은 ${kstToday} KST 입니다.** "최근"·"올해" 등 시간 표현 시 반드시 기간 (예: 2025-12 ~ 2026-06) 을 명시.
 
-엄격한 규칙:
-- 모르거나 정보 부족하면 해당 항목 빈 문자열 "" 또는 빈 배열 []
-- 절대 가짜 사실·통계·날짜를 만들지 마라
-- 검색 결과 없으면 일반론으로 답해도 되지만 추측 명시 ("일반적으로 ~")
-- 잡플래닛·블라인드·Glassdoor 같은 후기 사이트 정보 사용 금지 (검색 도메인 화이트리스트 적용됨)
-- 임원 이름·연락처 같은 개인정보 절대 포함 금지
-- 모든 응답은 한국어`;
+회사·직무 정보를 web_search 로 조사해 11 항목을 JSON 으로 반환.
+
+**필수 8**: businessSummary·coreValues·visionMission·recentTrends·financials·competitors·jobInsights·interviewKeywords
+**신규 3**: companyProfile·talentProfile·productsAndTech
+
+**interviewKeywords** = [{ keyword, category }] 배열. category 는 tech / talent / business / role / issue 중 하나.
+
+**예시** (이 형식 그대로 따라가):
+\`\`\`json
+{
+  "businessSummary": "카카오톡 메신저와 카카오페이·카카오뱅크 등 금융·모빌리티 사업을 운영합니다.",
+  "coreValues": "도전·성장·신뢰. 변화를 즐기는 사람을 환영합니다.",
+  "visionMission": "사람과 기술로 더 나은 세상을 만들겠다.",
+  "recentTrends": "2024년부터 글로벌 AI 사업 확대, 카카오톡 챗봇 강화.",
+  "financials": "2023 매출 7.6조, 2024 매출 8.3조 (+9%).",
+  "competitors": "네이버, 라인, 페이코 등.",
+  "jobInsights": "백엔드 직무는 MSA·Kafka·K8s 경험과 대규모 트래픽 처리 경험을 요구합니다.",
+  "interviewKeywords": [
+    { "keyword": "MSA 설계 경험", "category": "tech" },
+    { "keyword": "도전 정신", "category": "talent" },
+    { "keyword": "글로벌 AI 전략", "category": "business" }
+  ],
+  "companyProfile": { "founded": "1995", "hq": "제주 제주시", "industry": "IT서비스", "size": "대기업 (5천명)" },
+  "talentProfile": ["도전", "성장", "신뢰"],
+  "productsAndTech": {
+    "products": ["카카오톡", "카카오페이", "카카오뱅크"],
+    "techStack": ["Spring Boot", "Kotlin", "Kafka", "K8s"]
+  },
+  "inferredFields": ["interviewKeywords"],
+  "sources": [
+    { "id": 1, "title": "카카오 회사 소개", "url": "https://ko.wikipedia.org/wiki/카카오", "domain": "ko.wikipedia.org" }
+  ]
+}
+\`\`\`
+
+규칙:
+- 정보 부족하면 빈 값 ("" / [] / {})
+- 가짜 사실·통계·출처 금지 (학습 데이터만 사용 시 inferredFields 에 항목명 추가)
+- 잡플래닛·블라인드 같은 후기 사이트 금지
+- 임원 이름·연락처 등 개인정보 금지
+- 응답은 한국어
+
+**중요**: web_search 로 검색한 후 **반드시** company_research tool 을 호출하여 위 11 항목을 JSON 으로 반환하세요.
+정보가 부족하더라도 빈 값으로 채워서 반드시 tool 을 호출하세요. text 응답으로 끝내지 마세요.`;
+}
 
 const RESEARCH_JSON_SCHEMA = {
   name: 'company_research',
@@ -96,9 +182,66 @@ const RESEARCH_JSON_SCHEMA = {
       jobInsights: { type: 'string' },
       interviewKeywords: {
         type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string' },
+            category: {
+              type: 'string',
+              enum: ['tech', 'talent', 'business', 'role', 'issue'],
+            },
+          },
+          required: ['keyword', 'category'],
+          additionalProperties: false,
+        },
+      },
+      companyProfile: {
+        type: 'object',
+        properties: {
+          founded: { type: 'string' },
+          hq: { type: 'string' },
+          industry: { type: 'string' },
+          size: { type: 'string' },
+        },
+        // OpenAI strict mode 요구 — nested object 의 모든 properties required
+        required: ['founded', 'hq', 'industry', 'size'],
+        additionalProperties: false,
+      },
+      talentProfile: {
+        type: 'array',
         items: { type: 'string' },
       },
+      productsAndTech: {
+        type: 'object',
+        properties: {
+          products: { type: 'array', items: { type: 'string' } },
+          techStack: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['products', 'techStack'],
+        additionalProperties: false,
+      },
+      inferredFields: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      sources: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            title: { type: 'string' },
+            url: { type: 'string' },
+            domain: { type: 'string' },
+            publishedAt: { type: 'string' },
+          },
+          required: ['id', 'title', 'url', 'domain'],
+          additionalProperties: false,
+        },
+      },
     },
+    // PR 보강 — required 단순화: 본문 8 + 신규 3 만 required, sources/inferredFields optional
+    //   LLM 응답이 schema 강제 안 받음 → JSON parse 실패 ↓ → 첫 호출 성공 확률 ↑
     required: [
       'businessSummary',
       'coreValues',
@@ -108,13 +251,16 @@ const RESEARCH_JSON_SCHEMA = {
       'competitors',
       'jobInsights',
       'interviewKeywords',
+      'companyProfile',
+      'talentProfile',
+      'productsAndTech',
     ],
     additionalProperties: false,
   },
 };
 
-/** 90일 TTL */
-const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+/** PR 보강 — Cache TTL 90 → 30일 (신규 row 만, 기존 90일 row 그대로) */
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** miss 결과도 60일 캐싱 — 같은 회사 무한 재시도 차단 */
 const MISS_CACHE_TTL_MS = 60 * 24 * 60 * 60 * 1000;
 
@@ -144,6 +290,211 @@ export class CompanyResearchService {
     return name.trim().toLowerCase();
   }
 
+  /**
+   * PR 보강 — KST 기준일 (YYYY-MM-DD) 동적 생성.
+   * LLM prompt 에 "오늘은 ${kstToday}" inject → "최근 1년" 시간 명시 강제.
+   */
+  private formatKstToday(): string {
+    const now = new Date();
+    // UTC + 9 = KST
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    return kst.toISOString().slice(0, 10); // YYYY-MM-DD
+  }
+
+  /**
+   * PR 보강 — application.jobUrl 의 회사 공식 도메인 추출.
+   * 동적 화이트리스트 추가 — 회사 자체 사이트가 가장 정확한 정보원.
+   *
+   * 예: "https://www.kakaopay.com/recruit" → ["kakaopay.com", "careers.kakaopay.com"]
+   * 잘못된 URL · 파싱 실패 → 빈 배열 fallback (정적 화이트리스트만 사용)
+   */
+  private extractCompanyDomain(jobUrl: string | null | undefined): string[] {
+    if (!jobUrl?.trim()) return [];
+    try {
+      const url = new URL(jobUrl);
+      // javascript: / data: / file: 등 차단 (보안)
+      if (!['http:', 'https:'].includes(url.protocol)) return [];
+      const host = url.hostname.toLowerCase();
+      // www. 제거 + careers./about. 같은 채용 서브도메인도 함께 화이트리스트
+      const apex = host.replace(/^www\./, '');
+      return [apex, `careers.${apex}`, `about.${apex}`, `recruit.${apex}`];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * PR 보강 — sources[] 의 hallucination 가드.
+   *
+   * 검증:
+   * 1. url 파싱 가능 + http/https 만 (보안)
+   * 2. publishedAt 미래 날짜 X (fake 출처 방어)
+   * 3. domain 이 allowedDomains 안에 포함 (외부 도메인 strip)
+   * 4. id 중복 제거
+   */
+  private validateSources(
+    sources: ResearchSource[],
+    allowedDomains: string[],
+  ): ResearchSource[] {
+    const allowed = new Set(allowedDomains.map((d) => d.toLowerCase()));
+    const seenIds = new Set<number>();
+    const now = new Date();
+    return sources.filter((s) => {
+      if (!s || typeof s.id !== 'number' || seenIds.has(s.id)) return false;
+      if (!s.url || !s.title || !s.domain) return false;
+      try {
+        const u = new URL(s.url);
+        if (!['http:', 'https:'].includes(u.protocol)) return false;
+        const host = u.hostname.toLowerCase().replace(/^www\./, '');
+        // allowed 도메인 또는 그 subdomain 매칭
+        const isAllowed = [...allowed].some(
+          (d) => host === d || host.endsWith('.' + d),
+        );
+        if (!isAllowed) return false;
+      } catch {
+        return false;
+      }
+      if (s.publishedAt) {
+        const pub = new Date(s.publishedAt);
+        if (!isNaN(pub.getTime()) && pub > now) return false; // 미래 = fake
+      }
+      seenIds.add(s.id);
+      return true;
+    });
+  }
+
+  /**
+   * PR 보강 — 본문 [N] 마커 hallucination 가드 + Anthropic <cite> 태그 strip.
+   *
+   * 응답 본문에서:
+   * 1. <cite index="...">...</cite> 태그 제거 (Anthropic web_search 의 자동 citation)
+   * 2. [N] 마커 추출 → validIds 외 strip
+   */
+  private stripOrphanFootnotes(
+    research: CompanyResearchData,
+    validIds: number[],
+  ): CompanyResearchData {
+    const validSet = new Set(validIds);
+    const stripField = (text: string | undefined): string => {
+      const cleaned = (text ?? '')
+        // Anthropic web_search 의 <cite index="..."> 태그 제거 (내용은 보존)
+        .replace(/<cite\b[^>]*>/gi, '')
+        .replace(/<\/cite>/gi, '');
+      // [N] 마커 — validIds 외 strip
+      return cleaned.replace(/\[(\d+)\]/g, (match, num: string) =>
+        validSet.has(Number(num)) ? match : '',
+      );
+    };
+    return {
+      ...research,
+      businessSummary: stripField(research.businessSummary),
+      coreValues: stripField(research.coreValues),
+      visionMission: stripField(research.visionMission),
+      recentTrends: stripField(research.recentTrends),
+      financials: stripField(research.financials),
+      competitors: stripField(research.competitors),
+      jobInsights: stripField(research.jobInsights),
+    };
+  }
+
+  /**
+   * PR 보강 — interviewKeywords 의 category 자동 추론.
+   * LLM 이 schema 못 따라 단순 string 만 반환했을 때 → 키워드 텍스트 기반 카테고리 추론.
+   *
+   * tech: 기술 / 영문 / 약어 (API, MSA, K8s 등)
+   * talent: 인성·문화 (도전, 협업, 책임 등)
+   * business: 사업·전략 (매출, 글로벌, 시장 등)
+   * role: 직무 (개발, 데이터, 디자인 등)
+   * issue: 이슈 (논란, 데이터 침해 등)
+   */
+  private inferKeywordCategory(
+    keyword: string,
+  ): 'tech' | 'talent' | 'business' | 'role' | 'issue' {
+    const kw = keyword.toLowerCase();
+    if (
+      /[a-z][a-z0-9]{1,}|api|msa|aws|gcp|cloud|k8s|kafka|spring|kotlin|java|python|database|backend|frontend|devops|개발|기술|아키텍처|시스템|보안|인프라/i.test(
+        kw,
+      )
+    )
+      return 'tech';
+    if (
+      /도전|협업|책임|성장|소통|열정|혁신|존중|배려|적극|성실|주도|학습|인재상|문화|가치관|마인드/.test(
+        kw,
+      )
+    )
+      return 'talent';
+    if (
+      /논란|침해|이슈|사고|위기|소송|벌금|규제|리스크|esg|환경|지속가능/i.test(
+        kw,
+      )
+    )
+      return 'issue';
+    if (
+      /직무|역량|경험|업무|담당|역할|기획|분석|데이터|디자인|마케팅|영업/.test(
+        kw,
+      )
+    )
+      return 'role';
+    return 'business'; // 매출·시장·전략 default
+  }
+
+  /** interviewKeywords 후처리 — string 이면 category 추론, 객체면 그대로 */
+  private enrichInterviewKeywords(keywords: unknown): {
+    keyword: string;
+    category: 'tech' | 'talent' | 'business' | 'role' | 'issue';
+  }[] {
+    if (!Array.isArray(keywords)) return [];
+    return keywords
+      .map((k) => {
+        if (typeof k === 'string') {
+          return { keyword: k, category: this.inferKeywordCategory(k) };
+        }
+        if (
+          typeof k === 'object' &&
+          k !== null &&
+          typeof (k as { keyword?: unknown }).keyword === 'string'
+        ) {
+          const obj = k as { keyword: string; category?: string };
+          const validCategory = ['tech', 'talent', 'business', 'role', 'issue'];
+          const category = validCategory.includes(obj.category ?? '')
+            ? (obj.category as
+                | 'tech'
+                | 'talent'
+                | 'business'
+                | 'role'
+                | 'issue')
+            : this.inferKeywordCategory(obj.keyword);
+          return { keyword: obj.keyword, category };
+        }
+        return null;
+      })
+      .filter(
+        (
+          k,
+        ): k is {
+          keyword: string;
+          category: 'tech' | 'talent' | 'business' | 'role' | 'issue';
+        } => k !== null,
+      );
+  }
+
+  /** PR 보강 — inferredFields 검증 (schema 외 field name strip) */
+  private isValidFieldName(field: string): boolean {
+    return [
+      'businessSummary',
+      'coreValues',
+      'visionMission',
+      'recentTrends',
+      'financials',
+      'competitors',
+      'jobInsights',
+      'interviewKeywords',
+      'companyProfile',
+      'talentProfile',
+      'productsAndTech',
+    ].includes(field);
+  }
+
   /** session → application → companyName/jobCategory 추출. 본인 소유 검증 */
   private async resolveCompanyFromSession(
     userId: string,
@@ -152,6 +503,7 @@ export class CompanyResearchService {
     session: InterviewPrepSession;
     companyName: string;
     jobCategory: string | null;
+    jobUrl: string | null;
   }> {
     const session = await this.sessionRepo.findOne({
       where: { id: sessionId, userId },
@@ -165,6 +517,7 @@ export class CompanyResearchService {
       session,
       companyName: app.companyName,
       jobCategory: app.jobCategory ?? null,
+      jobUrl: app.jobUrl ?? null,
     };
   }
 
@@ -190,7 +543,11 @@ export class CompanyResearchService {
   private async resolveCompanyFromApplication(
     userId: string,
     applicationId: string,
-  ): Promise<{ companyName: string; jobCategory: string | null }> {
+  ): Promise<{
+    companyName: string;
+    jobCategory: string | null;
+    jobUrl: string | null;
+  }> {
     const app = await this.appRepo.findOne({
       where: { id: applicationId, userId },
     });
@@ -198,6 +555,8 @@ export class CompanyResearchService {
     return {
       companyName: app.companyName,
       jobCategory: app.jobCategory ?? null,
+      // PR 보강 — 회사 공식 도메인 동적 화이트리스트 추가 위해
+      jobUrl: app.jobUrl ?? null,
     };
   }
 
@@ -219,10 +578,31 @@ export class CompanyResearchService {
       };
     }
     if (row.expiresAt < new Date()) return null;
+    return this.buildResultFromCache(row);
+  }
+
+  /**
+   * PR 보강 — cache row → CompanyResearchResult 변환 helper.
+   * aiResearch JSONB 안의 sources/inferredFields 우선, 없으면 entity.sources (legacy string[]) fallback.
+   */
+  private buildResultFromCache(
+    row: CompanyResearchCache,
+  ): CompanyResearchResult {
+    const ai = row.aiResearch as CompanyResearchData & {
+      sources?: ResearchSource[];
+      inferredFields?: string[];
+    };
+    const sources = ai.sources ?? row.sources ?? [];
+    // PR 보강 — legacy cache 의 string keyword 도 category 자동 추론
+    const enriched: CompanyResearchData = {
+      ...ai,
+      interviewKeywords: this.enrichInterviewKeywords(ai.interviewKeywords),
+    };
     return {
       status: 'ok',
-      research: row.aiResearch,
-      sources: row.sources,
+      research: enriched,
+      sources,
+      inferredFields: ai.inferredFields ?? [],
       isCached: true,
       cachedAt: row.updatedAt,
     };
@@ -236,11 +616,12 @@ export class CompanyResearchService {
     userId: string,
     applicationId: string,
   ): Promise<CompanyResearchResult> {
-    const { companyName, jobCategory } =
+    const { companyName, jobCategory, jobUrl } =
       await this.resolveCompanyFromApplication(userId, applicationId);
     return this.fetchByCompany(userId, companyName, jobCategory, {
       resourceType: 'application_coverletter',
       resourceId: applicationId,
+      jobUrl,
     });
   }
 
@@ -264,13 +645,7 @@ export class CompanyResearchService {
       };
     }
     if (row.expiresAt < new Date()) return null; // 만료 — 다시 fetch 필요
-    return {
-      status: 'ok',
-      research: row.aiResearch,
-      sources: row.sources,
-      isCached: true,
-      cachedAt: row.updatedAt,
-    };
+    return this.buildResultFromCache(row);
   }
 
   /**
@@ -281,13 +656,12 @@ export class CompanyResearchService {
     userId: string,
     sessionId: string,
   ): Promise<CompanyResearchResult> {
-    const { companyName, jobCategory } = await this.resolveCompanyFromSession(
-      userId,
-      sessionId,
-    );
+    const { companyName, jobCategory, jobUrl } =
+      await this.resolveCompanyFromSession(userId, sessionId);
     return this.fetchByCompany(userId, companyName, jobCategory, {
       resourceType: 'interview_prep_session',
       resourceId: sessionId,
+      jobUrl,
     });
   }
 
@@ -299,7 +673,11 @@ export class CompanyResearchService {
     userId: string,
     companyName: string,
     jobCategory: string | null,
-    resource: { resourceType: string; resourceId: string },
+    resource: {
+      resourceType: string;
+      resourceId: string;
+      jobUrl?: string | null;
+    },
   ): Promise<CompanyResearchResult> {
     // 1. cache 조회
     const cached = await this.findCacheRow(companyName, jobCategory);
@@ -313,13 +691,7 @@ export class CompanyResearchService {
       if (cached.expiresAt > new Date()) {
         cached.hitCount += 1;
         await this.cacheRepo.save(cached);
-        return {
-          status: 'ok',
-          research: cached.aiResearch,
-          sources: cached.sources,
-          isCached: true,
-          cachedAt: cached.updatedAt,
-        };
+        return this.buildResultFromCache(cached);
       }
     }
 
@@ -350,13 +722,7 @@ export class CompanyResearchService {
     if (cacheRetry && cacheRetry.expiresAt > new Date() && !cacheRetry.optOut) {
       cacheRetry.hitCount += 1;
       await this.cacheRepo.save(cacheRetry);
-      return {
-        status: 'ok',
-        research: cacheRetry.aiResearch,
-        sources: cacheRetry.sources,
-        isCached: true,
-        cachedAt: cacheRetry.updatedAt,
-      };
+      return this.buildResultFromCache(cacheRetry);
     }
 
     // 2. quota check (3중 가드 — cooldown·feature_quota_configs)
@@ -388,46 +754,82 @@ export class CompanyResearchService {
     }
 
     // 3. LLM 호출
+    // PR 보강 — KST 기준일 + 직무 입장 + application.jobUrl 의 회사 공식 도메인 동적 추가
+    const kstToday = this.formatKstToday();
+    const systemPrompt = buildSystemPrompt(kstToday);
     const userPrompt =
       `# 회사명\n${companyName}\n\n` +
-      (jobCategory ? `# 직무\n${jobCategory}\n\n` : '') +
-      `위 회사·직무에 대해 화이트리스트 도메인을 검색해 8 항목을 정확히 채워주세요. 모르면 빈 문자열/빈 배열.`;
+      (jobCategory ? `# 직무 (지원자 입장)\n${jobCategory}\n\n` : '') +
+      `위 회사·직무에 대해 화이트리스트 도메인을 검색해 11 항목을 정확히 채워주세요.\n` +
+      `모르면 빈 값. 출처 없으면 본문 표시 X. inferred 항목은 inferredFields 명시.`;
+
+    // PR 보강 — application.jobUrl 의 회사 공식 도메인 추출 후 화이트리스트 동적 추가
+    const dynamicDomains = this.extractCompanyDomain(resource.jobUrl);
+    const allowedDomains = [
+      ...COMPANY_RESEARCH_ALLOWED_DOMAINS,
+      ...dynamicDomains,
+    ];
 
     let result = await this.llm.call({
       userId,
       feature: 'company_research',
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt,
       userPrompt,
       jsonSchema: RESEARCH_JSON_SCHEMA,
       webSearch: {
-        allowedDomains: [...COMPANY_RESEARCH_ALLOWED_DOMAINS],
-        maxUses: 3,
+        allowedDomains,
+        maxUses: 5, // PR 보강 — 3 → 5 (항목 11개 수집 위해)
       },
       resourceType: resource.resourceType,
       resourceId: resource.resourceId,
     });
 
-    // Fallback — Anthropic 가 화이트리스트 도메인 crawl 거부 (400) 시
-    // web_search 없이 1회 retry. Claude 학습 데이터 기반 정보 활용.
-    // 카카오뱅크 같은 유명 회사는 학습 데이터로 충분, 작은 회사는 부족하지만 차단 회피.
+    // 2-tier Fallback (PR 보강):
+    //   Tier 1: 풀 화이트리스트 (위) — 정상 케이스
+    //   Tier 2: 위키 + 공식 도메인만 (한국 신문사 차단 시)
+    //   Tier 3: web_search off + 학습 데이터 + "확인 필요" 라벨
     if (
       result.status !== 'ok' &&
       result.errorMessage?.includes('not accessible to our user agent')
     ) {
       this.logger.warn(
-        `web_search 도메인 차단 (company=${companyName}) → 도구 없이 retry`,
+        `web_search 도메인 차단 Tier 1 (company=${companyName}) → Tier 2 (위키+공식 만)`,
       );
+      const tier2Domains = [
+        'ko.wikipedia.org',
+        'en.wikipedia.org',
+        ...dynamicDomains,
+      ];
       result = await this.llm.call({
         userId,
         feature: 'company_research',
-        systemPrompt: SYSTEM_PROMPT,
-        userPrompt:
-          userPrompt +
-          '\n\n(검색 도구를 사용할 수 없습니다. 학습 데이터 기반으로 가능한 정보만 채우세요. 확실하지 않으면 빈 문자열/빈 배열.)',
+        systemPrompt,
+        userPrompt,
         jsonSchema: RESEARCH_JSON_SCHEMA,
+        webSearch: { allowedDomains: tier2Domains, maxUses: 3 },
         resourceType: resource.resourceType,
         resourceId: resource.resourceId,
       });
+
+      if (
+        result.status !== 'ok' &&
+        result.errorMessage?.includes('not accessible to our user agent')
+      ) {
+        this.logger.warn(
+          `Tier 2 도 차단 → Tier 3 (web_search off + 학습 데이터)`,
+        );
+        result = await this.llm.call({
+          userId,
+          feature: 'company_research',
+          systemPrompt,
+          userPrompt:
+            userPrompt +
+            '\n\n(검색 도구 사용 불가. 학습 데이터 기반 정보만 채우세요. 확실하지 않으면 빈 값 + inferredFields 에 포함.)',
+          jsonSchema: RESEARCH_JSON_SCHEMA,
+          resourceType: resource.resourceType,
+          resourceId: resource.resourceId,
+        });
+      }
     }
 
     if (result.status !== 'ok') {
@@ -437,8 +839,39 @@ export class CompanyResearchService {
       };
     }
 
-    const aiResearch = (result.json as CompanyResearchData) ?? {};
-    const sources = this.extractSources(result.text);
+    // PR 보강 — 응답 후처리: hallucination 가드 (본문 [N] ↔ sources[].id 일치 검증)
+    const rawResearch =
+      (result.json as CompanyResearchData & {
+        sources?: ResearchSource[];
+        inferredFields?: string[];
+      }) ?? {};
+    const validatedSources = this.validateSources(
+      rawResearch.sources ?? [],
+      allowedDomains,
+    );
+    const sanitizedResearch = this.stripOrphanFootnotes(
+      rawResearch,
+      validatedSources.map((s) => s.id),
+    );
+    const inferredFields = (rawResearch.inferredFields ?? []).filter((f) =>
+      this.isValidFieldName(f),
+    );
+    // PR 보강 — interviewKeywords 후처리 (LLM 이 string 만 반환 시 category 자동 추론)
+    const enrichedKeywords = this.enrichInterviewKeywords(
+      sanitizedResearch.interviewKeywords,
+    );
+    // PR 보강 — aiResearch JSONB 안에 ResearchSource[] 객체 + inferredFields 인라인 저장
+    //   (entity.sources string[] 컬럼은 legacy 호환 — url 만 backfill)
+    const aiResearch: CompanyResearchData & {
+      sources?: ResearchSource[];
+      inferredFields?: string[];
+    } = {
+      ...sanitizedResearch,
+      interviewKeywords: enrichedKeywords,
+      sources: validatedSources,
+      inferredFields,
+    };
+    const legacySourceUrls = validatedSources.map((s) => s.url);
 
     // 4. cache upsert
     const isEmpty =
@@ -458,7 +891,7 @@ export class CompanyResearchService {
         optOut: false,
       });
     row.aiResearch = aiResearch as Record<string, unknown>;
-    row.sources = sources;
+    row.sources = legacySourceUrls;
     row.expiresAt = expiresAt;
     row.hitCount = (row.hitCount ?? 0) + 1;
     const saved = await this.cacheRepo.save(row);
@@ -466,7 +899,8 @@ export class CompanyResearchService {
     return {
       status: 'ok',
       research: aiResearch,
-      sources,
+      sources: validatedSources,
+      inferredFields,
       isCached: false,
       cachedAt: saved.updatedAt,
     };

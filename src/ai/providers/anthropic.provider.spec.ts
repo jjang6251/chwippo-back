@@ -97,7 +97,14 @@ describe('AnthropicProvider', () => {
       });
       expect(mockCreate).toHaveBeenCalledWith({
         model: 'claude-sonnet-4-6',
-        system: 'sys',
+        // PR 보강 — prompt caching (system 배열 + cache_control ephemeral)
+        system: [
+          {
+            type: 'text',
+            text: 'sys',
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
         messages: [{ role: 'user', content: 'user' }],
         max_tokens: 500,
         temperature: 0.5,

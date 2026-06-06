@@ -353,10 +353,22 @@ export class InterviewPrepAiService {
     const researchCache = await this.companyResearch
       .getCachedForApplication(userId, session.applicationId)
       .catch(() => null);
-    const companyResearch =
+    // PR 보강 — interviewKeywords 가 InterviewKeyword[] 객체 배열로 변경.
+    //   interview prompt 는 keyword string 만 필요 → 변환 후 전달.
+    const rawResearch =
       researchCache && researchCache.status === 'ok' && researchCache.research
         ? researchCache.research
         : null;
+    const companyResearch = rawResearch
+      ? {
+          ...rawResearch,
+          interviewKeywords: Array.isArray(rawResearch.interviewKeywords)
+            ? rawResearch.interviewKeywords.map((k) =>
+                typeof k === 'string' ? k : k.keyword,
+              )
+            : null,
+        }
+      : null;
 
     const ctx = buildInterviewContext({
       application: {
