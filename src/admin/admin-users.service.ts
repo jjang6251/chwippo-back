@@ -7,10 +7,14 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
 import { User } from '../users/user.entity';
+import { UserCoinBalance } from '../ai/entities/user-coin-balance.entity';
 import { Application } from '../applications/application.entity';
 import { Inquiry } from '../inquiries/inquiry.entity';
 import { AdminAuditService } from './admin-audit.service';
 import { UpdateAdminUserDto } from './dto/update-admin-user.dto';
+import { GrantCoinDto } from './dto/grant-coin.dto';
+import { RevokeCoinDto } from './dto/revoke-coin.dto';
+import { SuspendUserDto } from './dto/suspend-user.dto';
 import { UserProfile } from '../myinfo/entities/user-profile.entity';
 import { Education } from '../myinfo/entities/education.entity';
 import { Experience } from '../myinfo/entities/experience.entity';
@@ -20,6 +24,22 @@ import { Award } from '../myinfo/entities/award.entity';
 import { Document } from '../myinfo/entities/document.entity';
 import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
+import { AdminAuditLog } from './admin-audit-log.entity';
+
+/** PR_B2 Phase 1 — Q24 사용자 통지 의 reason 한국어 라벨 매핑 */
+const GRANT_REASON_LABEL: Record<string, string> = {
+  refund: '환불',
+  event: '이벤트',
+  bonus: '보너스',
+  abuser_compensation: '어뷰저 처리 보상',
+  manual: '기타 수동',
+};
+const REVOKE_REASON_LABEL: Record<string, string> = {
+  fraud: '부정 사용',
+  mistake: '잘못 지급 회수',
+  abuser: '어뷰저 처벌',
+  manual: '기타 수동',
+};
 
 function escapeSearch(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
@@ -331,5 +351,381 @@ export class AdminUsersService {
         coverletters,
       },
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // PR_B2 Phase 1 — 코인 grant/revoke + suspend/unsuspend + detail
+  // 모든 액션: 같은 TX 안 (caller + pending_notification + audit). IP/UA ctx 전달
+  // ─────────────────────────────────────────────────────────────────────
+
+  /** 마지막 admin 보호 검증 (role 박탈 / suspend / delete 진입 전 사용) */
+  private async assertNotLastAdmin(targetUserId: string): Promise<void> {
+    const remainingAdmins = await this.userRepo.count({
+      where: { role: 'admin' as never },
+    });
+    if (remainingAdmins <= 1) {
+      throw new ForbiddenException(
+        '마지막 관리자는 박탈/정지/삭제할 수 없습니다.',
+      );
+    }
+    // findOne 으로 target 의 role 검증은 caller 가 수행
+    void targetUserId;
+  }
+
+  /** PR_B2 Phase 1 — admin 코인 수동 지급. */
+  async grantCoin(
+    adminId: string,
+    targetUserId: string,
+    dto: GrantCoinDto,
+    ctx?: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{ balance: number; granted: number }> {
+    if (adminId === targetUserId) {
+      throw new ForbiddenException(
+        '자기 자신에게는 코인을 지급할 수 없습니다.',
+      );
+    }
+
+    return await this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOne(User, { where: { id: targetUserId } });
+      if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+      // balance row lazy 생성 (legacy user 호환)
+      let balance = await manager.findOne(UserCoinBalance, {
+        where: { userId: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!balance) {
+        balance = manager.create(UserCoinBalance, {
+          userId: targetUserId,
+          tier: user.tier,
+          balance: '0',
+          nextResetAt: new Date(),
+        });
+        await manager.save(UserCoinBalance, balance);
+      }
+
+      const before = Number(balance.balance);
+      const after = before + dto.amount;
+      await manager.update(
+        UserCoinBalance,
+        { userId: targetUserId },
+        { balance: after.toFixed(1) },
+      );
+
+      // 사용자 통지 — me 호출 시 모달 1회 (Q24)
+      const grantReasonLabel = GRANT_REASON_LABEL[dto.reason] ?? dto.reason;
+      const grantBody = dto.memo
+        ? `${dto.amount} 코인이 지급되었습니다.\n사유: ${grantReasonLabel}\n메모: ${dto.memo}`
+        : `${dto.amount} 코인이 지급되었습니다.\n사유: ${grantReasonLabel}`;
+      await manager.update(
+        User,
+        { id: targetUserId },
+        {
+          pendingNotification: {
+            type: 'coin_grant',
+            title: '코인이 지급되었어요',
+            body: grantBody,
+            createdAt: new Date().toISOString(),
+          },
+        },
+      );
+
+      await this.auditService.log(
+        adminId,
+        'grant_coin',
+        'user',
+        targetUserId,
+        {
+          amount: dto.amount,
+          reason: dto.reason,
+          memo: dto.memo,
+          balanceBefore: before,
+          balanceAfter: after,
+        },
+        manager,
+        ctx,
+      );
+
+      return { balance: after, granted: dto.amount };
+    });
+  }
+
+  /** PR_B2 Phase 1 — admin 코인 환수 (Q12 별도 액션, Q26 clamp 0, balance<=0 reject). */
+  async revokeCoin(
+    adminId: string,
+    targetUserId: string,
+    dto: RevokeCoinDto,
+    ctx?: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{ balance: number; actualRevoked: number; requested: number }> {
+    if (adminId === targetUserId) {
+      throw new ForbiddenException(
+        '자기 자신에게는 코인 환수를 할 수 없습니다.',
+      );
+    }
+
+    return await this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOne(User, { where: { id: targetUserId } });
+      if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+      const balance = await manager.findOne(UserCoinBalance, {
+        where: { userId: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!balance) {
+        throw new BadRequestException('사용자 잔여 코인 정보가 없습니다.');
+      }
+      const before = Number(balance.balance);
+      if (before <= 0) {
+        throw new BadRequestException(
+          '잔여 코인이 이미 0 이하입니다. 환수할 수 없습니다.',
+        );
+      }
+      const after = Math.max(0, before - dto.amount);
+      const actualRevoked = before - after;
+
+      await manager.update(
+        UserCoinBalance,
+        { userId: targetUserId },
+        { balance: after.toFixed(1) },
+      );
+
+      // 사용자 통지 — me 호출 시 모달 1회 (Q24)
+      const revokeReasonLabel = REVOKE_REASON_LABEL[dto.reason] ?? dto.reason;
+      const revokeBody = dto.memo
+        ? `${actualRevoked} 코인이 회수되었습니다.\n사유: ${revokeReasonLabel}\n메모: ${dto.memo}`
+        : `${actualRevoked} 코인이 회수되었습니다.\n사유: ${revokeReasonLabel}`;
+      await manager.update(
+        User,
+        { id: targetUserId },
+        {
+          pendingNotification: {
+            type: 'coin_revoke',
+            title: '잔여 코인이 조정되었습니다',
+            body: revokeBody,
+            createdAt: new Date().toISOString(),
+          },
+        },
+      );
+
+      await this.auditService.log(
+        adminId,
+        'revoke_coin',
+        'user',
+        targetUserId,
+        {
+          requested: dto.amount,
+          actualRevoked,
+          reason: dto.reason,
+          memo: dto.memo,
+          before,
+          after,
+        },
+        manager,
+        ctx,
+      );
+
+      return { balance: after, actualRevoked, requested: dto.amount };
+    });
+  }
+
+  /** PR_B2 Phase 1 — admin 사용자 정지 (Q13 + Q25). */
+  async suspendUser(
+    adminId: string,
+    targetUserId: string,
+    dto: SuspendUserDto,
+    ctx?: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{
+    suspendedAt: Date;
+    suspendReason: string;
+    suspendExpiresAt: Date | null;
+  }> {
+    if (adminId === targetUserId) {
+      throw new ForbiddenException('자기 자신은 정지할 수 없습니다.');
+    }
+    if (dto.expiresAt) {
+      const exp = new Date(dto.expiresAt);
+      if (exp.getTime() <= Date.now()) {
+        throw new BadRequestException('expiresAt 은 현재 이후여야 합니다.');
+      }
+    }
+
+    return await this.dataSource.transaction(async (manager) => {
+      const target = await manager.findOne(User, {
+        where: { id: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!target) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+      // Q25 — admin 끼리 정지 차단
+      if (target.role === 'admin') {
+        throw new ForbiddenException('admin 계정은 정지할 수 없습니다.');
+      }
+
+      const wasSuspended = target.suspendedAt !== null;
+      const now = wasSuspended ? target.suspendedAt! : new Date();
+      const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+
+      await manager.update(
+        User,
+        { id: targetUserId },
+        {
+          suspendedAt: now,
+          suspendReason: dto.reason,
+          suspendExpiresAt: expiresAt,
+        },
+      );
+
+      const action = wasSuspended ? 'update_suspend_reason' : 'suspend';
+      await this.auditService.log(
+        adminId,
+        action,
+        'user',
+        targetUserId,
+        wasSuspended
+          ? {
+              before: {
+                reason: target.suspendReason,
+                expiresAt: target.suspendExpiresAt,
+              },
+              after: { reason: dto.reason, expiresAt },
+            }
+          : { reason: dto.reason, expiresAt },
+        manager,
+        ctx,
+      );
+
+      return {
+        suspendedAt: now,
+        suspendReason: dto.reason,
+        suspendExpiresAt: expiresAt,
+      };
+    });
+  }
+
+  /** PR_B2 Phase 1 — 사용자 상세 (Q6 — 모든 항목 aggregate). */
+  async getUserDetail(targetUserId: string): Promise<unknown> {
+    const user = await this.userRepo.findOne({ where: { id: targetUserId } });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+    const [
+      applicationCount,
+      coverletterQuestionStats,
+      interviewPrepCount,
+      activityLogCount,
+      inquiries,
+      coinBalance,
+      auditLogs,
+    ] = await Promise.all([
+      this.appRepo.count({
+        where: { userId: targetUserId, deletedAt: IsNull() as never },
+      }),
+      // 자소서 = application_coverletters 의 user 별 (application JOIN). 작성 회사 수 + 답변 작성 문항 수
+      this.dataSource.query<
+        Array<{ total: string; companies: string; answered: string }>
+      >(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(DISTINCT ac.application_id)::text AS companies,
+           COUNT(*) FILTER (WHERE ac.answer IS NOT NULL AND TRIM(ac.answer) <> '')::text AS answered
+         FROM application_coverletters ac
+         INNER JOIN applications a ON a.id = ac.application_id
+         WHERE a.user_id = $1 AND a.deleted_at IS NULL`,
+        [targetUserId],
+      ),
+      this.dataSource.query<Array<{ count: string }>>(
+        `SELECT COUNT(*)::text FROM interview_prep_sessions WHERE user_id = $1`,
+        [targetUserId],
+      ),
+      this.dataSource.query<Array<{ count: string }>>(
+        `SELECT COUNT(*)::text FROM activity_logs WHERE user_id = $1`,
+        [targetUserId],
+      ),
+      this.inquiryRepo.find({
+        where: { user_id: targetUserId },
+        order: { created_at: 'DESC' },
+        take: 20,
+      }),
+      this.dataSource.getRepository(UserCoinBalance).findOne({
+        where: { userId: targetUserId },
+      }),
+      this.dataSource.getRepository(AdminAuditLog).find({
+        where: { targetType: 'user', targetId: targetUserId },
+        order: { createdAt: 'DESC' },
+        take: 50,
+      }),
+    ]);
+
+    const cl = coverletterQuestionStats[0] ?? {
+      total: '0',
+      companies: '0',
+      answered: '0',
+    };
+
+    return {
+      basic: omitSensitive(user),
+      coinBalance: coinBalance
+        ? {
+            balance: parseFloat(coinBalance.balance),
+            tier: coinBalance.tier,
+            nextResetAt: coinBalance.nextResetAt,
+            planExpiresAt: coinBalance.planExpiresAt,
+          }
+        : null,
+      inquiries,
+      auditLogs,
+      activityStats: {
+        applicationCount,
+        coverletterQuestionTotal: parseInt(cl.total, 10),
+        coverletterCompanies: parseInt(cl.companies, 10),
+        coverletterAnswered: parseInt(cl.answered, 10),
+        interviewPrepCount: parseInt(interviewPrepCount[0]?.count ?? '0', 10),
+        activityLogCount: parseInt(activityLogCount[0]?.count ?? '0', 10),
+      },
+    };
+  }
+
+  /** PR_B2 Phase 1 — admin 정지 해제. */
+  async unsuspendUser(
+    adminId: string,
+    targetUserId: string,
+    ctx?: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{ ok: true }> {
+    return await this.dataSource.transaction(async (manager) => {
+      const target = await manager.findOne(User, {
+        where: { id: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!target) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+      // idempotent — 정지 안 됨 시 audit 미발생
+      if (target.suspendedAt === null) {
+        return { ok: true as const };
+      }
+
+      await manager.update(
+        User,
+        { id: targetUserId },
+        {
+          suspendedAt: null,
+          suspendReason: null,
+          suspendExpiresAt: null,
+        },
+      );
+
+      await this.auditService.log(
+        adminId,
+        'unsuspend',
+        'user',
+        targetUserId,
+        {
+          previousReason: target.suspendReason,
+          previousExpiresAt: target.suspendExpiresAt,
+        },
+        manager,
+        ctx,
+      );
+
+      return { ok: true as const };
+    });
   }
 }

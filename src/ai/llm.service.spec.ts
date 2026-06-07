@@ -58,6 +58,9 @@ describe('LlmService', () => {
     aiConsentAt: new Date(),
     aiConsentVersion: CURRENT_AI_CONSENT_VERSION,
     onboardedCoinAt: null,
+    suspendReason: null,
+    suspendExpiresAt: null,
+    pendingNotification: null,
     tier: 'free',
     ...overrides,
   });

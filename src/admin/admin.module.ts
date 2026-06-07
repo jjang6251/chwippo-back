@@ -29,6 +29,8 @@ import { Experience } from '../myinfo/entities/experience.entity';
 import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
 import { Document } from '../myinfo/entities/document.entity';
 import { Education } from '../myinfo/entities/education.entity';
+import { UserCoinBalance } from '../ai/entities/user-coin-balance.entity';
+import { UnsuspendCron } from '../users/unsuspend.cron';
 
 @Module({
   imports: [
@@ -38,6 +40,7 @@ import { Education } from '../myinfo/entities/education.entity';
       AlertHistory,
       LlmCallLog,
       User,
+      UserCoinBalance,
       Application,
       Inquiry,
       Cert,
@@ -68,6 +71,7 @@ import { Education } from '../myinfo/entities/education.entity';
     ThresholdCheckService,
     ProviderHealthService,
     ProviderHealthCron,
+    UnsuspendCron, // PR_B2 Phase 1 — 자동 unsuspend 매시간
   ],
   exports: [AdminAuditService, AlertThresholdsService, ThresholdCheckService],
 })

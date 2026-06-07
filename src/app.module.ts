@@ -13,6 +13,9 @@ import { FilesModule } from './files/files.module';
 import { UsersModule } from './users/users.module';
 import { InquiriesModule } from './inquiries/inquiries.module';
 import { AdminModule } from './admin/admin.module';
+import { SuspendedGuard } from './common/guards/suspended.guard';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from './users/user.entity';
 import { CalendarModule } from './calendar/calendar.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { ActivityModule } from './activity/activity.module';
@@ -43,8 +46,12 @@ import { HealthController } from './health/health.controller';
     ActivityModule,
     AiModule,
     InterviewPrepModule,
+    TypeOrmModule.forFeature([User]), // PR_B2 Phase 1 — SuspendedGuard 의 User repo 의존성
   ],
   controllers: [HealthController],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: SuspendedGuard }, // PR_B2 Phase 1 — Q25 SuspendedModal bypass 방어
+  ],
 })
 export class AppModule {}
