@@ -32,6 +32,50 @@ class UpdateAlertThresholdsDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  // PR_B2 Phase 1 — admin grant alert (S1)
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(1_000_000)
+  adminGrantPerHourAlert?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(1_000_000)
+  adminGrantSingleAlert?: number;
+
+  // PR_B2 Phase 2 — 신규 4 임계치
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(720) // 30일
+  inquirySlaHours?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(10_000)
+  abuserSuspectDailyCalls?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(10_000)
+  freeUserSignupSpikePct?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.1)
+  @Max(10)
+  costOutlierStddev?: number;
 }
 
 @Controller('admin/alert-thresholds')

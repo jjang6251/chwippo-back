@@ -14,6 +14,8 @@ import { ProviderHealthCron } from './provider-health.cron';
 import { ProviderHealthService } from './provider-health.service';
 import { SystemStatusController } from './system-status.controller';
 import { ThresholdCheckService } from './threshold-check.service';
+import { AiUsageController } from './ai-usage.controller';
+import { AiUsageService } from './ai-usage.service';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
 import { User } from '../users/user.entity';
@@ -62,6 +64,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AdminUsersController,
     AlertThresholdsController,
     SystemStatusController,
+    AiUsageController, // PR_B2 Phase 2
   ],
   providers: [
     AdminService,
@@ -71,8 +74,14 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     ThresholdCheckService,
     ProviderHealthService,
     ProviderHealthCron,
-    UnsuspendCron, // PR_B2 Phase 1 — 자동 unsuspend 매시간
+    UnsuspendCron, // PR_B2 Phase 1
+    AiUsageService, // PR_B2 Phase 2
   ],
-  exports: [AdminAuditService, AlertThresholdsService, ThresholdCheckService],
+  exports: [
+    AdminAuditService,
+    AlertThresholdsService,
+    ThresholdCheckService,
+    AiUsageService,
+  ],
 })
 export class AdminModule {}
