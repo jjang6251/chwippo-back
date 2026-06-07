@@ -61,7 +61,7 @@ describe('AdminFeatureQuotasService', () => {
 
   describe('listAll', () => {
     it('feature ASC, tier ASC 정렬', async () => {
-      repo.find.mockResolvedValue([makeRow(), makeRow({ tier: 'pro' })]);
+      repo.find.mockResolvedValue([makeRow(), makeRow({ tier: 'lite' })]);
       const r = await service.listAll();
       expect(r).toHaveLength(2);
       expect(repo.find).toHaveBeenCalledWith({

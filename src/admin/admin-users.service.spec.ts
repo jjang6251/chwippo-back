@@ -495,20 +495,20 @@ describe('AdminUsersService', () => {
       });
     });
 
-    describe('tier 변경 (F6 PR 2 — F7 결제 전 admin 수동 부여)', () => {
-      it('free → pro 변경: audit update_tier + before·after detail', async () => {
+    describe('tier 변경 (PR_B2 Phase 0 — CoinTier 통일 후)', () => {
+      it('free → lite 변경: audit update_tier + before·after detail', async () => {
         mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'free' }));
-        mockEntityManager.save.mockResolvedValue(makeUser({ tier: 'pro' }));
+        mockEntityManager.save.mockResolvedValue(makeUser({ tier: 'lite' }));
         mockAuditService.log.mockResolvedValue(undefined);
 
-        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'pro' });
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'lite' });
 
         expect(mockAuditService.log).toHaveBeenCalledWith(
           ADMIN_ID,
           'update_tier',
           'user',
           USER_ID,
-          { before: 'free', after: 'pro' },
+          { before: 'free', after: 'lite' },
           expect.anything(),
         );
       });
@@ -529,21 +529,21 @@ describe('AdminUsersService', () => {
         );
       });
 
-      it('pro → enterprise 변경: audit', async () => {
-        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'pro' }));
+      it('lite → standard 변경: audit', async () => {
+        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'lite' }));
         mockEntityManager.save.mockResolvedValue(
-          makeUser({ tier: 'enterprise' }),
+          makeUser({ tier: 'standard' }),
         );
         mockAuditService.log.mockResolvedValue(undefined);
 
-        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'enterprise' });
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'standard' });
 
         expect(mockAuditService.log).toHaveBeenCalledWith(
           ADMIN_ID,
           'update_tier',
           'user',
           USER_ID,
-          { before: 'pro', after: 'enterprise' },
+          { before: 'lite', after: 'standard' },
           expect.anything(),
         );
       });
