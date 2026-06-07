@@ -29,7 +29,8 @@ const VALID_FEATURES: LlmFeature[] = [
   'interview_prep_followup',
 ];
 
-const VALID_TIERS: QuotaTier[] = ['free', 'pro', 'enterprise'];
+// PR_B2 Phase 0 — CoinTier 통일
+const VALID_TIERS: QuotaTier[] = ['free', 'lite', 'standard'];
 
 /**
  * F6 PR 2 Phase 1 — admin 의 feature × tier 매트릭스 관리.

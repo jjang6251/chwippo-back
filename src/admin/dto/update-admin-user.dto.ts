@@ -26,8 +26,8 @@ export class UpdateAdminUserDto {
   @MaxLength(100)
   nickname?: string;
 
-  /** F6 PR 2 — 결제 tier 변경 (free/pro/enterprise). F7 결제 인프라 도입 전 admin 수동 부여용 */
+  /** 결제 tier 변경 (free/lite/standard). PR_B2 Phase 0 — CoinTier 통일. PR_B2 Phase 3 의 ForcePlanChange 가 별도 endpoint 로 분리 예정 */
   @IsOptional()
-  @IsIn(['free', 'pro', 'enterprise'])
-  tier?: 'free' | 'pro' | 'enterprise';
+  @IsIn(['free', 'lite', 'standard'])
+  tier?: 'free' | 'lite' | 'standard';
 }

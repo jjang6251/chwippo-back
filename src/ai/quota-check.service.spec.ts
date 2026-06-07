@@ -200,17 +200,17 @@ describe('QuotaCheckService', () => {
 
   // ── tier 분리 ──
   describe('tier 분리 (S4)', () => {
-    it("user.tier='pro' → pro tier config 조회 (free 와 다른 row)", async () => {
+    it("user.tier='lite' → lite tier config 조회 (free 와 다른 row)", async () => {
       userRepo.findOne.mockResolvedValue({
         id: USER_ID,
-        tier: 'pro',
+        tier: 'lite',
       } as User);
       configRepo.findOne.mockResolvedValue(
-        makeConfig({ tier: 'pro', dayLimit: 100 }),
+        makeConfig({ tier: 'lite', dayLimit: 100 }),
       );
       await service.checkAndPrepare(USER_ID, 'note_summary');
       expect(configRepo.findOne).toHaveBeenCalledWith({
-        where: { feature: 'note_summary', tier: 'pro' },
+        where: { feature: 'note_summary', tier: 'lite' },
       });
     });
 

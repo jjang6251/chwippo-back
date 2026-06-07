@@ -4,6 +4,7 @@ import {
   Entity,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import type { CoinTier } from '../ai/entities/tier-config.entity';
 
 @Entity('users')
 export class User {
@@ -69,14 +70,15 @@ export class User {
   onboardedCoinAt: Date | null;
 
   /**
-   * F6 PR 2 Phase 1 — 사용자 결제 tier ('free'/'pro'/'enterprise').
-   * `feature_quota_configs` 의 tier 별 한도가 적용됨. admin 이 'free' 한도 조절 시 'pro' 영향 0 (유료 보호).
-   * F7 결제 인프라 도입 시 결제 완료 → 'pro' 로 UPDATE.
+   * 사용자 결제 tier ('free'/'lite'/'standard').
+   * PR_B2 Phase 0 — CoinTier 통일 ('pro'→'lite', 'enterprise'→'standard').
+   * `tier_configs` (PR_B1 코인 system) + `feature_quota_configs` (legacy) 공용 tier.
+   * admin Phase 3 의 ForcePlanChange 또는 결제 시스템이 UPDATE.
    */
   @Column({
     type: 'varchar',
     length: 20,
     default: 'free',
   })
-  tier: 'free' | 'pro' | 'enterprise';
+  tier: CoinTier;
 }

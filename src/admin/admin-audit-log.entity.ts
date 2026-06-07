@@ -60,6 +60,13 @@ export class AdminAuditLog {
   @Column({ type: 'jsonb', default: {} })
   detail: Record<string, unknown>;
 
+  // PR_B2 Phase 0.3 — 모든 admin 액션의 출처 (Q4 강화). 신규 row 부터 채움
+  @Column({ type: 'text', nullable: true })
+  ip: string | null;
+
+  @Column({ name: 'user_agent', type: 'text', nullable: true })
+  userAgent: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

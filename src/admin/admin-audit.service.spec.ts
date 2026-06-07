@@ -17,6 +17,8 @@ function makeLog(overrides: Partial<AdminAuditLog> = {}): AdminAuditLog {
     targetType: 'user',
     targetId: 'user-uuid',
     detail: {},
+    ip: null,
+    userAgent: null,
     createdAt: new Date('2026-01-01'),
     ...overrides,
   };
@@ -135,6 +137,82 @@ describe('AdminAuditService', () => {
       await expect(
         service.log('admin-uuid', 'suspend', 'user', 'u1', {}, mockManager),
       ).rejects.toThrow('DB 장애');
+    });
+
+    // PR_B2 Phase 0.3 — IP/UA 저장 검증
+    describe('IP/UA ctx (PR_B2 Phase 0.3)', () => {
+      it('ctx 제공 시 ip + user_agent 저장', async () => {
+        repo.save.mockResolvedValue(makeLog());
+
+        await service.log(
+          'admin-uuid',
+          'suspend',
+          'user',
+          'u1',
+          {},
+          undefined,
+          { ip: '203.0.113.42', userAgent: 'Mozilla/5.0 Chrome/120' },
+        );
+
+        expect(repo.save).toHaveBeenCalledWith(
+          expect.objectContaining({
+            ip: '203.0.113.42',
+            userAgent: 'Mozilla/5.0 Chrome/120',
+          }),
+        );
+      });
+
+      it('ctx 미제공 시 ip + user_agent null 저장', async () => {
+        repo.save.mockResolvedValue(makeLog());
+
+        await service.log('admin-uuid', 'suspend', 'user', 'u1', {});
+
+        expect(repo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ ip: null, userAgent: null }),
+        );
+      });
+
+      it('ctx 의 ip 만 제공 / userAgent undefined → null 저장', async () => {
+        repo.save.mockResolvedValue(makeLog());
+
+        await service.log(
+          'admin-uuid',
+          'suspend',
+          'user',
+          'u1',
+          {},
+          undefined,
+          { ip: '10.0.0.1' },
+        );
+
+        expect(repo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ ip: '10.0.0.1', userAgent: null }),
+        );
+      });
+
+      it('manager + ctx 둘 다 제공 시 트랜잭션 안 ip 저장', async () => {
+        const mockManager = {
+          save: jest.fn().mockResolvedValue(makeLog()),
+        } as unknown as EntityManager;
+
+        await service.log(
+          'admin-uuid',
+          'suspend',
+          'user',
+          'u1',
+          {},
+          mockManager,
+          { ip: '198.51.100.7', userAgent: 'curl/8.0' },
+        );
+
+        expect(mockManager.save).toHaveBeenCalledWith(
+          AdminAuditLog,
+          expect.objectContaining({
+            ip: '198.51.100.7',
+            userAgent: 'curl/8.0',
+          }),
+        );
+      });
     });
   });
 });

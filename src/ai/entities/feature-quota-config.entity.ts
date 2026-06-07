@@ -12,7 +12,7 @@ import type { LlmFeature } from './llm-call-log.entity';
 /**
  * F6 PR 2 Phase 1 — feature 별·tier 별 quota 설정 (admin 동적 조절).
  *
- * **PK = (feature, tier)** — tier 별 독립. 'free' 변경이 'pro' 영향 0 (유료 보호).
+ * **PK = (feature, tier)** — tier 별 독립. 'free' 변경이 'lite'/'standard' 영향 0 (유료 보호).
  *
  * **컬럼 의미**:
  * - `dayLimit` — 24h 호출 한도 (status='ok'+'retry_parsing' 카운트)
@@ -25,7 +25,8 @@ import type { LlmFeature } from './llm-call-log.entity';
  * 2. updated_by · updated_at 갱신 + admin_audit_logs 'update_ai_quota' 또는 'toggle_ai_feature' audit
  * 3. 다음 사용자 호출부터 즉시 적용 (캐시 X — 매 호출 DB 조회, 10ms 추가 수용)
  */
-export type QuotaTier = 'free' | 'pro' | 'enterprise';
+// PR_B2 Phase 0 — CoinTier 와 통일. 마이그레이션 1780400 으로 DB CHECK 도 'free'|'lite'|'standard'
+export type QuotaTier = 'free' | 'lite' | 'standard';
 
 @Entity('feature_quota_configs')
 export class FeatureQuotaConfig {
