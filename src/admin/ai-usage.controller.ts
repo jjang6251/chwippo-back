@@ -17,7 +17,8 @@ import type { Period } from './ai-usage.service';
 export class AiUsageController {
   constructor(private readonly aiUsage: AiUsageService) {}
 
-  @Get()
+  // route 충돌 회피 — 기존 controller 가 이미 `/admin/ai-usage` 사용 중. 신규 metrics 는 path 명시
+  @Get('metrics')
   getMetrics(
     @Query('period') period: Period = 'day',
     @Query('from') from?: string,
