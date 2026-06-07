@@ -21,7 +21,7 @@ export type Period = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
 const VALID_PERIODS: Period[] = ['day', 'week', 'month', 'quarter', 'year'];
 
-interface UsageMetrics {
+export interface UsageMetrics {
   period: Period;
   from: string;
   to: string;
