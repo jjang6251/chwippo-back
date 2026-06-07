@@ -6,6 +6,19 @@ import {
 } from 'typeorm';
 import type { CoinTier } from '../ai/entities/tier-config.entity';
 
+/** PR_B2 Phase 1 — Q24 사용자 통지. admin 액션 후 사용자 me 호출 시 1회 모달 표시 */
+export interface PendingNotification {
+  type:
+    | 'coin_grant'
+    | 'coin_revoke'
+    | 'matrix_change'
+    | 'tier_downgrade'
+    | 'tier_upgrade';
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
 @Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
@@ -81,4 +94,16 @@ export class User {
     default: 'free',
   })
   tier: CoinTier;
+
+  // PR_B2 Phase 1 — Q13 정지 모달의 사유 (admin 입력 1..500자)
+  @Column({ name: 'suspend_reason', type: 'text', nullable: true })
+  suspendReason: string | null;
+
+  // PR_B2 Phase 1 — Q13 정지 모달의 예상 해제일 (NULL = 영구). 자동 해제 cron + lazy
+  @Column({ name: 'suspend_expires_at', type: 'timestamptz', nullable: true })
+  suspendExpiresAt: Date | null;
+
+  // PR_B2 Phase 1 — Q24 사용자 통지 (admin 액션 후 me 호출 응답에 포함, dismiss 시 NULL)
+  @Column({ name: 'pending_notification', type: 'jsonb', nullable: true })
+  pendingNotification: PendingNotification | null;
 }

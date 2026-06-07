@@ -37,7 +37,19 @@ export type AuditAction =
   // F6 PR 2 Phase 5.6.9 — admin 가 AI 사용량 reset
   // targetType='all_users' (userId 없음) | 'user' (userId 있음), targetId=userId or 'all'
   // detail: { scope, affected, resetAt }
-  | 'reset_ai_quota';
+  | 'reset_ai_quota'
+  // PR_B2 Phase 1 — admin 이 사용자에게 코인 grant
+  // targetType='user', targetId=userId, detail: { amount, reason, memo?, balanceBefore, balanceAfter }
+  | 'grant_coin'
+  // PR_B2 Phase 1 — admin 이 사용자에게서 코인 revoke (음수 X, clamp 0)
+  // targetType='user', targetId=userId, detail: { requested, actualRevoked, reason, memo?, before, after }
+  | 'revoke_coin'
+  // PR_B2 Phase 1 — admin 이 이미 정지된 사용자의 사유 / 만료일 갱신
+  // targetType='user', targetId=userId, detail: { before: {reason, expiresAt}, after: {reason, expiresAt} }
+  | 'update_suspend_reason'
+  // PR_B2 Phase 1 — cron 또는 lazy 의 자동 unsuspend (system 자동, adminUserId=NULL)
+  // targetType='user', targetId=userId, detail: { trigger: 'cron'|'lazy', expiredAt }
+  | 'auto_unsuspend';
 
 @Entity('admin_audit_logs')
 export class AdminAuditLog {

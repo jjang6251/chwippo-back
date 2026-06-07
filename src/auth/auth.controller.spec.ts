@@ -27,6 +27,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     aiConsentAt: null,
     aiConsentVersion: null,
     onboardedCoinAt: null,
+    suspendReason: null,
+    suspendExpiresAt: null,
+    pendingNotification: null,
     tier: 'free',
     ...overrides,
   };
@@ -372,6 +375,9 @@ describe('AuthController', () => {
       aiConsentAt: null,
       aiConsentVersion: null,
       onboardedCoinAt: null,
+      suspendReason: null,
+      suspendExpiresAt: null,
+      pendingNotification: null,
     };
 
     it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
