@@ -37,6 +37,8 @@ export class MyCoinController {
     balance: number;
     tier: string;
     nextResetAt: Date;
+    planStartedAt: Date | null;
+    planExpiresAt: Date | null;
     monthlyCoinLimit: number;
     companyResearchDailyCap: number;
     suspendedAt: Date | null;
@@ -70,6 +72,8 @@ export class MyCoinController {
       balance: balanceInfo.balance,
       tier: balanceInfo.tier,
       nextResetAt: row!.nextResetAt,
+      planStartedAt: row!.planStartedAt,
+      planExpiresAt: row!.planExpiresAt,
       monthlyCoinLimit: parseFloat(tierConfig.monthlyCoinLimit),
       companyResearchDailyCap: tierConfig.companyResearchDailyCap,
       suspendedAt: userRow?.suspendedAt ?? null,

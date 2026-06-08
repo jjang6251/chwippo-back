@@ -16,6 +16,12 @@ import { SystemStatusController } from './system-status.controller';
 import { ThresholdCheckService } from './threshold-check.service';
 import { AiUsageController } from './ai-usage.controller';
 import { AiUsageService } from './ai-usage.service';
+import { TierConfigAdminController } from './tier-config-admin.controller';
+import { TierConfigAdminService } from './tier-config-admin.service';
+import { TierConfig } from '../ai/entities/tier-config.entity';
+import { FeatureCoinMetaAdminController } from './feature-coin-meta-admin.controller';
+import { FeatureCoinMetaAdminService } from './feature-coin-meta-admin.service';
+import { FeatureCoinMeta } from '../ai/entities/feature-coin-meta.entity';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
 import { User } from '../users/user.entity';
@@ -43,6 +49,8 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
       LlmCallLog,
       User,
       UserCoinBalance,
+      TierConfig,
+      FeatureCoinMeta,
       Application,
       Inquiry,
       Cert,
@@ -65,6 +73,8 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AlertThresholdsController,
     SystemStatusController,
     AiUsageController, // PR_B2 Phase 2
+    TierConfigAdminController, // PR_B2 Phase 3
+    FeatureCoinMetaAdminController, // PR_B2 Phase 3
   ],
   providers: [
     AdminService,
@@ -76,6 +86,8 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     ProviderHealthCron,
     UnsuspendCron, // PR_B2 Phase 1
     AiUsageService, // PR_B2 Phase 2
+    TierConfigAdminService, // PR_B2 Phase 3
+    FeatureCoinMetaAdminService, // PR_B2 Phase 3
   ],
   exports: [
     AdminAuditService,
