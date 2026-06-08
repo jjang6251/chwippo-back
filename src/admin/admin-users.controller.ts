@@ -19,6 +19,7 @@ import { UpdateAdminUserDto } from './dto/update-admin-user.dto';
 import { GrantCoinDto } from './dto/grant-coin.dto';
 import { RevokeCoinDto } from './dto/revoke-coin.dto';
 import { SuspendUserDto } from './dto/suspend-user.dto';
+import { ForceChangeTierDto } from './dto/force-change-tier.dto';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -154,5 +155,21 @@ export class AdminUsersController {
   @Get(':id/detail')
   getUserDetail(@Param('id') id: string) {
     return this.adminUsersService.getUserDetail(id);
+  }
+
+  // PR_B2 Phase 3 — admin 의 사용자 tier 강제 변경 (Q11 + Q2 B)
+  @Patch(':id/tier')
+  forceChangeTier(
+    @CurrentUser() admin: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ForceChangeTierDto,
+    @Req() req: Request,
+  ) {
+    return this.adminUsersService.forceChangeTier(
+      admin.id,
+      id,
+      dto,
+      getAuditCtx(req),
+    );
   }
 }

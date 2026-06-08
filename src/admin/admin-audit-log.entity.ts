@@ -49,7 +49,18 @@ export type AuditAction =
   | 'update_suspend_reason'
   // PR_B2 Phase 1 — cron 또는 lazy 의 자동 unsuspend (system 자동, adminUserId=NULL)
   // targetType='user', targetId=userId, detail: { trigger: 'cron'|'lazy', expiredAt }
-  | 'auto_unsuspend';
+  | 'auto_unsuspend'
+  // PR_B2 Phase 3 — admin 이 tier_configs 수정 (monthlyCoinLimit / cooldown / cap 등)
+  // targetType='tier_config', targetId=tier, detail: { before, after, applyMode, affectedUsers }
+  | 'update_tier_config'
+  // PR_B2 Phase 3 — admin 이 feature_coin_meta 수정 (chargesCoins / fixedCoinCost 등)
+  // targetType='feature_coin_meta', targetId=feature, detail: { before, after }
+  | 'update_feature_coin_meta'
+  // PR_B2 Phase 3 — admin 이 user.tier 강제 변경 + planExpiresAt 명시
+  // targetType='user', targetId=userId, detail: { fromTier, toTier, planExpiresAt, reason }
+  | 'change_plan_with_expires'
+  // PR_B2 Phase 3 — downgrade 시 사용자 cycle 보호 (Q2 B) audit 명시
+  | 'force_plan_downgrade';
 
 @Entity('admin_audit_logs')
 export class AdminAuditLog {

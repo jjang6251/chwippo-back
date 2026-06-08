@@ -15,6 +15,8 @@ import { UpdateAdminUserDto } from './dto/update-admin-user.dto';
 import { GrantCoinDto } from './dto/grant-coin.dto';
 import { RevokeCoinDto } from './dto/revoke-coin.dto';
 import { SuspendUserDto } from './dto/suspend-user.dto';
+import { ForceChangeTierDto } from './dto/force-change-tier.dto';
+import { TierConfig, type CoinTier } from '../ai/entities/tier-config.entity';
 import { UserProfile } from '../myinfo/entities/user-profile.entity';
 import { Education } from '../myinfo/entities/education.entity';
 import { Experience } from '../myinfo/entities/experience.entity';
@@ -599,6 +601,164 @@ export class AdminUsersService {
         suspendReason: dto.reason,
         suspendExpiresAt: expiresAt,
       };
+    });
+  }
+
+  /**
+   * PR_B2 Phase 3 — admin 의 사용자 tier 강제 변경 (Q11 planExpiresAt + Q2 B applyMode).
+   *
+   * 정책:
+   * - newTier === user.tier → no-op (audit X)
+   * - applyMode='next_cycle' + downgrade → 현재 cycle 유지 + plan_expires_at 셋팅
+   * - applyMode='immediate' → 즉시 변경 + balance 새 tier monthly_coin_limit reset
+   * - applyMode='immediate' + upgrade → balance reset + plan_started_at=NOW
+   * - planExpiresAt default = 30일 후 (Q11)
+   *
+   * 사용자 통지 pending_notification 자동 셋팅. audit `change_plan_with_expires` 또는 `force_plan_downgrade`.
+   */
+  async forceChangeTier(
+    adminId: string,
+    targetUserId: string,
+    dto: ForceChangeTierDto,
+    ctx?: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{
+    tier: CoinTier;
+    planExpiresAt: Date | null;
+    applyMode: 'immediate' | 'next_cycle';
+  }> {
+    if (adminId === targetUserId) {
+      throw new ForbiddenException('자기 자신의 tier 는 변경할 수 없습니다.');
+    }
+
+    return await this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOne(User, {
+        where: { id: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+      const fromTier = user.tier;
+      const newTier = dto.newTier;
+
+      if (fromTier === newTier) {
+        return {
+          tier: fromTier,
+          planExpiresAt: null,
+          applyMode: dto.applyMode,
+        };
+      }
+
+      const isDowngrade =
+        (fromTier === 'standard' && newTier !== 'standard') ||
+        (fromTier === 'lite' && newTier === 'free');
+
+      // tier_config 의 monthly_coin_limit 조회 (immediate upgrade 시 balance reset 용)
+      const newTierConfig = await manager.findOne(TierConfig, {
+        where: { tier: newTier },
+      });
+      if (!newTierConfig) {
+        throw new NotFoundException(
+          `tier_config 가 없습니다: ${newTier} (admin 검수 필요)`,
+        );
+      }
+
+      const balance = await manager.findOne(UserCoinBalance, {
+        where: { userId: targetUserId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      const applyImmediate = dto.applyMode === 'immediate' || !isDowngrade;
+
+      /**
+       * planExpiresAt 계산:
+       * - newTier='free' + immediate: NULL (무료 무기한)
+       * - newTier='free' + next_cycle: balance.next_reset_at (현재 cycle 끝 → 자동 강등)
+       * - newTier=lite/standard: admin 명시 또는 default 30일
+       */
+      let planExpiresAt: Date | null;
+      if (newTier === 'free' && applyImmediate) {
+        planExpiresAt = null;
+      } else if (newTier === 'free' && !applyImmediate) {
+        planExpiresAt =
+          balance?.nextResetAt ?? new Date(Date.now() + 30 * 86400000);
+      } else {
+        planExpiresAt = dto.planExpiresAt
+          ? new Date(dto.planExpiresAt)
+          : new Date(Date.now() + 30 * 86400000);
+        if (planExpiresAt.getTime() <= Date.now()) {
+          throw new BadRequestException('planExpiresAt 은 미래여야 합니다.');
+        }
+      }
+
+      if (applyImmediate) {
+        await manager.update(User, { id: targetUserId }, { tier: newTier });
+        if (balance) {
+          // immediate: balance = 새 tier monthly_coin_limit 로 reset (upgrade 시 즉시 부여)
+          await manager.update(
+            UserCoinBalance,
+            { userId: targetUserId },
+            {
+              tier: newTier,
+              balance: newTierConfig.monthlyCoinLimit,
+              planStartedAt: newTier === 'free' ? null : new Date(),
+              planExpiresAt,
+            },
+          );
+        }
+      } else {
+        // next_cycle downgrade: tier 그대로 + plan_expires_at 셋팅 → CoinResetCron 자동 강등
+        if (balance) {
+          await manager.update(
+            UserCoinBalance,
+            { userId: targetUserId },
+            { planExpiresAt },
+          );
+        }
+      }
+
+      // 사용자 통지 (Q24)
+      const action = isDowngrade ? 'tier_downgrade' : 'tier_upgrade';
+      const title = isDowngrade
+        ? 'plan 이 변경되었습니다'
+        : '축하해요! tier 가 변경되었습니다';
+      const body = applyImmediate
+        ? `${fromTier} → ${newTier} (즉시 적용)\n사유: ${dto.reason}`
+        : `${fromTier} → ${newTier} (다음 cycle 부터 적용)\n현재 cycle 끝까지 ${fromTier} tier 유지\n사유: ${dto.reason}`;
+      await manager.update(
+        User,
+        { id: targetUserId },
+        {
+          pendingNotification: {
+            type: action,
+            title,
+            body,
+            createdAt: new Date().toISOString(),
+          },
+        },
+      );
+
+      // audit
+      const auditAction = isDowngrade
+        ? 'force_plan_downgrade'
+        : 'change_plan_with_expires';
+      await this.auditService.log(
+        adminId,
+        auditAction,
+        'user',
+        targetUserId,
+        {
+          fromTier,
+          toTier: newTier,
+          planExpiresAt,
+          applyMode: dto.applyMode,
+          appliedImmediately: applyImmediate,
+          reason: dto.reason,
+        },
+        manager,
+        ctx,
+      );
+
+      return { tier: newTier, planExpiresAt, applyMode: dto.applyMode };
     });
   }
 
