@@ -22,6 +22,14 @@ import { TierConfig } from '../ai/entities/tier-config.entity';
 import { FeatureCoinMetaAdminController } from './feature-coin-meta-admin.controller';
 import { FeatureCoinMetaAdminService } from './feature-coin-meta-admin.service';
 import { FeatureCoinMeta } from '../ai/entities/feature-coin-meta.entity';
+import { AdminInquiriesController } from './admin-inquiries.controller';
+import { AdminInquiriesService } from './admin-inquiries.service';
+import { AdminAuditLogsController } from './admin-audit-logs.controller';
+import { AdminAuditLogsService } from './admin-audit-logs.service';
+import { AdminNotificationsController } from './admin-notifications.controller';
+import { CompanyResearchMetricsController } from './company-research-metrics.controller';
+import { CompanyResearchMetricsService } from './company-research-metrics.service';
+import { CompanyResearchCache } from '../interview-prep/entities/company-research-cache.entity';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
 import { User } from '../users/user.entity';
@@ -51,8 +59,9 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
       UserCoinBalance,
       TierConfig,
       FeatureCoinMeta,
-      Application,
       Inquiry,
+      CompanyResearchCache,
+      Application,
       Cert,
       Award,
       LanguageCert,
@@ -75,6 +84,10 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AiUsageController, // PR_B2 Phase 2
     TierConfigAdminController, // PR_B2 Phase 3
     FeatureCoinMetaAdminController, // PR_B2 Phase 3
+    AdminInquiriesController, // PR_B2 Phase 4
+    AdminAuditLogsController, // PR_B2 Phase 4
+    AdminNotificationsController, // PR_B2 Phase 4
+    CompanyResearchMetricsController, // PR_B2 Phase 4
   ],
   providers: [
     AdminService,
@@ -88,6 +101,9 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AiUsageService, // PR_B2 Phase 2
     TierConfigAdminService, // PR_B2 Phase 3
     FeatureCoinMetaAdminService, // PR_B2 Phase 3
+    AdminInquiriesService, // PR_B2 Phase 4
+    AdminAuditLogsService, // PR_B2 Phase 4
+    CompanyResearchMetricsService, // PR_B2 Phase 4
   ],
   exports: [
     AdminAuditService,
