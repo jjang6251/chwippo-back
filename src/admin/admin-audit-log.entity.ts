@@ -60,7 +60,16 @@ export type AuditAction =
   // targetType='user', targetId=userId, detail: { fromTier, toTier, planExpiresAt, reason }
   | 'change_plan_with_expires'
   // PR_B2 Phase 3 — downgrade 시 사용자 cycle 보호 (Q2 B) audit 명시
-  | 'force_plan_downgrade';
+  | 'force_plan_downgrade'
+  // PR_B2 Phase 4 — admin 이 문의 의 assigned_to 변경
+  // targetType='inquiry', targetId=inquiryId, detail: { fromAssignedTo, toAssignedTo }
+  | 'assign_inquiry'
+  // PR_B2 Phase 4 — admin 이 문의 의 priority 변경 (recalcSla 옵션)
+  // targetType='inquiry', targetId=inquiryId, detail: { fromPriority, toPriority, recalcSla, newSlaDeadline }
+  | 'set_inquiry_priority'
+  // PR_B2 Phase 4 — admin 이 문의 SLA deadline 직접 set
+  // targetType='inquiry', targetId=inquiryId, detail: { fromSlaDeadlineAt, toSlaDeadlineAt }
+  | 'set_inquiry_sla';
 
 @Entity('admin_audit_logs')
 export class AdminAuditLog {
