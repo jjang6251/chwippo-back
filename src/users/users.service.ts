@@ -9,6 +9,7 @@ import { User } from './user.entity';
 import { UpdateDashboardConfigDto } from './dto/update-dashboard-config.dto';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
+import { CURRENT_AI_CONSENT_VERSION } from '../ai/llm.service';
 
 @Injectable()
 export class UsersService {
@@ -20,6 +21,39 @@ export class UsersService {
 
   async agreeTerms(userId: string): Promise<void> {
     await this.repo.update(userId, { termsAgreedAt: new Date() });
+  }
+
+  /**
+   * AI 사용 동의 — PIPA 26조 (제3자 처리 위탁 별도 동의).
+   * client 가 보낸 version 이 서버 CURRENT_AI_CONSENT_VERSION 과 일치해야 저장.
+   * 재호출 멱등 — timestamp 갱신.
+   */
+  async agreeAiConsent(userId: string, version: string): Promise<void> {
+    if (version !== CURRENT_AI_CONSENT_VERSION) {
+      throw new BadRequestException(
+        `약관 version 불일치. 페이지를 새로고침 해주세요. (서버: ${CURRENT_AI_CONSENT_VERSION})`,
+      );
+    }
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    await this.repo.update(userId, {
+      aiConsentAt: new Date(),
+      aiConsentVersion: version,
+    });
+  }
+
+  /**
+   * AI 사용 동의 철회 — PIPA 26조 (동의/철회 동등 보장).
+   * 철회 후 모든 AI 호출은 LlmService.checkConsent 에서 blocked_consent 로 차단.
+   * 멱등 — 이미 철회된 user 재호출 OK.
+   */
+  async withdrawAiConsent(userId: string): Promise<void> {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    await this.repo.update(userId, {
+      aiConsentAt: null,
+      aiConsentVersion: null,
+    });
   }
 
   async markOnboarded(userId: string): Promise<void> {

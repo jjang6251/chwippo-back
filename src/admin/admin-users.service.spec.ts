@@ -37,6 +37,13 @@ function makeUser(overrides: Partial<User> = {}): User {
     dashboardConfig: null,
     onboardedAt: null,
     suspendedAt: null,
+    aiConsentAt: null,
+    aiConsentVersion: null,
+    onboardedCoinAt: null,
+    suspendReason: null,
+    suspendExpiresAt: null,
+    pendingNotification: null,
+    tier: 'free',
     ...overrides,
   };
 }
@@ -488,6 +495,60 @@ describe('AdminUsersService', () => {
         await expect(
           service.updateUser(ADMIN_ID, USER_ID, { nickname: 'a'.repeat(101) }),
         ).rejects.toThrow(BadRequestException);
+      });
+    });
+
+    describe('tier 변경 (PR_B2 Phase 0 — CoinTier 통일 후)', () => {
+      it('free → lite 변경: audit update_tier + before·after detail', async () => {
+        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'free' }));
+        mockEntityManager.save.mockResolvedValue(makeUser({ tier: 'lite' }));
+        mockAuditService.log.mockResolvedValue(undefined);
+
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'lite' });
+
+        expect(mockAuditService.log).toHaveBeenCalledWith(
+          ADMIN_ID,
+          'update_tier',
+          'user',
+          USER_ID,
+          { before: 'free', after: 'lite' },
+          expect.anything(),
+        );
+      });
+
+      it('같은 tier 재지정 (free → free) → audit 미발생', async () => {
+        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'free' }));
+        mockAuditService.log.mockResolvedValue(undefined);
+
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'free' });
+
+        expect(mockAuditService.log).not.toHaveBeenCalledWith(
+          expect.anything(),
+          'update_tier',
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+          expect.anything(),
+        );
+      });
+
+      it('lite → standard 변경: audit', async () => {
+        mockEntityManager.findOne.mockResolvedValue(makeUser({ tier: 'lite' }));
+        mockEntityManager.save.mockResolvedValue(
+          makeUser({ tier: 'standard' }),
+        );
+        mockAuditService.log.mockResolvedValue(undefined);
+
+        await service.updateUser(ADMIN_ID, USER_ID, { tier: 'standard' });
+
+        expect(mockAuditService.log).toHaveBeenCalledWith(
+          ADMIN_ID,
+          'update_tier',
+          'user',
+          USER_ID,
+          { before: 'lite', after: 'standard' },
+          expect.anything(),
+        );
       });
     });
 

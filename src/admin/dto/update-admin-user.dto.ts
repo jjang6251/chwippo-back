@@ -25,4 +25,9 @@ export class UpdateAdminUserDto {
   @MinLength(1)
   @MaxLength(100)
   nickname?: string;
+
+  /** 결제 tier 변경 (free/lite/standard). PR_B2 Phase 0 — CoinTier 통일. PR_B2 Phase 3 의 ForcePlanChange 가 별도 endpoint 로 분리 예정 */
+  @IsOptional()
+  @IsIn(['free', 'lite', 'standard'])
+  tier?: 'free' | 'lite' | 'standard';
 }

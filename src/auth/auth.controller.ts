@@ -26,6 +26,10 @@ interface AuthenticatedUser {
   role: string;
   onboardedAt: Date | null;
   termsAgreedAt: Date | null;
+  aiConsentAt: Date | null;
+  aiConsentVersion: string | null;
+  /** PR_B1 — 코인 시스템 onboarding modal 표시 여부. NULL → modal 노출 */
+  onboardedCoinAt: Date | null;
 }
 
 interface KakaoCallbackUser {
@@ -165,6 +169,9 @@ export class AuthController {
         role: user.role,
         onboardedAt: user.onboardedAt ?? null,
         termsAgreedAt: user.termsAgreedAt ?? null,
+        aiConsentAt: user.aiConsentAt ?? null,
+        aiConsentVersion: user.aiConsentVersion ?? null,
+        onboardedCoinAt: user.onboardedCoinAt ?? null,
       },
     };
   }

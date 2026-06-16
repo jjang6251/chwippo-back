@@ -4,6 +4,20 @@ import {
   Entity,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import type { CoinTier } from '../ai/entities/tier-config.entity';
+
+/** PR_B2 Phase 1 — Q24 사용자 통지. admin 액션 후 사용자 me 호출 시 1회 모달 표시 */
+export interface PendingNotification {
+  type:
+    | 'coin_grant'
+    | 'coin_revoke'
+    | 'matrix_change'
+    | 'tier_downgrade'
+    | 'tier_upgrade';
+  title: string;
+  body: string;
+  createdAt: string;
+}
 
 @Entity('users')
 export class User {
@@ -42,4 +56,54 @@ export class User {
 
   @Column({ name: 'suspended_at', type: 'timestamptz', nullable: true })
   suspendedAt: Date | null;
+
+  /**
+   * PR 0 — AI 사용 별도 동의 시점 (개인정보보호법 26조 — OpenAI·Anthropic 미국 소재 처리위탁).
+   * NULL → LlmService 진입점에서 `blocked_consent` 반환. 프론트가 모달 노출 후 동의.
+   * **F5 NoteSummary 기존 사용자도 NULL → 재동의 트리거**.
+   */
+  @Column({ name: 'ai_consent_at', type: 'timestamptz', nullable: true })
+  aiConsentAt: Date | null;
+
+  /** PR 0 — 동의 버전 ('v1' 등). 약관 갱신 시 강제 재동의 (저장된 version 과 현재 version 비교) */
+  @Column({
+    name: 'ai_consent_version',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  aiConsentVersion: string | null;
+
+  /** PR_B1 — 코인 시스템 onboarding modal 표시 여부. NULL → 첫 로그인 시 modal 노출 → 닫으면 NOW 저장 */
+  @Column({
+    name: 'onboarded_coin_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  onboardedCoinAt: Date | null;
+
+  /**
+   * 사용자 결제 tier ('free'/'lite'/'standard').
+   * PR_B2 Phase 0 — CoinTier 통일 ('pro'→'lite', 'enterprise'→'standard').
+   * `tier_configs` (PR_B1 코인 system) + `feature_quota_configs` (legacy) 공용 tier.
+   * admin Phase 3 의 ForcePlanChange 또는 결제 시스템이 UPDATE.
+   */
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: 'free',
+  })
+  tier: CoinTier;
+
+  // PR_B2 Phase 1 — Q13 정지 모달의 사유 (admin 입력 1..500자)
+  @Column({ name: 'suspend_reason', type: 'text', nullable: true })
+  suspendReason: string | null;
+
+  // PR_B2 Phase 1 — Q13 정지 모달의 예상 해제일 (NULL = 영구). 자동 해제 cron + lazy
+  @Column({ name: 'suspend_expires_at', type: 'timestamptz', nullable: true })
+  suspendExpiresAt: Date | null;
+
+  // PR_B2 Phase 1 — Q24 사용자 통지 (admin 액션 후 me 호출 응답에 포함, dismiss 시 NULL)
+  @Column({ name: 'pending_notification', type: 'jsonb', nullable: true })
+  pendingNotification: PendingNotification | null;
 }

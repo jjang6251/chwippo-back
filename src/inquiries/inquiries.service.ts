@@ -62,21 +62,25 @@ export class InquiriesService {
   }
 
   // ── 사용자: 댓글 작성 → 어드민 미읽음 + 1 ───────────
+  // 트랜잭션 wrap: comment.save + admin_unread.increment 가 둘 다 성공해야 정합.
+  // 부분 fail 시 (댓글 보이는데 어드민 알림 카운트 안 올라감) UX 깨짐.
   async addUserComment(id: string, userId: string, content: string) {
     const inquiry = await this.repo.findOneBy({ id, user_id: userId });
     if (!inquiry) throw new NotFoundException('문의를 찾을 수 없습니다.');
     if (inquiry.status === 'CLOSED')
       throw new ForbiddenException('닫힌 문의에는 댓글을 작성할 수 없어요.');
 
-    const comment = this.commentRepo.create({
-      inquiry_id: id,
-      author_role: 'user',
-      author_id: userId,
-      content,
+    return this.dataSource.transaction(async (em) => {
+      const comment = em.getRepository(InquiryComment).create({
+        inquiry_id: id,
+        author_role: 'user',
+        author_id: userId,
+        content,
+      });
+      await em.getRepository(InquiryComment).save(comment);
+      await em.getRepository(Inquiry).increment({ id }, 'admin_unread', 1);
+      return comment;
     });
-    await this.commentRepo.save(comment);
-    await this.repo.increment({ id }, 'admin_unread', 1);
-    return comment;
   }
 
   // ── 어드민: 전체 목록 (유저 정보 포함) ───────────────
@@ -166,24 +170,26 @@ export class InquiriesService {
   }
 
   // ── 어드민: 댓글 작성 → 사용자 미읽음 + 1 ──────────
+  // 트랜잭션 wrap: comment.save + user_unread.increment + status.update 세 write 가 모두 성공해야 정합.
+  // 부분 fail 시 (답변 보이는데 사용자 알림·상태 변화 누락) 사용자 응답 못 받음.
   async addAdminComment(id: string, adminId: string, content: string) {
     const inquiry = await this.repo.findOneBy({ id });
     if (!inquiry) throw new NotFoundException();
 
-    const comment = this.commentRepo.create({
-      inquiry_id: id,
-      author_role: 'admin',
-      author_id: adminId,
-      content,
+    return this.dataSource.transaction(async (em) => {
+      const comment = em.getRepository(InquiryComment).create({
+        inquiry_id: id,
+        author_role: 'admin',
+        author_id: adminId,
+        content,
+      });
+      await em.getRepository(InquiryComment).save(comment);
+      await em.getRepository(Inquiry).increment({ id }, 'user_unread', 1);
+      if (inquiry.status !== 'IN_PROGRESS' && inquiry.status !== 'CLOSED') {
+        await em.getRepository(Inquiry).update(id, { status: 'IN_PROGRESS' });
+      }
+      return comment;
     });
-    await this.commentRepo.save(comment);
-    await this.repo.increment({ id }, 'user_unread', 1);
-
-    if (inquiry.status !== 'IN_PROGRESS' && inquiry.status !== 'CLOSED') {
-      await this.repo.update(id, { status: 'IN_PROGRESS' });
-    }
-
-    return comment;
   }
 
   // ── 어드민: 문의 닫기 ─────────────────────────────────

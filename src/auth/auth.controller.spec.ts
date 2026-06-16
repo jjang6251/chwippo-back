@@ -24,6 +24,13 @@ function makeUser(overrides: Partial<User> = {}): User {
     dashboardConfig: null,
     onboardedAt: null,
     suspendedAt: null,
+    aiConsentAt: null,
+    aiConsentVersion: null,
+    onboardedCoinAt: null,
+    suspendReason: null,
+    suspendExpiresAt: null,
+    pendingNotification: null,
+    tier: 'free',
     ...overrides,
   };
 }
@@ -365,6 +372,12 @@ describe('AuthController', () => {
       role: 'user',
       onboardedAt: null,
       termsAgreedAt: new Date('2026-01-01'),
+      aiConsentAt: null,
+      aiConsentVersion: null,
+      onboardedCoinAt: null,
+      suspendReason: null,
+      suspendExpiresAt: null,
+      pendingNotification: null,
     };
 
     it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
@@ -399,6 +412,9 @@ describe('AuthController', () => {
           role: 'user',
           onboardedAt: null,
           termsAgreedAt: authenticatedUser.termsAgreedAt,
+          aiConsentAt: null,
+          aiConsentVersion: null,
+          onboardedCoinAt: null,
         },
       });
     });

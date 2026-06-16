@@ -15,6 +15,10 @@ class AddCommentDto {
   content: string;
 }
 
+import { AllowSuspended } from '../common/decorators/allow-suspended.decorator';
+
+// PR_B2 Phase 1 — Q13 SuspendedModal 의 "문의하기" link 동작 보장 (정지 user 도 문의 가능)
+@AllowSuspended()
 @Controller('inquiries')
 export class InquiriesController {
   constructor(private readonly inquiriesService: InquiriesService) {}

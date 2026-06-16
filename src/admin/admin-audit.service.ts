@@ -17,6 +17,9 @@ export class AdminAuditService {
    * - manager 인자 시: 같은 트랜잭션 내 insert (caller의 액션과 원자적)
    * - manager 없으면: 별도 트랜잭션. 실패해도 throw X — caller 액션과 audit 일관성 깨지지 않게 best-effort.
    *   실패 시 logger.error로 운영자가 추적 가능.
+   *
+   * PR_B2 Phase 0.3 — `ctx?: { ip?, userAgent? }` 인자 도입. 모든 admin 액션의 출처 영구 보존.
+   *   helper `getAuditCtx(req)` 가 NestJS `@Req()` 에서 추출 (`req.ip` + `req.headers['user-agent']`).
    */
   async log(
     adminUserId: string | null,
@@ -25,6 +28,7 @@ export class AdminAuditService {
     targetId: string,
     detail: Record<string, unknown>,
     manager?: EntityManager,
+    ctx?: { ip?: string | null; userAgent?: string | null },
   ): Promise<void> {
     const entry = Object.assign(new AdminAuditLog(), {
       adminUserId,
@@ -32,6 +36,8 @@ export class AdminAuditService {
       targetType,
       targetId,
       detail,
+      ip: ctx?.ip ?? null,
+      userAgent: ctx?.userAgent ?? null,
     });
 
     if (manager) {

@@ -9,9 +9,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * down(): 컬럼 복원하지만 데이터 값은 복원 불가 (NULL로 채워짐). 비가역에 가까움.
  */
-export class DropApplicationDeadlineColumn1779800000000
-  implements MigrationInterface
-{
+export class DropApplicationDeadlineColumn1779800000000 implements MigrationInterface {
   name = 'DropApplicationDeadlineColumn1779800000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
