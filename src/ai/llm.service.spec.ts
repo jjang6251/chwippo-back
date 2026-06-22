@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { CoinService } from './coin.service';
+import { CostGuardService } from './cost-guard.service';
 import { CURRENT_AI_CONSENT_VERSION, LlmService } from './llm.service';
 import {
   LlmJsonParseError,
@@ -141,6 +142,18 @@ describe('LlmService', () => {
       }),
     };
 
+    // AI cost guard — 기본 통과 mock (개별 spec 가 mockReturnValueOnce 로 차단 케이스 가능)
+    const costGuard = {
+      check: jest.fn().mockResolvedValue({
+        blocked: false,
+        currentUserTotal: 0,
+        currentFeatureTotal: 0,
+        perUserCap: 0.5,
+        perFeatureCap: 5,
+      }),
+      invalidate: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LlmService,
@@ -150,6 +163,7 @@ describe('LlmService', () => {
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: ConfigService, useValue: config },
         { provide: CoinService, useValue: coinService },
+        { provide: CostGuardService, useValue: costGuard },
       ],
     }).compile();
 

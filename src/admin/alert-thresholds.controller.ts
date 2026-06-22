@@ -76,6 +76,21 @@ class UpdateAlertThresholdsDto {
   @Min(0.1)
   @Max(10)
   costOutlierStddev?: number;
+
+  // AI cost guard — per-user / per-feature daily USD cost cap
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  perUserDailyCostUsd?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(1000)
+  perFeatureDailyCostUsd?: number;
 }
 
 @Controller('admin/alert-thresholds')

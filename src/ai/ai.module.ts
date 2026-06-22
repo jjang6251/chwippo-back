@@ -25,6 +25,8 @@ import { AdminFeatureQuotasController } from './admin-feature-quotas.controller'
 import { AdminFeatureQuotasService } from './admin-feature-quotas.service';
 import { MyAiQuotasController } from './my-ai-quotas.controller';
 import { AbuserBanService } from './abuser-ban.service';
+import { CostGuardService } from './cost-guard.service';
+import { AlertThresholds } from '../admin/entities/alert-thresholds.entity';
 import { AdminQuotaResetController } from './admin-quota-reset.controller';
 import { AdminQuotaResetService } from './admin-quota-reset.service';
 import { QuotaCheckService } from './quota-check.service';
@@ -49,6 +51,8 @@ import { AnthropicProvider } from './providers/anthropic.provider';
       FeatureCoinMeta,
       UserCoinBalance,
       UserPlanHistory,
+      // AI cost guard
+      AlertThresholds,
     ]),
     forwardRef(() => ActivityModule),
     // AdminModule: AbuserBanService 가 AdminAuditService.log('auto_ban_ai', ...) 호출
@@ -73,6 +77,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     AbuserBanService,
     AdminQuotaResetService,
     QuotaCheckService,
+    CostGuardService, // AI cost guard — per-user/per-feature daily USD cap
     CoinService, // PR_B1
     UserCoinService, // PR_B1
     CoinResetCron, // PR_B1
@@ -84,6 +89,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     NoteSummaryService,
     AbuserBanService, // ApplicationsModule(ai-coverletter-draft) 에서 quota override 통합
     QuotaCheckService, // PR 2 — 모든 LLM caller 가 호출하는 단일 quota 진입점
+    CostGuardService, // 모든 LLM caller 가 호출 가능 (선택적 — cost cap 강화 시)
     CoinService, // PR_B1 — admin·결제 module 에서 차감·tier 변경 호출
     UserCoinService, // PR_B1 — admin tier 변경 + history
     DiscordNotifier, // PR 2 Phase 5.4 — alert threshold cron 에서 공유

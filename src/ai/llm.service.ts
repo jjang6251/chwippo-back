@@ -11,6 +11,7 @@ import {
   LlmProviderName,
 } from './entities/llm-call-log.entity';
 import { CoinService } from './coin.service';
+import { CostGuardService } from './cost-guard.service';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
 import { getFallbackConfig, getModelConfig } from './model-config';
@@ -40,7 +41,7 @@ export interface LlmCallInput {
   resourceId?: string;
   preBlockedStatus?: Extract<
     LlmCallStatus,
-    'blocked_moderation' | 'blocked_quota'
+    'blocked_moderation' | 'blocked_quota' | 'blocked_cost_quota'
   >;
   preBlockedReason?: string;
   /** PR 0 — structured JSON output 필요 시 schema 전달. callJson 경로 활성화 */
@@ -100,6 +101,7 @@ export interface LlmCallBlocked {
     LlmCallStatus,
     | 'blocked_moderation'
     | 'blocked_quota'
+    | 'blocked_cost_quota'
     | 'blocked_consent'
     | 'blocked_input_cap'
     | 'error'
@@ -135,6 +137,7 @@ export class LlmService {
     private readonly userRepo: Repository<User>,
     private readonly config: ConfigService,
     private readonly coinService: CoinService, // PR_B1 — canCharge + charge
+    private readonly costGuard: CostGuardService, // AI cost guard — per-user/per-feature daily USD cap
   ) {
     this.providers = {
       openai: this.openai,
@@ -240,6 +243,24 @@ export class LlmService {
         cfg.provider,
         'blocked_quota',
         coinCheck.reason ?? '코인이 부족해요',
+        startedAt,
+      );
+    }
+
+    // ── 2.7. AI cost guard — per-user / per-feature daily USD cap ──
+    //   코인 차단 외 hard USD cap. 모델 비용이 예상보다 비싸지면 코인 부족 가드만으로 부족.
+    //   alert_thresholds 단일 row 미설정 또는 enabled=false → guard skip (kill switch)
+    const costGuardResult = await this.costGuard.check(
+      input.userId,
+      input.feature,
+    );
+    if (costGuardResult.blocked) {
+      return this.saveBlocked(
+        input,
+        cfg.model,
+        cfg.provider,
+        'blocked_cost_quota',
+        costGuardResult.reason,
         startedAt,
       );
     }
@@ -812,7 +833,11 @@ export class LlmService {
     provider: LlmProviderName,
     status: Extract<
       LlmCallStatus,
-      'blocked_consent' | 'blocked_input_cap' | 'blocked_quota' | 'error'
+      | 'blocked_consent'
+      | 'blocked_input_cap'
+      | 'blocked_quota'
+      | 'blocked_cost_quota'
+      | 'error'
     >,
     errorMessage: string,
     startedAt: number,
