@@ -89,6 +89,33 @@ export class AlertThresholds {
   })
   costOutlierStddev: number;
 
+  // AI cost guard — per-user / per-feature daily USD cost cap
+  @Column({
+    name: 'per_user_daily_cost_usd',
+    type: 'numeric',
+    precision: 8,
+    scale: 4,
+    default: 0.5,
+    transformer: {
+      to: (v: number) => v,
+      from: (v: string | null) => (v === null ? 0 : Number(v)),
+    },
+  })
+  perUserDailyCostUsd: number;
+
+  @Column({
+    name: 'per_feature_daily_cost_usd',
+    type: 'numeric',
+    precision: 8,
+    scale: 4,
+    default: 5.0,
+    transformer: {
+      to: (v: number) => v,
+      from: (v: string | null) => (v === null ? 0 : Number(v)),
+    },
+  })
+  perFeatureDailyCostUsd: number;
+
   @Column({ name: 'updated_by', type: 'uuid', nullable: true })
   updatedBy: string | null;
 

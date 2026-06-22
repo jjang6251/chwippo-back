@@ -39,6 +39,7 @@ export type LlmCallStatus =
   | 'blocked_quota'
   | 'blocked_consent' // ai_consent_at IS NULL (개인정보보호법 26조 — 제3자 처리위탁 동의)
   | 'blocked_input_cap' // prompt 토큰이 feature 별 maxInputTokens 초과
+  | 'blocked_cost_quota' // AI cost guard — per-user/per-feature daily USD cost cap 초과 (코인 외 추가 가드)
   | 'retry_parsing'; // callJson schema 위반 → 1회 재시도 (별도 audit row, quota 카운트 포함)
 
 @Entity('llm_call_logs')
