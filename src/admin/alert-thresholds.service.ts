@@ -10,6 +10,15 @@ export interface UpdateAlertThresholdsDto {
   hourlyErrorRateThreshold?: number;
   vsYesterdayIncreaseThreshold?: number;
   enabled?: boolean;
+  adminGrantPerHourAlert?: number;
+  adminGrantSingleAlert?: number;
+  inquirySlaHours?: number;
+  abuserSuspectDailyCalls?: number;
+  freeUserSignupSpikePct?: number;
+  costOutlierStddev?: number;
+  // AI cost guard
+  perUserDailyCostUsd?: number;
+  perFeatureDailyCostUsd?: number;
 }
 
 /**
@@ -54,6 +63,23 @@ export class AlertThresholdsService {
     if (dto.vsYesterdayIncreaseThreshold !== undefined)
       row.vsYesterdayIncreaseThreshold = dto.vsYesterdayIncreaseThreshold;
     if (dto.enabled !== undefined) row.enabled = dto.enabled;
+    if (dto.adminGrantPerHourAlert !== undefined)
+      row.adminGrantPerHourAlert = dto.adminGrantPerHourAlert;
+    if (dto.adminGrantSingleAlert !== undefined)
+      row.adminGrantSingleAlert = dto.adminGrantSingleAlert;
+    if (dto.inquirySlaHours !== undefined)
+      row.inquirySlaHours = dto.inquirySlaHours;
+    if (dto.abuserSuspectDailyCalls !== undefined)
+      row.abuserSuspectDailyCalls = dto.abuserSuspectDailyCalls;
+    if (dto.freeUserSignupSpikePct !== undefined)
+      row.freeUserSignupSpikePct = dto.freeUserSignupSpikePct;
+    if (dto.costOutlierStddev !== undefined)
+      row.costOutlierStddev = dto.costOutlierStddev;
+    // AI cost guard
+    if (dto.perUserDailyCostUsd !== undefined)
+      row.perUserDailyCostUsd = dto.perUserDailyCostUsd;
+    if (dto.perFeatureDailyCostUsd !== undefined)
+      row.perFeatureDailyCostUsd = dto.perFeatureDailyCostUsd;
     row.updatedBy = adminUserId;
     const saved = await this.repo.save(row);
 

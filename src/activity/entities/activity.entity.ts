@@ -74,6 +74,14 @@ export class Activity {
   @Column({ name: 'legacy_experience_id', type: 'uuid', nullable: true })
   legacyExperienceId: string | null;
 
+  /**
+   * 활동 총괄 회고 — 끝난 활동을 한꺼번에 wrap up 하는 큰 문단.
+   * 베타 피드백 (2026-06-23). NULL = 미작성.
+   * char 5000 cap (DTO 검증).
+   */
+  @Column({ name: 'summary_reflection', type: 'text', nullable: true })
+  summaryReflection: string | null;
+
   @OneToMany(() => ActivityLog, (log) => log.activity)
   logs: ActivityLog[];
 
