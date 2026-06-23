@@ -28,6 +28,7 @@ describe('ActivityLogService', () => {
     endedAt: null,
     archivedAt: null,
     legacyExperienceId: null,
+    summaryReflection: null,
     logs: [],
     reflections: [],
     createdAt: new Date(),

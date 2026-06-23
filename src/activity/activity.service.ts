@@ -72,6 +72,8 @@ export class ActivityService {
     if (dto.outcome !== undefined) activity.outcome = dto.outcome;
     if (dto.startedAt !== undefined) activity.startedAt = dto.startedAt;
     if (dto.endedAt !== undefined) activity.endedAt = dto.endedAt;
+    if (dto.summaryReflection !== undefined)
+      activity.summaryReflection = dto.summaryReflection;
     await this.repo.save(activity);
     return this.findOne(userId, id);
   }

@@ -7,13 +7,14 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import { LlmService } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { MyinfoService } from '../myinfo/myinfo.service';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { ActivityReflection } from '../activity/entities/activity-reflection.entity';
+import { Activity } from '../activity/entities/activity.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { buildCoverletterContext } from './coverletter-context-builder';
 import { CoverletterSourceRef } from './coverletter-source-ref.entity';
@@ -111,6 +112,8 @@ export class AiCoverletterDraftService {
     private readonly activityLogRepo: Repository<ActivityLog>,
     @InjectRepository(ActivityReflection)
     private readonly reflectionRepo: Repository<ActivityReflection>,
+    @InjectRepository(Activity)
+    private readonly activityRepo: Repository<Activity>,
     private readonly sourceRefsService: CoverletterSourceRefsService,
     private readonly llm: LlmService,
     private readonly quotaCheck: QuotaCheckService,
@@ -266,6 +269,30 @@ export class AiCoverletterDraftService {
     // 8. myinfo PII-safe dump
     const myinfoDump = await this.myinfo.getSafeDumpForAi(userId);
 
+    // 8.5. 활동 총괄 회고 (베타 피드백 2026-06-23)
+    //   selected logs/reflections + 추천 logs 에 묶인 활동 들의 summary_reflection 만 prompt 에 통째로 inject.
+    //   사용자가 한꺼번에 wrap up 한 큰 그림 = 자소서 핵심 소재. cross-user 격리 (where userId).
+    const activityIds = new Set<string>();
+    for (const { log } of selLogs) activityIds.add(log.activityId);
+    for (const { reflection } of selReflections)
+      activityIds.add(reflection.activityId);
+    for (const { log } of recommendedLogObjs) activityIds.add(log.activityId);
+    let activitySummaries:
+      | Array<{ activityName: string; summary: string }>
+      | undefined;
+    if (activityIds.size > 0) {
+      const acts = await this.activityRepo.find({
+        where: { userId, id: In([...activityIds]) },
+        select: ['id', 'name', 'summaryReflection'],
+      });
+      activitySummaries = acts
+        .filter((a) => a.summaryReflection && a.summaryReflection.trim())
+        .map((a) => ({
+          activityName: a.name,
+          summary: a.summaryReflection!,
+        }));
+    }
+
     // 9. 컨텍스트 빌드
     const ctx = buildCoverletterContext({
       application: {
@@ -278,6 +305,7 @@ export class AiCoverletterDraftService {
       selectedLogs: selLogs,
       selectedReflections: selReflections,
       aiRecommendedLogs: recommendedLogObjs,
+      activitySummaries,
       myinfo: myinfoDump,
     });
 
