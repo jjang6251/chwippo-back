@@ -77,6 +77,12 @@ export interface BuildCoverletterContextInput {
   selectedReflections: Array<{ refId: string; reflection: ActivityReflection }>;
   /** AI 가 자동 추천한 logs (priority 2). drop 시 selected 보다 먼저 떨어짐 */
   aiRecommendedLogs: Array<{ refId: string; log: ActivityLog }>;
+  /**
+   * 활동 총괄 회고 (priority 1.5 — selected 다음, recommended 보다 우선).
+   * 사용자가 활동 단위로 작성한 wrap up 텍스트. 베타 피드백 (2026-06-23).
+   * 활동 1개 = entry 1개. 5000자 cap (entity 검증).
+   */
+  activitySummaries?: Array<{ activityName: string; summary: string }>;
   /** myinfo PII 제외 dump (priority 3) */
   myinfo: MyinfoSafeDump;
 }
@@ -259,6 +265,25 @@ export function buildCoverletterContext(
     }
     logsBlock.push('```');
     sections.push(logsBlock.join('\n'));
+  }
+
+  // 2.5) 활동 총괄 회고 (priority 1.5 — selected logs 다음, selected reflections 보다 우선)
+  // 사용자가 활동 단위로 작성한 wrap up 텍스트. 베타 피드백 (2026-06-23).
+  if (input.activitySummaries && input.activitySummaries.length > 0) {
+    const sumBlock: string[] = [`# 활동 총괄 회고 (사용자 작성)`];
+    for (const { activityName, summary } of input.activitySummaries) {
+      const entry = `\n## ${activityName}\n${summary.trim()}\n`;
+      const entryTokens = estimateTokens(entry);
+      if (usedTokens + entryTokens > budget) {
+        // budget 초과 시 활동 단위로 drop. dropRefIds 에는 안 넣음 (refId 없음, 활동 메타 추적은 caller)
+        continue;
+      }
+      sumBlock.push(entry);
+      usedTokens += entryTokens;
+    }
+    if (sumBlock.length > 1) {
+      sections.push(sumBlock.join(''));
+    }
   }
 
   // 3) selected reflections (priority 1)

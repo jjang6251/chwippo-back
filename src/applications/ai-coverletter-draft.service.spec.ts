@@ -12,6 +12,7 @@ import { LlmService } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { ActivityReflection } from '../activity/entities/activity-reflection.entity';
+import { Activity } from '../activity/entities/activity.entity';
 import { MyinfoService } from '../myinfo/myinfo.service';
 import { AiCoverletterDraftService } from './ai-coverletter-draft.service';
 import { Application } from './application.entity';
@@ -162,6 +163,10 @@ describe('AiCoverletterDraftService', () => {
         {
           provide: getRepositoryToken(ActivityReflection),
           useValue: reflectionRepo,
+        },
+        {
+          provide: getRepositoryToken(Activity),
+          useValue: { find: jest.fn().mockResolvedValue([]) },
         },
         { provide: CoverletterSourceRefsService, useValue: sourceRefs },
         { provide: LlmService, useValue: llm },
