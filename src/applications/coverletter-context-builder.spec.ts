@@ -490,6 +490,127 @@ describe('buildCoverletterContext', () => {
     expect(r.meta.logsUsed).toBe(50);
   });
 
+  // ── 활동 총괄 회고 (베타 피드백 2026-06-23) ──
+  describe('activitySummaries — 활동 총괄 회고 section', () => {
+    it('activitySummaries 없음 (undefined) → section 미생성', () => {
+      const r = buildCoverletterContext({
+        application: DEFAULT_APP,
+        question: 'q',
+        category: null,
+        charLimit: null,
+        selectedLogs: [],
+        selectedReflections: [],
+        aiRecommendedLogs: [],
+        myinfo: EMPTY_MYINFO,
+      });
+      expect(r.userPrompt).not.toContain('활동 총괄 회고');
+    });
+
+    it('activitySummaries 빈 배열 → section 미생성', () => {
+      const r = buildCoverletterContext({
+        application: DEFAULT_APP,
+        question: 'q',
+        category: null,
+        charLimit: null,
+        selectedLogs: [],
+        selectedReflections: [],
+        aiRecommendedLogs: [],
+        activitySummaries: [],
+        myinfo: EMPTY_MYINFO,
+      });
+      expect(r.userPrompt).not.toContain('활동 총괄 회고');
+    });
+
+    it('1 activity → "# 활동 총괄 회고" + "## 활동명" + summary 본문 포함', () => {
+      const r = buildCoverletterContext({
+        application: DEFAULT_APP,
+        question: 'q',
+        category: null,
+        charLimit: null,
+        selectedLogs: [],
+        selectedReflections: [],
+        aiRecommendedLogs: [],
+        activitySummaries: [
+          {
+            activityName: '카카오 인턴',
+            summary: '6개월간 성장 스토리...',
+          },
+        ],
+        myinfo: EMPTY_MYINFO,
+      });
+      expect(r.userPrompt).toContain('# 활동 총괄 회고 (사용자 작성)');
+      expect(r.userPrompt).toContain('## 카카오 인턴');
+      expect(r.userPrompt).toContain('6개월간 성장 스토리');
+    });
+
+    it('2 activities → 모두 포함, 각 # 헤더 분리', () => {
+      const r = buildCoverletterContext({
+        application: DEFAULT_APP,
+        question: 'q',
+        category: null,
+        charLimit: null,
+        selectedLogs: [],
+        selectedReflections: [],
+        aiRecommendedLogs: [],
+        activitySummaries: [
+          { activityName: '인턴', summary: 'A' },
+          { activityName: '동아리', summary: 'B' },
+        ],
+        myinfo: EMPTY_MYINFO,
+      });
+      expect(r.userPrompt).toContain('## 인턴');
+      expect(r.userPrompt).toContain('## 동아리');
+    });
+
+    it('큰 summary budget 초과 → 일부 drop (silent, refId 없음)', () => {
+      const huge = 'Z'.repeat(20000);
+      const r = buildCoverletterContext({
+        application: DEFAULT_APP,
+        question: 'q',
+        category: null,
+        charLimit: null,
+        selectedLogs: [],
+        selectedReflections: [],
+        aiRecommendedLogs: [],
+        activitySummaries: [
+          { activityName: '인턴', summary: huge },
+          { activityName: '동아리', summary: huge },
+          { activityName: '공모전', summary: huge },
+        ],
+        myinfo: EMPTY_MYINFO,
+      });
+      // 적어도 하나는 들어가야 함 (budget 안), 또는 모두 drop. activitySummaries 는 droppedRefIds 에 없음 (refId 미운용)
+      expect(r.meta.estimatedInputTokens).toBeLessThanOrEqual(
+        COVERLETTER_CONTEXT_LIMITS.MAX_INPUT_TOKENS,
+      );
+    });
+
+    it('selected 다음 우선순위 — selected logs 가 budget 초과 시 activity summary 도 drop', () => {
+      const hugeLog = 'L'.repeat(15000);
+      const selectedLogs = Array.from({ length: 5 }, (_, i) => ({
+        refId: `r-${i}`,
+        log: makeLog(`l-${i}`, { content: hugeLog }),
+      }));
+      const r = buildCoverletterContext({
+        application: DEFAULT_APP,
+        question: 'q',
+        category: null,
+        charLimit: null,
+        selectedLogs,
+        selectedReflections: [],
+        aiRecommendedLogs: [],
+        activitySummaries: [
+          { activityName: '인턴', summary: 'wrap up' },
+        ],
+        myinfo: EMPTY_MYINFO,
+      });
+      // budget 안에 들어간 logs 우선. activity summary 는 다음 priority.
+      expect(r.meta.estimatedInputTokens).toBeLessThanOrEqual(
+        COVERLETTER_CONTEXT_LIMITS.MAX_INPUT_TOKENS,
+      );
+    });
+  });
+
   it('estimatedInputTokens 가 항상 MAX_INPUT_TOKENS 이하', () => {
     const huge = 'Z'.repeat(5000);
     const selectedLogs = Array.from({ length: 20 }, (_, i) => ({
