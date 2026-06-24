@@ -228,6 +228,62 @@ describe('ActivityService', () => {
         service.update('user-1', 'x', { name: 'n' }),
       ).rejects.toThrow(NotFoundException);
     });
+
+    // ── 활동 총괄 회고 (베타 피드백 2026-06-23) ──
+    describe('summaryReflection', () => {
+      it('summaryReflection 신규 저장 → activity.summaryReflection 세팅', async () => {
+        const existing = makeActivity({ summaryReflection: null });
+        const summary = '6개월 인턴 wrap up — 가장 인상 깊었던 순간은...';
+        repo.findOne
+          .mockResolvedValueOnce(existing)
+          .mockResolvedValueOnce(makeActivity({ summaryReflection: summary }));
+        repo.save.mockImplementation(async (a) => a as Activity);
+
+        await service.update('user-1', 'act-1', { summaryReflection: summary });
+
+        expect(repo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ summaryReflection: summary }),
+        );
+      });
+
+      it('summaryReflection null 명시 → clear (NULL 저장)', async () => {
+        const existing = makeActivity({ summaryReflection: '기존 wrap up' });
+        repo.findOne
+          .mockResolvedValueOnce(existing)
+          .mockResolvedValueOnce(makeActivity({ summaryReflection: null }));
+        repo.save.mockImplementation(async (a) => a as Activity);
+
+        await service.update('user-1', 'act-1', { summaryReflection: null });
+
+        expect(repo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ summaryReflection: null }),
+        );
+      });
+
+      it('summaryReflection undefined → 기존 값 보존 (PATCH semantics)', async () => {
+        const existing = makeActivity({ summaryReflection: '기존' });
+        repo.findOne
+          .mockResolvedValueOnce(existing)
+          .mockResolvedValueOnce(makeActivity({ summaryReflection: '기존' }));
+        repo.save.mockImplementation(async (a) => a as Activity);
+
+        await service.update('user-1', 'act-1', { name: '이름만' });
+
+        expect(repo.save).toHaveBeenCalledWith(
+          expect.objectContaining({ summaryReflection: '기존' }),
+        );
+      });
+
+      it('IDOR — 다른 user 의 activity update 시도 → NotFound (userId 격리)', async () => {
+        repo.findOne.mockResolvedValueOnce(null);
+        await expect(
+          service.update('user-attacker', 'act-1', {
+            summaryReflection: 'hack',
+          }),
+        ).rejects.toThrow(NotFoundException);
+        expect(repo.save).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('archive / unarchive', () => {

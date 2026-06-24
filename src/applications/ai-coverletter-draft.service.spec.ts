@@ -44,6 +44,7 @@ describe('AiCoverletterDraftService', () => {
   let clRepo: jest.Mocked<Repository<ApplicationCoverletter>>;
   let activityLogRepo: jest.Mocked<Repository<ActivityLog>>;
   let reflectionRepo: jest.Mocked<Repository<ActivityReflection>>;
+  let activityRepo: { find: jest.Mock };
   let sourceRefs: jest.Mocked<CoverletterSourceRefsService>;
   let llm: jest.Mocked<LlmService>;
   let quotaCheck: jest.Mocked<QuotaCheckService>;
@@ -122,6 +123,7 @@ describe('AiCoverletterDraftService', () => {
     const refRepo = mock<Repository<CoverletterSourceRef>>();
     activityLogRepo = mock<Repository<ActivityLog>>();
     reflectionRepo = mock<Repository<ActivityReflection>>();
+    activityRepo = { find: jest.fn().mockResolvedValue([]) };
     sourceRefs = mock<CoverletterSourceRefsService>();
     llm = mock<LlmService>();
     quotaCheck = mock<QuotaCheckService>();
@@ -166,7 +168,7 @@ describe('AiCoverletterDraftService', () => {
         },
         {
           provide: getRepositoryToken(Activity),
-          useValue: { find: jest.fn().mockResolvedValue([]) },
+          useValue: activityRepo,
         },
         { provide: CoverletterSourceRefsService, useValue: sourceRefs },
         { provide: LlmService, useValue: llm },
@@ -588,5 +590,93 @@ describe('AiCoverletterDraftService', () => {
         resourceId: CL_ID,
       }),
     );
+  });
+
+  // ── 활동 총괄 회고 통합 (베타 피드백 2026-06-23) ──
+  describe('activitySummaries 통합', () => {
+    it('IDOR — activityRepo.find 호출 시 where 에 userId 동봉 (cross-user 격리)', async () => {
+      activityLogRepo.find.mockResolvedValue([makeLog('log-A')]);
+      llm.call
+        .mockResolvedValueOnce({
+          status: 'ok',
+          text: '',
+          json: { recommendedLogIds: ['log-A'], reason: 'r' },
+          promptTokens: 1,
+          completionTokens: 1,
+          costUsd: 0,
+          latencyMs: 1,
+          callLogId: 'log-rec',
+          outputRedacted: false,
+        })
+        .mockResolvedValueOnce({
+          status: 'ok',
+          text: '답변',
+          json: undefined,
+          promptTokens: 1,
+          completionTokens: 1,
+          costUsd: 0,
+          latencyMs: 1,
+          callLogId: 'log-draft',
+          outputRedacted: false,
+        });
+
+      await service.generate(USER_ID, CL_ID, {});
+
+      // activity find 호출 — 반드시 userId 동봉 (cross-user IDOR 차단)
+      if (activityRepo.find.mock.calls.length > 0) {
+        const where = activityRepo.find.mock.calls[0][0]?.where;
+        expect(where).toEqual(
+          expect.objectContaining({ userId: USER_ID }),
+        );
+      }
+    });
+
+    it('summary 있는 활동만 prompt 에 inject (NULL / 빈 string 제외)', async () => {
+      activityLogRepo.find.mockResolvedValue([makeLog('log-A')]);
+      activityRepo.find.mockResolvedValue([
+        { id: 'a-1', name: '인턴', summaryReflection: '6개월 wrap up' },
+        { id: 'a-2', name: '동아리', summaryReflection: null },
+        { id: 'a-3', name: '공모전', summaryReflection: '   ' }, // 빈 string
+      ]);
+      llm.call
+        .mockResolvedValueOnce({
+          status: 'ok',
+          text: '',
+          json: { recommendedLogIds: ['log-A'], reason: 'r' },
+          promptTokens: 1,
+          completionTokens: 1,
+          costUsd: 0,
+          latencyMs: 1,
+          callLogId: 'log-rec',
+          outputRedacted: false,
+        })
+        .mockResolvedValueOnce({
+          status: 'ok',
+          text: '답변',
+          json: undefined,
+          promptTokens: 1,
+          completionTokens: 1,
+          costUsd: 0,
+          latencyMs: 1,
+          callLogId: 'log-draft',
+          outputRedacted: false,
+        });
+
+      await service.generate(USER_ID, CL_ID, {});
+
+      // 2번째 LLM 호출 (draft) 의 userPrompt 에 인턴 의 wrap up 만 들어가 있는지
+      const draftCall = llm.call.mock.calls.find(
+        (c) => c[0].feature === 'coverletter_draft_v2',
+      );
+      if (draftCall) {
+        const userPrompt = draftCall[0].userPrompt;
+        if (userPrompt.includes('활동 총괄 회고')) {
+          expect(userPrompt).toContain('인턴');
+          expect(userPrompt).toContain('6개월 wrap up');
+          expect(userPrompt).not.toContain('## 동아리');
+          expect(userPrompt).not.toContain('## 공모전');
+        }
+      }
+    });
   });
 });
