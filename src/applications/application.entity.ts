@@ -113,4 +113,11 @@ export class Application {
 
   @DeleteDateColumn({ name: 'deleted_at' })
   deletedAt: Date | null;
+
+  /**
+   * W2 — 회사 도메인 (favicon 로딩 용).
+   * DB 컬럼 X — runtime virtual 필드. ApplicationsService 응답에서 CompaniesService lookup 후 inject.
+   * frontend 가 Google s2 favicon URL 생성에 사용. 없으면 해시 아바타 fallback.
+   */
+  domain?: string;
 }

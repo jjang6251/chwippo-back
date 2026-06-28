@@ -8,6 +8,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { CoinService } from '../ai/coin.service';
+import { CompaniesService } from '../companies/companies.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
@@ -136,6 +137,11 @@ describe('ApplicationsService', () => {
         { provide: DataSource, useValue: mockDataSource },
         { provide: CoinService, useValue: mockCoinService },
         { provide: CompanyResearchService, useValue: mockCompanyResearch },
+        // W2 — CompaniesService.getDomainByName (응답 inject). spec 은 undefined 반환 mock
+        {
+          provide: CompaniesService,
+          useValue: { getDomainByName: jest.fn().mockReturnValue(undefined) },
+        },
       ],
     }).compile();
 
