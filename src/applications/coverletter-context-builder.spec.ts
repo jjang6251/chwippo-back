@@ -599,9 +599,7 @@ describe('buildCoverletterContext', () => {
         selectedLogs,
         selectedReflections: [],
         aiRecommendedLogs: [],
-        activitySummaries: [
-          { activityName: '인턴', summary: 'wrap up' },
-        ],
+        activitySummaries: [{ activityName: '인턴', summary: 'wrap up' }],
         myinfo: EMPTY_MYINFO,
       });
       // budget 안에 들어간 logs 우선. activity summary 는 다음 priority.

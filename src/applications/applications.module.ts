@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from '../activity/activity.module';
 import { AiModule } from '../ai/ai.module';
+import { CompaniesModule } from '../companies/companies.module';
 import { InterviewPrepModule } from '../interview-prep/interview-prep.module';
 import { MyinfoModule } from '../myinfo/myinfo.module';
 import { Application } from './application.entity';
@@ -49,6 +50,8 @@ import { CoverletterGenerationStuckCron } from './coverletter-generation-stuck.c
     forwardRef(() => MyinfoModule),
     // InterviewPrepModule — CoverletterDocController 가 CompanyResearchService 재사용 (application 단위)
     forwardRef(() => InterviewPrepModule),
+    // W2 — ApplicationsService 가 응답에 domain inject (favicon 로딩)
+    CompaniesModule,
   ],
   controllers: [
     ApplicationsController,

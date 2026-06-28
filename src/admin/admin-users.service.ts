@@ -98,6 +98,9 @@ export class AdminUsersService {
         'u.suspendedAt',
         'u.createdAt',
         'u.lastActiveAt',
+        // W1 — admin 직군 분포 가시화
+        'u.signupJobCategories',
+        'u.signupOtherText',
       ])
       .orderBy('u.lastActiveAt', 'DESC', 'NULLS LAST')
       .addOrderBy('u.createdAt', 'DESC')
