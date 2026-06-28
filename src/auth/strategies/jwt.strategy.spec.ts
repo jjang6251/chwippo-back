@@ -26,6 +26,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     suspendReason: null,
     suspendExpiresAt: null,
     pendingNotification: null,
+    signupJobCategories: null,
+    signupOtherText: null,
+    sampleCardsDismissedAt: null,
     tier: 'free',
     ...overrides,
   };

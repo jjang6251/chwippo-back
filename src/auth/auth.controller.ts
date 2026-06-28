@@ -30,6 +30,12 @@ interface AuthenticatedUser {
   aiConsentVersion: string | null;
   /** PR_B1 — 코인 시스템 onboarding modal 표시 여부. NULL → modal 노출 */
   onboardedCoinAt: Date | null;
+  /** W1 — signup 1 질문 답변. NULL → /signup/question redirect. [] → 답변 완료 (건너뛰기 포함) */
+  signupJobCategories: string[] | null;
+  /** W1 — "기타" 직군 자유 입력. NULL or "" → 미입력 */
+  signupOtherText: string | null;
+  /** W1 — 샘플 카드 전체 dismiss 시각. NULL → 샘플 살아있음 */
+  sampleCardsDismissedAt: Date | null;
 }
 
 interface KakaoCallbackUser {
@@ -172,6 +178,9 @@ export class AuthController {
         aiConsentAt: user.aiConsentAt ?? null,
         aiConsentVersion: user.aiConsentVersion ?? null,
         onboardedCoinAt: user.onboardedCoinAt ?? null,
+        signupJobCategories: user.signupJobCategories ?? null,
+        signupOtherText: user.signupOtherText ?? null,
+        sampleCardsDismissedAt: user.sampleCardsDismissedAt ?? null,
       },
     };
   }

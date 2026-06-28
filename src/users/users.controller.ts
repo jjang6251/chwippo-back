@@ -12,6 +12,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateNicknameDto } from './dto/update-nickname.dto';
 import { UpdateDashboardConfigDto } from './dto/update-dashboard-config.dto';
 import { AgreeAiConsentDto } from './dto/agree-ai-consent.dto';
+import { SignupAnswerDto } from './dto/signup-answer.dto';
 
 interface AuthUser {
   id: string;
@@ -31,6 +32,23 @@ export class UsersController {
   @HttpCode(204)
   async markOnboarded(@CurrentUser() user: AuthUser): Promise<void> {
     await this.usersService.markOnboarded(user.id);
+  }
+
+  /** W1 — signup 1 질문 답변 + 가상 회사 샘플 자동 생성 */
+  @Post('me/signup-answer')
+  @HttpCode(204)
+  async signupAnswer(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SignupAnswerDto,
+  ): Promise<void> {
+    await this.usersService.signupAnswer(user.id, dto);
+  }
+
+  /** W1 — 샘플 카드 전체 숨기기 (멱등) */
+  @Post('me/sample-cards/dismiss')
+  @HttpCode(204)
+  async dismissAllSampleCards(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.usersService.dismissAllSampleCards(user.id);
   }
 
   @Post('me/ai-consent')
