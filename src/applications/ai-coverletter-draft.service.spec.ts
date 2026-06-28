@@ -625,9 +625,7 @@ describe('AiCoverletterDraftService', () => {
       // activity find 호출 — 반드시 userId 동봉 (cross-user IDOR 차단)
       if (activityRepo.find.mock.calls.length > 0) {
         const where = activityRepo.find.mock.calls[0][0]?.where;
-        expect(where).toEqual(
-          expect.objectContaining({ userId: USER_ID }),
-        );
+        expect(where).toEqual(expect.objectContaining({ userId: USER_ID }));
       }
     });
 

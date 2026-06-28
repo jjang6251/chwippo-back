@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   forwardRef,
   Inject,
   Injectable,
@@ -245,6 +246,19 @@ export class ApplicationsService {
 
   async remove(userId: string, id: string) {
     const app = await this.findEntity(userId, id);
+    await this.appRepo.softRemove(app);
+  }
+
+  /**
+   * W1 — 개별 sample 카드 숨김 (soft delete).
+   * 진짜 카드 (is_sample=false) 시도 → 400 (일반 DELETE 사용).
+   * 이미 deleted 카드 (findEntity 가 404) → 멱등 처리 없음 (사용자가 다시 본 적 없는 카드).
+   */
+  async dismissSample(userId: string, id: string) {
+    const app = await this.findEntity(userId, id);
+    if (!app.isSample) {
+      throw new BadRequestException('진짜 카드는 일반 삭제를 사용해주세요.');
+    }
     await this.appRepo.softRemove(app);
   }
 

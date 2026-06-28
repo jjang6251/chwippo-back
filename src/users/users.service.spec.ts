@@ -1,18 +1,24 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { User } from './user.entity';
+import { Application } from '../applications/application.entity';
+import { ApplicationStep } from '../applications/application-step.entity';
 import { UsersService } from './users.service';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
+import type { SignupAnswerDto } from './dto/signup-answer.dto';
+import type { JobCategory } from './signup-job-categories.const';
 
 describe('UsersService', () => {
   let service: UsersService;
   let userRepo: jest.Mocked<Repository<User>>;
   let storageUsage: jest.Mocked<StorageUsageService>;
   let filesService: jest.Mocked<FilesService>;
+  let dataSource: jest.Mocked<DataSource>;
+  let manager: jest.Mocked<EntityManager>;
 
   const makeUser = (overrides: Partial<User> = {}): User =>
     ({
@@ -33,10 +39,26 @@ describe('UsersService', () => {
     const mockFiles = mock<FilesService>();
     mockStorage.collectAllFileUrls.mockResolvedValue([]);
 
+    manager = mock<EntityManager>();
+    manager.create.mockImplementation(
+      (_target: unknown, input: unknown) => ({ ...(input as object) }) as never,
+    );
+    manager.save.mockImplementation(
+      async (_target: unknown, input: unknown) => ({
+        ...(input as object),
+        id: 'app-' + Math.random().toString(36).slice(2, 8),
+      }),
+    );
+    manager.update.mockResolvedValue({ affected: 1 } as never);
+
+    dataSource = mock<DataSource>();
+    dataSource.transaction.mockImplementation((cb: any) => cb(manager));
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UsersService,
         { provide: getRepositoryToken(User), useValue: mockRepo },
+        { provide: getDataSourceToken(), useValue: dataSource },
         { provide: StorageUsageService, useValue: mockStorage },
         { provide: FilesService, useValue: mockFiles },
       ],
@@ -421,6 +443,459 @@ describe('UsersService', () => {
       expect(mockQb.where).toHaveBeenCalledWith('u.created_at >= :from', {
         from,
       });
+    });
+  });
+
+  // ── W1: signupAnswer + dismissAllSampleCards ─────────────
+  // signup 1 질문 (관심 직군) 답변 → 가상 회사 샘플 카드 자동 생성 + 보드 dismiss.
+
+  describe('signupAnswer (W1)', () => {
+    const cat = (c: string): JobCategory => c as JobCategory;
+
+    const makeDto = (
+      overrides: Partial<SignupAnswerDto> = {},
+    ): SignupAnswerDto => ({
+      jobCategories: [cat('백엔드 개발')],
+      ...overrides,
+    });
+
+    function mockSavedAppId() {
+      // manager.save 가 sample 카드별 unique id 반환하도록 (step insert 시 applicationId)
+      let counter = 0;
+      manager.save.mockImplementation(async (_t: unknown, input: unknown) => ({
+        ...(input as object),
+        id: `app-${++counter}`,
+      }));
+    }
+
+    it('정상 1개 직군 → users.update + 카드 1개 generate + 4 step', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', makeDto());
+
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      // User update — signupJobCategories + onboardedAt set
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        'user-uuid-1',
+        expect.objectContaining({
+          signupJobCategories: ['백엔드 개발'],
+          signupOtherText: null,
+          onboardedAt: expect.any(Date),
+        }),
+      );
+      // 카드 1개 (Application) + 4 step (ApplicationStep) save
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      const stepSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === ApplicationStep,
+      );
+      expect(appSaves).toHaveLength(1);
+      expect(stepSaves).toHaveLength(4);
+      // Application — isSample true + currentStepIndex 0 + jobCategory 박제 + companyName
+      expect(appSaves[0][1]).toMatchObject({
+        userId: 'user-uuid-1',
+        companyName: 'Cloud Tech 백엔드',
+        jobCategory: '백엔드 개발',
+        status: 'IN_PROGRESS',
+        isSample: true,
+        currentStepIndex: 0,
+      });
+    });
+
+    it('정상 3개 직군 → 카드 3개 generate (각 직군 매칭)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({
+          jobCategories: [
+            cat('백엔드 개발'),
+            cat('UI/UX·프로덕트 디자이너'),
+            cat('마케팅·광고'),
+          ],
+        }),
+      );
+
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves).toHaveLength(3);
+      expect(appSaves[0][1]).toMatchObject({
+        companyName: 'Cloud Tech 백엔드',
+        currentStepIndex: 0,
+      });
+      expect(appSaves[1][1]).toMatchObject({
+        companyName: 'Sunset Design UI/UX',
+        currentStepIndex: 1,
+      });
+      expect(appSaves[2][1]).toMatchObject({
+        companyName: 'Blue Marketing 퍼포먼스',
+        currentStepIndex: 2,
+      });
+    });
+
+    it('4개 직군 → 첫 3개만 카드 생성 (max 3)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({
+          jobCategories: [
+            cat('백엔드 개발'),
+            cat('프론트엔드 개발'),
+            cat('모바일 앱 개발'),
+            cat('데이터·AI'),
+          ],
+        }),
+      );
+
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves).toHaveLength(3);
+    });
+
+    it('21개 직군 → 첫 3개만 카드 생성', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      const all21: JobCategory[] = [
+        '백엔드 개발',
+        '프론트엔드 개발',
+        '모바일 앱 개발',
+        '데이터·AI',
+        'DevOps·인프라·보안',
+        'UI/UX·프로덕트 디자이너',
+        '그래픽·브랜드 디자이너',
+        '서비스 기획·PM',
+        '콘텐츠·에디터·PR',
+        '마케팅·광고',
+        '영업·세일즈',
+        '고객서비스·CS·CX',
+        '인사·HR·노무',
+        '재무·회계·세무',
+        '법무·CPA·컴플라이언스',
+        '경영기획·전략·컨설팅',
+        '금융·은행·증권·보험',
+        'R&D·연구개발',
+        '의료·제약·바이오',
+        '제조·생산·품질·SCM',
+        '기타',
+      ].map((c) => cat(c));
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({ jobCategories: all21 }),
+      );
+
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves).toHaveLength(3);
+    });
+
+    it('빈 array (건너뛰기) → 카드 0개 + signupJobCategories=[] 저장 + onboardedAt set', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+
+      await service.signupAnswer('user-uuid-1', makeDto({ jobCategories: [] }));
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        'user-uuid-1',
+        expect.objectContaining({
+          signupJobCategories: [],
+          signupOtherText: null,
+          onboardedAt: expect.any(Date),
+        }),
+      );
+      // 카드·step 둘 다 0개
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves).toHaveLength(0);
+    });
+
+    it('"기타" + otherText="게임 기획" → "Sample Corp 게임 기획" 카드 + signupOtherText 저장', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({ jobCategories: [cat('기타')], otherText: '게임 기획' }),
+      );
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        'user-uuid-1',
+        expect.objectContaining({ signupOtherText: '게임 기획' }),
+      );
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves[0][1]).toMatchObject({
+        companyName: 'Sample Corp 게임 기획',
+        jobCategory: '게임 기획',
+      });
+    });
+
+    it('"기타" + otherText 빈 string → "Sample Corp 신입" generic + signupOtherText=null', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({ jobCategories: [cat('기타')], otherText: '' }),
+      );
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        'user-uuid-1',
+        expect.objectContaining({ signupOtherText: null }),
+      );
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves[0][1]).toMatchObject({
+        companyName: 'Sample Corp 신입',
+        jobCategory: '기타',
+      });
+    });
+
+    it('"기타" + otherText 공백만 → trim 후 빈 string → generic', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({ jobCategories: [cat('기타')], otherText: '   ' }),
+      );
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        'user-uuid-1',
+        expect.objectContaining({ signupOtherText: null }),
+      );
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves[0][1]).toMatchObject({
+        companyName: 'Sample Corp 신입',
+      });
+    });
+
+    it('"기타" 미선택 + otherText 있음 → 400 BadRequest', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+
+      await expect(
+        service.signupAnswer(
+          'user-uuid-1',
+          makeDto({ jobCategories: [cat('백엔드 개발')], otherText: '셰프' }),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('이미 답변한 user (signupJobCategories not null) → 400', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: ['백엔드 개발'] }),
+      );
+
+      await expect(
+        service.signupAnswer('user-uuid-1', makeDto()),
+      ).rejects.toThrow(new BadRequestException('이미 답변하셨어요.'));
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('이미 답변한 user (빈 array, 건너뛰기) → 400 (빈 array 도 답변 완료)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: [] }),
+      );
+
+      await expect(
+        service.signupAnswer('user-uuid-1', makeDto()),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('존재하지 않는 user → 404 NotFound', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.signupAnswer('nonexistent', makeDto()),
+      ).rejects.toThrow(NotFoundException);
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('"기타" + otherText 미전송 (undefined) → generic, signupOtherText=null', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({ jobCategories: [cat('기타')] }), // otherText 없음
+      );
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        'user-uuid-1',
+        expect.objectContaining({ signupOtherText: null }),
+      );
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves[0][1]).toMatchObject({ companyName: 'Sample Corp 신입' });
+    });
+
+    it('백엔드 + 기타(셰프) hybrid → 카드 2개 (Cloud Tech 백엔드 + Sample Corp 셰프)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({
+          jobCategories: [cat('백엔드 개발'), cat('기타')],
+          otherText: '셰프',
+        }),
+      );
+
+      const appSaves = manager.save.mock.calls.filter(
+        (c) => c[0] === Application,
+      );
+      expect(appSaves).toHaveLength(2);
+      expect(appSaves[0][1]).toMatchObject({
+        companyName: 'Cloud Tech 백엔드',
+        jobCategory: '백엔드 개발',
+        currentStepIndex: 0,
+      });
+      expect(appSaves[1][1]).toMatchObject({
+        companyName: 'Sample Corp 셰프',
+        jobCategory: '셰프',
+        currentStepIndex: 1,
+      });
+    });
+
+    it('카드 deadline 분산 — 카드별 첫 step 의 scheduledDate 가 today +7/+14/+21', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+      mockSavedAppId();
+
+      await service.signupAnswer(
+        'user-uuid-1',
+        makeDto({
+          jobCategories: [
+            cat('백엔드 개발'),
+            cat('UI/UX·프로덕트 디자이너'),
+            cat('마케팅·광고'),
+          ],
+        }),
+      );
+
+      // 각 카드별 첫 step (orderIndex 0) 의 scheduledDate 확인
+      const firstSteps = manager.save.mock.calls
+        .filter((c) => c[0] === ApplicationStep)
+        .filter((c) => (c[1] as { orderIndex: number }).orderIndex === 0);
+      expect(firstSteps).toHaveLength(3);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      for (let i = 0; i < 3; i++) {
+        const sched = (firstSteps[i][1] as { scheduledDate: Date })
+          .scheduledDate;
+        const expectedDays = (i + 1) * 7;
+        const actualDays = Math.round(
+          (sched.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+        );
+        expect(actualDays).toBe(expectedDays);
+      }
+    });
+  });
+
+  describe('dismissAllSampleCards (W1)', () => {
+    beforeEach(() => {
+      // createQueryBuilder chain mock (mass UPDATE applications)
+      const qb = {
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue({ affected: 3 }),
+      };
+      manager.createQueryBuilder.mockReturnValue(qb as never);
+    });
+
+    it('정상 → users.sample_cards_dismissed_at set + applications mass soft delete', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ sampleCardsDismissedAt: null }),
+      );
+
+      await service.dismissAllSampleCards('user-uuid-1');
+
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        'user-uuid-1',
+        expect.objectContaining({ sampleCardsDismissedAt: expect.any(Date) }),
+      );
+      expect(manager.createQueryBuilder).toHaveBeenCalled();
+    });
+
+    it('이미 dismiss 됨 → no-op (transaction 호출 X)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ sampleCardsDismissedAt: new Date('2026-06-25') }),
+      );
+
+      await service.dismissAllSampleCards('user-uuid-1');
+
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(manager.update).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 user → 404', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.dismissAllSampleCards('nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('트랜잭션 wrap — User update + applications mass update 둘 다 같은 TX', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ sampleCardsDismissedAt: null }),
+      );
+
+      await service.dismissAllSampleCards('user-uuid-1');
+
+      // transaction callback 안에서 manager.update + createQueryBuilder 둘 다 호출
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      expect(manager.update).toHaveBeenCalledTimes(1);
+      expect(manager.createQueryBuilder).toHaveBeenCalledTimes(1);
     });
   });
 });
