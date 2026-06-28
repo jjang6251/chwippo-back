@@ -10,6 +10,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
 import { CoinService } from '../ai/coin.service';
+import { CompaniesService } from '../companies/companies.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
@@ -41,14 +42,28 @@ export class ApplicationsService {
     private readonly coinService: CoinService,
     @Inject(forwardRef(() => CompanyResearchService))
     private readonly companyResearch: CompanyResearchService,
+    // W2 — domain inject (favicon 로딩)
+    private readonly companiesService: CompaniesService,
   ) {}
 
+  /** W2 — application 응답에 회사 domain inject (CompaniesService lookup, in-memory Map O(1)) */
+  private withDomain<T extends Application | null | undefined>(app: T): T {
+    if (!app) return app;
+    app.domain = this.companiesService.getDomainByName(app.companyName);
+    return app;
+  }
+
+  private withDomainAll(apps: Application[]): Application[] {
+    return apps.map((a) => this.withDomain(a));
+  }
+
   async findAll(userId: string) {
-    return this.appRepo.find({
+    const apps = await this.appRepo.find({
       where: { userId },
       relations: ['steps'],
       order: { createdAt: 'DESC' },
     });
+    return this.withDomainAll(apps);
   }
 
   async findOne(userId: string, id: string) {
@@ -58,7 +73,7 @@ export class ApplicationsService {
     });
     if (!app) throw new NotFoundException('카드를 찾을 수 없습니다.');
     app.steps.sort((a, b) => a.orderIndex - b.orderIndex);
-    return app;
+    return this.withDomain(app);
   }
 
   // relations 없이 엔티티만 로드 (update 내부용 — cascade 충돌 방지)
@@ -93,10 +108,11 @@ export class ApplicationsService {
         );
       }
 
-      return em.findOne(Application, {
+      const created = await em.findOne(Application, {
         where: { id: saved.id },
         relations: ['steps'],
       });
+      return this.withDomain(created);
     });
   }
 
@@ -240,7 +256,11 @@ export class ApplicationsService {
         }
       }
 
-      return em.findOne(Application, { where: { id }, relations: ['steps'] });
+      const updated = await em.findOne(Application, {
+        where: { id },
+        relations: ['steps'],
+      });
+      return this.withDomain(updated);
     });
   }
 
