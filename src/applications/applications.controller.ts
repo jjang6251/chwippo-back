@@ -87,6 +87,16 @@ export class ApplicationsController {
     return this.service.remove(user.id, id);
   }
 
+  /** W1 — 개별 sample 카드 숨김 (soft delete) */
+  @Post(':id/sample-dismiss')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  dismissSample(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.service.dismissSample(user.id, id);
+  }
+
   /**
    * PR_B1c — 자소서 생성 (회사조사 자동 trigger + 50 코인 차감).
    *

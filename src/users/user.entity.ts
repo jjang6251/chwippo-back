@@ -106,4 +106,38 @@ export class User {
   // PR_B2 Phase 1 — Q24 사용자 통지 (admin 액션 후 me 호출 응답에 포함, dismiss 시 NULL)
   @Column({ name: 'pending_notification', type: 'jsonb', nullable: true })
   pendingNotification: PendingNotification | null;
+
+  /**
+   * W1 — signup 1 질문 (관심 직군) 답변. 다중 선택 (1~21개).
+   * - NULL = 미답변 (LoginCallback 가 /signup/question redirect)
+   * - [] 빈 array = "건너뛰기" (다시 안 묻음, 샘플도 X)
+   * - ['백엔드 개발', '기타'] 등 = JOB_CATEGORIES 안의 값들
+   */
+  @Column({ name: 'signup_job_categories', type: 'jsonb', nullable: true })
+  signupJobCategories: string[] | null;
+
+  /**
+   * W1 — "기타" 선택 시 자유 입력 직무명 (예: "게임 기획"). max 200자.
+   * NULL = 미입력 또는 "기타" 미선택. service 가드: 기타 미선택 + otherText 있음 → 400.
+   * 가상 샘플 카드 generate 시 "Sample Corp {otherText}" 형식으로 사용.
+   */
+  @Column({
+    name: 'signup_other_text',
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+  })
+  signupOtherText: string | null;
+
+  /**
+   * W1 — 사용자가 "전체 숨기기" 누른 시각 (한 번 dismiss 시 영구).
+   * NULL = 샘플 카드 살아있음 (보드 표시).
+   * NOT NULL = 모든 is_sample 카드 soft delete + 다음 로그인에도 안 나타남.
+   */
+  @Column({
+    name: 'sample_cards_dismissed_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  sampleCardsDismissedAt: Date | null;
 }

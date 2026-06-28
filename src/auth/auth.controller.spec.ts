@@ -30,6 +30,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     suspendReason: null,
     suspendExpiresAt: null,
     pendingNotification: null,
+    signupJobCategories: null,
+    signupOtherText: null,
+    sampleCardsDismissedAt: null,
     tier: 'free',
     ...overrides,
   };
@@ -378,6 +381,9 @@ describe('AuthController', () => {
       suspendReason: null,
       suspendExpiresAt: null,
       pendingNotification: null,
+      signupJobCategories: null,
+      signupOtherText: null,
+      sampleCardsDismissedAt: null,
     };
 
     it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
@@ -415,7 +421,33 @@ describe('AuthController', () => {
           aiConsentAt: null,
           aiConsentVersion: null,
           onboardedCoinAt: null,
+          // W1 — signup 답변 + sample dismiss 추적
+          signupJobCategories: null,
+          signupOtherText: null,
+          sampleCardsDismissedAt: null,
         },
+      });
+    });
+
+    it('W1 — refresh 응답에 signup* + sampleCardsDismissedAt 포함 (이미 답변한 user)', async () => {
+      mockAuthService.refreshTokens.mockResolvedValue({
+        accessToken: 'a',
+        refreshToken: 'r',
+      });
+      const res = makeRes() as unknown as Response;
+      const answeredUser = {
+        ...authenticatedUser,
+        signupJobCategories: ['백엔드 개발', 'UI/UX·프로덕트 디자이너'],
+        signupOtherText: null,
+        sampleCardsDismissedAt: new Date('2026-06-27'),
+      };
+
+      const result = await controller.refresh(answeredUser, res);
+
+      expect(result.user).toMatchObject({
+        signupJobCategories: ['백엔드 개발', 'UI/UX·프로덕트 디자이너'],
+        signupOtherText: null,
+        sampleCardsDismissedAt: new Date('2026-06-27'),
       });
     });
 

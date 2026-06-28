@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -739,6 +743,46 @@ describe('ApplicationsService', () => {
       await expect(service.remove('user-B', 'app-uuid-1')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  // ── W1: dismissSample (개별 sample 카드 숨김) ────────────
+  describe('dismissSample (W1)', () => {
+    it('정상 sample 카드 → softRemove 호출', async () => {
+      const app = makeApp({ isSample: true });
+      appRepo.findOne.mockResolvedValue(app);
+      appRepo.softRemove.mockResolvedValue(app);
+
+      await service.dismissSample('user-uuid-1', 'app-uuid-1');
+
+      expect(appRepo.softRemove).toHaveBeenCalledWith(app);
+    });
+
+    it('진짜 카드 (isSample=false) → 400 BadRequest', async () => {
+      const app = makeApp({ isSample: false });
+      appRepo.findOne.mockResolvedValue(app);
+
+      await expect(
+        service.dismissSample('user-uuid-1', 'app-uuid-1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(appRepo.softRemove).not.toHaveBeenCalled();
+    });
+
+    it('다른 userId 카드 (IDOR) → NotFoundException (findEntity 가 userId 조건)', async () => {
+      appRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.dismissSample('user-B', 'app-uuid-1'),
+      ).rejects.toThrow(NotFoundException);
+      expect(appRepo.softRemove).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 application → NotFoundException', async () => {
+      appRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.dismissSample('user-uuid-1', 'nonexistent'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

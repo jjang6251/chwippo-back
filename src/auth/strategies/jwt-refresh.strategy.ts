@@ -56,6 +56,10 @@ export class JwtRefreshStrategy extends PassportStrategy(
       aiConsentVersion: user.aiConsentVersion ?? null,
       // PR — refresh response 에 onboardedCoinAt 전달 (setOnboarded 후 새로고침 시 modal 재노출 차단)
       onboardedCoinAt: user.onboardedCoinAt ?? null,
+      // W1 — signup answer + sample dismiss 추적 (signup-question redirect 분기 + 보드 dismiss bar)
+      signupJobCategories: user.signupJobCategories ?? null,
+      signupOtherText: user.signupOtherText ?? null,
+      sampleCardsDismissedAt: user.sampleCardsDismissedAt ?? null,
     };
   }
 }

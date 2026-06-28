@@ -60,6 +60,15 @@ export class Application {
   isStarred: boolean;
 
   /**
+   * W1 — 가상 회사 샘플 카드 (signup 직군 답변 기반 자동 생성) 여부.
+   * 진짜 카드 (사용자가 직접 추가) = false / 샘플 = true.
+   * Board UI 가 분리 정렬 + "📌 샘플" 배지 + GuideOverlay 표시.
+   * 부분 인덱스 (user_id, is_sample) WHERE deleted_at IS NULL AND is_sample = TRUE 로 빠른 조회.
+   */
+  @Column({ name: 'is_sample', default: false })
+  isSample: boolean;
+
+  /**
    * PR_B1c — 자소서 생성 (회사조사 trigger) 상태.
    * - 'idle': 미시작. "생성하기" 버튼 노출
    * - 'in_progress': 회사조사 진행 중. spinner 표시 + atomic UPDATE WHERE='idle' 로 race 차단
