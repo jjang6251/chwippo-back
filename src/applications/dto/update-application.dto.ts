@@ -40,7 +40,7 @@ export class UpdateApplicationDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(2000)
   memo?: string;
 
   @IsOptional()
