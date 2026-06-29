@@ -29,7 +29,7 @@ describe('Users dashboard-config (e2e, H-7)', () => {
 
   // ── GET ──────────────────────────────────────────────
   describe('GET /users/me/dashboard-config', () => {
-    it('처음 호출 (DB null) → DEFAULT_SECTIONS (stats·dday·todos)', async () => {
+    it('처음 호출 (DB null) → DEFAULT_SECTIONS (stats·dday·todos + W3 activity_streak·status_doughnut)', async () => {
       const { accessToken } = await signInAsUser(app);
 
       const res = await request(app.getHttpServer())
@@ -41,6 +41,8 @@ describe('Users dashboard-config (e2e, H-7)', () => {
         { id: 'stats', visible: true },
         { id: 'dday', visible: true },
         { id: 'todos', visible: true },
+        { id: 'activity_streak', visible: true },
+        { id: 'status_doughnut', visible: true },
       ]);
     });
 
@@ -59,7 +61,7 @@ describe('Users dashboard-config (e2e, H-7)', () => {
       { id: 'cover_letter_quick', visible: false },
     ];
 
-    it('정상 sections → 200 + DB JSONB 저장 + 응답', async () => {
+    it('정상 sections → 200 + DB JSONB 저장 + GET 응답에 W3 lazy merge 자동 append', async () => {
       const { accessToken } = await signInAsUser(app);
 
       const res = await request(app.getHttpServer())
@@ -68,14 +70,19 @@ describe('Users dashboard-config (e2e, H-7)', () => {
         .send({ sections: validSections })
         .expect(200);
 
+      // PATCH 응답 = 저장한 그대로 (lazy merge 안 함)
       expect(res.body.data.sections).toEqual(validSections);
 
-      // GET으로 재확인
+      // GET으로 재확인 — W3 lazy merge 로 activity_streak/status_doughnut 자동 append
       const getRes = await request(app.getHttpServer())
         .get('/users/me/dashboard-config')
         .set(bearer(accessToken))
         .expect(200);
-      expect(getRes.body.data.sections).toEqual(validSections);
+      expect(getRes.body.data.sections).toEqual([
+        ...validSections,
+        { id: 'activity_streak', visible: true },
+        { id: 'status_doughnut', visible: true },
+      ]);
     });
 
     it('sections[0].id !== "stats" → 400 (stats 첫 위치 enforce)', async () => {
