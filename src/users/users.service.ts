@@ -204,6 +204,19 @@ export class UsersService {
     { id: 'stats', visible: true },
     { id: 'dday', visible: true },
     { id: 'todos', visible: true },
+    // W3 — Dashboard streak + status 도넛 (CEO Q2=A 새 섹션). config 신규 사용자 + 기존 사용자 lazy merge 양쪽 노출
+    { id: 'activity_streak', visible: true },
+    { id: 'status_doughnut', visible: true },
+  ];
+
+  /**
+   * W3 lazy merge 대상 — 기존 사용자가 config 저장한 후 도입된 섹션.
+   * config 있는 사용자에게도 자동 append (visible:true) 해야 자동 노출됨.
+   * 이미 toggle off 한 경우 (visible:false 로 저장) 는 그대로 유지.
+   */
+  private readonly LAZY_MERGE_SECTION_IDS = [
+    'activity_streak',
+    'status_doughnut',
   ];
 
   async getDashboardConfig(
@@ -211,7 +224,18 @@ export class UsersService {
   ): Promise<{ sections: { id: string; visible: boolean }[] }> {
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
-    return user.dashboardConfig ?? { sections: this.DEFAULT_SECTIONS };
+    if (!user.dashboardConfig) {
+      return { sections: this.DEFAULT_SECTIONS };
+    }
+    // W3 — lazy merge: 기존 config 에 신규 lazy-merge 섹션만 자동 append
+    const existing = user.dashboardConfig.sections;
+    const existingIds = new Set(existing.map((s) => s.id));
+    const missing = this.DEFAULT_SECTIONS.filter(
+      (s) =>
+        this.LAZY_MERGE_SECTION_IDS.includes(s.id) && !existingIds.has(s.id),
+    );
+    if (missing.length === 0) return { sections: existing };
+    return { sections: [...existing, ...missing] };
   }
 
   async updateDashboardConfig(
