@@ -228,7 +228,7 @@ describe('UsersService', () => {
 
   // ── getDashboardConfig (LRR P2T1 PR O H-4) ────────────
   describe('getDashboardConfig', () => {
-    it('DB dashboardConfig null → DEFAULT_SECTIONS (stats·dday·todos) 반환', async () => {
+    it('DB dashboardConfig null → DEFAULT_SECTIONS (stats·dday·todos + W3 activity_streak·status_doughnut) 반환', async () => {
       const user = makeUser({ dashboardConfig: null });
       userRepo.findOneBy.mockResolvedValue(user);
 
@@ -239,14 +239,37 @@ describe('UsersService', () => {
         { id: 'stats', visible: true },
         { id: 'dday', visible: true },
         { id: 'todos', visible: true },
+        { id: 'activity_streak', visible: true },
+        { id: 'status_doughnut', visible: true },
       ]);
     });
 
-    it('기존 config 있음 → 그대로 반환', async () => {
+    it('W3 lazy merge — 기존 config 에 신규 섹션 (activity_streak·status_doughnut) 자동 append (visible:true)', async () => {
       const custom = {
         sections: [
           { id: 'stats', visible: true },
           { id: 'cover_letter_quick', visible: true },
+        ],
+      };
+      const user = makeUser({ dashboardConfig: custom });
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      const result = await service.getDashboardConfig('user-uuid-1');
+      expect(result.sections).toEqual([
+        { id: 'stats', visible: true },
+        { id: 'cover_letter_quick', visible: true },
+        // W3 신규 2개 lazy merge
+        { id: 'activity_streak', visible: true },
+        { id: 'status_doughnut', visible: true },
+      ]);
+    });
+
+    it('기존 config 에 W3 신규 섹션 이미 있음 → 그대로 반환 (중복 append X)', async () => {
+      const custom = {
+        sections: [
+          { id: 'stats', visible: true },
+          { id: 'activity_streak', visible: false }, // 사용자가 toggle off 한 상태
+          { id: 'status_doughnut', visible: true },
         ],
       };
       const user = makeUser({ dashboardConfig: custom });
@@ -263,11 +286,11 @@ describe('UsersService', () => {
       );
     });
 
-    it('orphan section ID 포함된 옛 DB row → 그대로 반환 (필터는 PATCH/프론트에서)', async () => {
+    it('orphan section ID 포함된 옛 DB row → 보존 (필터는 PATCH/프론트) + W3 lazy merge append', async () => {
       const orphan = {
         sections: [
           { id: 'stats', visible: true },
-          { id: 'myinfo_progress', visible: true }, // ← deprecated
+          { id: 'myinfo_progress', visible: true }, // ← deprecated 유지 (사용자 결정 존중)
           { id: 'dday', visible: true },
         ],
       };
@@ -275,7 +298,14 @@ describe('UsersService', () => {
       userRepo.findOneBy.mockResolvedValue(user);
 
       const result = await service.getDashboardConfig('user-uuid-1');
-      expect(result).toEqual(orphan);
+      expect(result.sections).toEqual([
+        { id: 'stats', visible: true },
+        { id: 'myinfo_progress', visible: true },
+        { id: 'dday', visible: true },
+        // W3 lazy merge — 신규 2개 자동 append (orphan 보존과 별개)
+        { id: 'activity_streak', visible: true },
+        { id: 'status_doughnut', visible: true },
+      ]);
     });
   });
 
