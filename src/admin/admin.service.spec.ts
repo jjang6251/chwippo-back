@@ -106,7 +106,7 @@ describe('AdminService', () => {
       expect(inquiriesService.countPending).toHaveBeenCalledTimes(1);
     });
 
-    it('countByDate 첫 번째 호출(이번 달 시작)은 두 번째(이번 주 시작)보다 이른 날짜', async () => {
+    it('countByDate 첫 번째 호출=이번 달 시작(1일), 두 번째=이번 주 시작(월요일)', async () => {
       usersService.countAll.mockResolvedValue(0);
       usersService.countByDate.mockResolvedValue(0);
       inquiriesService.countPending.mockResolvedValue(0);
@@ -117,7 +117,11 @@ describe('AdminService', () => {
       const monthStart: Date = calls[0][0];
       const weekStart: Date = calls[1][0];
 
-      expect(monthStart.getTime()).toBeLessThanOrEqual(weekStart.getTime());
+      // monthStart 는 항상 이번 달 1일
+      expect(monthStart.getDate()).toBe(1);
+      // weekStart 는 항상 이번 주 월요일 (getDay: 1)
+      // 주의: 월 첫 주에 1일이 화~일요일이면 weekStart < monthStart 라 단순 시간 비교 X (기존 spec 결함)
+      expect(weekStart.getDay()).toBe(1);
     });
   });
 
