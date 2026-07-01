@@ -1,0 +1,57 @@
+[
+  { "name": "TOEIC", "language": "english", "issuer": "ETS / YBM", "scoreType": "number", "scoreMax": 990, "scoreExample": "990", "validYears": 2, "category": "영어", "popularity": 100 },
+  { "name": "TOEIC Speaking", "language": "english", "issuer": "ETS / YBM", "scoreType": "grade", "grades": ["LV1", "LV2", "LV3", "LV4", "LV5", "LV6", "LV7", "LV8"], "scoreExample": "LV7", "validYears": 2, "category": "영어", "popularity": 75 },
+  { "name": "TOEIC Writing", "language": "english", "issuer": "ETS / YBM", "scoreType": "number", "scoreMax": 200, "scoreExample": "180", "validYears": 2, "category": "영어", "popularity": 30 },
+  { "name": "OPIc (영어)", "language": "english", "issuer": "ACTFL", "scoreType": "grade", "grades": ["NL", "NM", "NH", "IL", "IM1", "IM2", "IM3", "IH", "AL", "AM", "AH"], "scoreExample": "IH", "validYears": 2, "category": "영어", "popularity": 95 },
+  { "name": "TEPS", "language": "english", "issuer": "서울대 언어교육원", "scoreType": "number", "scoreMax": 990, "scoreExample": "800", "validYears": 2, "category": "영어", "popularity": 35 },
+  { "name": "NEW TEPS", "language": "english", "issuer": "서울대 언어교육원", "scoreType": "number", "scoreMax": 600, "scoreExample": "450", "validYears": 2, "category": "영어", "popularity": 45 },
+  { "name": "TEPS Speaking", "language": "english", "issuer": "서울대 언어교육원", "scoreType": "number", "scoreMax": 90, "scoreExample": "75", "validYears": 2, "category": "영어", "popularity": 20 },
+  { "name": "TEPS Writing", "language": "english", "issuer": "서울대 언어교육원", "scoreType": "number", "scoreMax": 90, "scoreExample": "75", "validYears": 2, "category": "영어", "popularity": 15 },
+  { "name": "IELTS Academic", "language": "english", "issuer": "British Council / IDP", "scoreType": "number", "scoreMax": 9, "scoreExample": "7.5", "validYears": 2, "category": "영어", "popularity": 45 },
+  { "name": "IELTS General", "language": "english", "issuer": "British Council / IDP", "scoreType": "number", "scoreMax": 9, "scoreExample": "7.0", "validYears": 2, "category": "영어", "popularity": 25 },
+  { "name": "TOEFL iBT", "language": "english", "issuer": "ETS", "scoreType": "number", "scoreMax": 120, "scoreExample": "100", "validYears": 2, "category": "영어", "popularity": 60 },
+  { "name": "TOEFL ITP", "language": "english", "issuer": "ETS", "scoreType": "number", "scoreMax": 677, "scoreExample": "550", "validYears": 2, "category": "영어", "popularity": 15 },
+  { "name": "Cambridge English", "language": "english", "issuer": "Cambridge Assessment English", "scoreType": "grade", "grades": ["KET (A2)", "PET (B1)", "FCE (B2)", "CAE (C1)", "CPE (C2)"], "scoreExample": "FCE (B2)", "validYears": null, "category": "영어", "popularity": 20 },
+  { "name": "G-TELP Level 2", "language": "english", "issuer": "International Testing Services Center", "scoreType": "number", "scoreMax": 100, "scoreExample": "80", "validYears": 2, "category": "영어", "popularity": 25 },
+  { "name": "G-TELP Level 3", "language": "english", "issuer": "International Testing Services Center", "scoreType": "number", "scoreMax": 100, "scoreExample": "75", "validYears": 2, "category": "영어", "popularity": 15 },
+  { "name": "FLEX 영어", "language": "english", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "800", "validYears": 2, "category": "영어", "popularity": 8 },
+
+  { "name": "JLPT", "language": "japanese", "issuer": "일본국제교류기금 / 일본국제교육지원협회", "scoreType": "grade", "grades": ["N1", "N2", "N3", "N4", "N5"], "scoreExample": "N1", "validYears": null, "category": "일본어", "popularity": 95 },
+  { "name": "OPIc (일본어)", "language": "japanese", "issuer": "ACTFL", "scoreType": "grade", "grades": ["NL", "NM", "NH", "IL", "IM1", "IM2", "IM3", "IH", "AL", "AM", "AH"], "scoreExample": "IH", "validYears": 2, "category": "일본어", "popularity": 40 },
+  { "name": "SJPT (표준일본어능력시험)", "language": "japanese", "issuer": "SJPT위원회", "scoreType": "grade", "grades": ["LV1", "LV2", "LV3", "LV4", "LV5", "LV6", "LV7", "LV8", "LV9"], "scoreExample": "LV7", "validYears": 2, "category": "일본어", "popularity": 15 },
+  { "name": "J.TEST (실용일본어검정)", "language": "japanese", "issuer": "일본어검정협회", "scoreType": "grade", "grades": ["A", "B", "C", "D", "E", "F"], "scoreExample": "A", "validYears": null, "category": "일본어", "popularity": 10 },
+  { "name": "FLEX 일본어", "language": "japanese", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "800", "validYears": 2, "category": "일본어", "popularity": 8 },
+
+  { "name": "HSK", "language": "chinese", "issuer": "중국국가한판", "scoreType": "grade", "grades": ["1급", "2급", "3급", "4급", "5급", "6급"], "scoreExample": "5급", "validYears": null, "category": "중국어", "popularity": 90 },
+  { "name": "HSKK (口试)", "language": "chinese", "issuer": "중국국가한판", "scoreType": "grade", "grades": ["초급", "중급", "고급"], "scoreExample": "중급", "validYears": null, "category": "중국어", "popularity": 30 },
+  { "name": "OPIc (중국어)", "language": "chinese", "issuer": "ACTFL", "scoreType": "grade", "grades": ["NL", "NM", "NH", "IL", "IM1", "IM2", "IM3", "IH", "AL", "AM", "AH"], "scoreExample": "IH", "validYears": 2, "category": "중국어", "popularity": 30 },
+  { "name": "BCT (비즈니스 중국어)", "language": "chinese", "issuer": "중국국가한판", "scoreType": "number", "scoreMax": 500, "scoreExample": "350", "validYears": null, "category": "중국어", "popularity": 12 },
+  { "name": "TSC (중국어 회화 능력시험)", "language": "chinese", "issuer": "YBM", "scoreType": "grade", "grades": ["Lv1", "Lv2", "Lv3", "Lv4", "Lv5", "Lv6", "Lv7", "Lv8", "Lv9", "Lv10"], "scoreExample": "Lv6", "validYears": 2, "category": "중국어", "popularity": 25 },
+  { "name": "FLEX 중국어", "language": "chinese", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "800", "validYears": 2, "category": "중국어", "popularity": 8 },
+
+  { "name": "DELE", "language": "spanish", "issuer": "Instituto Cervantes", "scoreType": "grade", "grades": ["A1", "A2", "B1", "B2", "C1", "C2"], "scoreExample": "B2", "validYears": null, "category": "스페인어", "popularity": 20 },
+  { "name": "OPIc (스페인어)", "language": "spanish", "issuer": "ACTFL", "scoreType": "grade", "grades": ["NL", "NM", "NH", "IL", "IM1", "IM2", "IM3", "IH", "AL", "AM", "AH"], "scoreExample": "IH", "validYears": 2, "category": "스페인어", "popularity": 12 },
+  { "name": "FLEX 스페인어", "language": "spanish", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "스페인어", "popularity": 6 },
+
+  { "name": "DELF / DALF", "language": "french", "issuer": "France Éducation International", "scoreType": "grade", "grades": ["A1 (DELF)", "A2 (DELF)", "B1 (DELF)", "B2 (DELF)", "C1 (DALF)", "C2 (DALF)"], "scoreExample": "B2 (DELF)", "validYears": null, "category": "프랑스어", "popularity": 15 },
+  { "name": "TEF", "language": "french", "issuer": "Chambre de commerce et d'industrie de Paris", "scoreType": "number", "scoreMax": 900, "scoreExample": "600", "validYears": 2, "category": "프랑스어", "popularity": 8 },
+  { "name": "OPIc (프랑스어)", "language": "french", "issuer": "ACTFL", "scoreType": "grade", "grades": ["NL", "NM", "NH", "IL", "IM1", "IM2", "IM3", "IH", "AL", "AM", "AH"], "scoreExample": "IH", "validYears": 2, "category": "프랑스어", "popularity": 8 },
+  { "name": "FLEX 프랑스어", "language": "french", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "프랑스어", "popularity": 6 },
+
+  { "name": "Goethe-Zertifikat", "language": "german", "issuer": "Goethe-Institut", "scoreType": "grade", "grades": ["A1", "A2", "B1", "B2", "C1", "C2"], "scoreExample": "B2", "validYears": null, "category": "독일어", "popularity": 18 },
+  { "name": "TestDaF", "language": "german", "issuer": "TestDaF-Institut", "scoreType": "grade", "grades": ["TDN 3", "TDN 4", "TDN 5"], "scoreExample": "TDN 4", "validYears": null, "category": "독일어", "popularity": 10 },
+  { "name": "OPIc (독일어)", "language": "german", "issuer": "ACTFL", "scoreType": "grade", "grades": ["NL", "NM", "NH", "IL", "IM1", "IM2", "IM3", "IH", "AL", "AM", "AH"], "scoreExample": "IH", "validYears": 2, "category": "독일어", "popularity": 8 },
+  { "name": "FLEX 독일어", "language": "german", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "독일어", "popularity": 5 },
+
+  { "name": "TORFL (러시아어)", "language": "russian", "issuer": "Pushkin State Institute", "scoreType": "grade", "grades": ["1단계", "2단계", "3단계", "4단계"], "scoreExample": "2단계", "validYears": null, "category": "러시아어", "popularity": 10 },
+  { "name": "OPIc (러시아어)", "language": "russian", "issuer": "ACTFL", "scoreType": "grade", "grades": ["NL", "NM", "NH", "IL", "IM1", "IM2", "IM3", "IH", "AL", "AM", "AH"], "scoreExample": "IH", "validYears": 2, "category": "러시아어", "popularity": 6 },
+  { "name": "FLEX 러시아어", "language": "russian", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "러시아어", "popularity": 4 },
+
+  { "name": "TOPIK (한국어 · 외국인용)", "language": "korean", "issuer": "국립국제교육원", "scoreType": "grade", "grades": ["1급", "2급", "3급", "4급", "5급", "6급"], "scoreExample": "6급", "validYears": 2, "category": "한국어 (외국인용)", "popularity": 25 },
+
+  { "name": "FLEX 아랍어", "language": "arabic", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "아랍어", "popularity": 5 },
+  { "name": "FLEX 베트남어", "language": "vietnamese", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "베트남어", "popularity": 6 },
+  { "name": "FLEX 태국어", "language": "thai", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "태국어", "popularity": 3 },
+  { "name": "FLEX 이탈리아어", "language": "italian", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "이탈리아어", "popularity": 3 },
+  { "name": "FLEX 포르투갈어", "language": "portuguese", "issuer": "한국외국어대학교", "scoreType": "number", "scoreMax": 1000, "scoreExample": "700", "validYears": 2, "category": "포르투갈어", "popularity": 3 }
+]
