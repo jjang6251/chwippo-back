@@ -1,15 +1,35 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { Application } from '../applications/application.entity';
+import { ApplicationCoverletter } from '../applications/application-coverletter.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
+
+/**
+ * 캘린더 UX 재구성 — Hero CTA 라벨/링크 산출용 next_action enum.
+ *
+ * 프론트 매핑:
+ * - writing_coverletter → "자소서 이어 쓰기" → /board/:id/coverletter
+ * - start_coverletter   → "자소서 시작하기" → /board/:id/coverletter
+ * - review_company      → "회사 조사 확인" → /board/:id#company-research
+ * - confirm_submit      → "최종 검토" → /board/:id
+ * - no_action           → "카드 열기" → /board/:id (default fallback)
+ */
+export type NextAction =
+  | 'writing_coverletter'
+  | 'start_coverletter'
+  | 'review_company'
+  | 'confirm_submit'
+  | 'no_action';
 
 @Injectable()
 export class DashboardService {
   constructor(
     @InjectRepository(Application)
     private readonly appRepo: Repository<Application>,
+    @InjectRepository(ApplicationCoverletter)
+    private readonly coverletterRepo: Repository<ApplicationCoverletter>,
     @InjectRepository(ApplicationStep)
     private readonly stepRepo: Repository<ApplicationStep>,
     @InjectRepository(ExamSchedule)
@@ -94,6 +114,44 @@ export class DashboardService {
 
     const todayMs = new Date(today).getTime();
 
+    // 캘린더 UX 재구성 — step 대상 application 의 자소서 상태 batch 조회 (Hero CTA 산출용)
+    const applicationIds = Array.from(
+      new Set(steps.map((s) => s.applicationId)),
+    );
+    const [coverletters, appsMeta] = await Promise.all([
+      applicationIds.length > 0
+        ? this.coverletterRepo.find({
+            where: { applicationId: In(applicationIds) },
+            select: {
+              id: true,
+              applicationId: true,
+              answer: true,
+            },
+          })
+        : Promise.resolve([]),
+      applicationIds.length > 0
+        ? this.appRepo.find({
+            where: { id: In(applicationIds) },
+            select: {
+              id: true,
+              coverletterResearchOutdatedAt: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    // application 별 coverletter 그룹핑 + outdated 매핑
+    const coverlettersByApp = new Map<string, ApplicationCoverletter[]>();
+    for (const c of coverletters) {
+      const arr = coverlettersByApp.get(c.applicationId) ?? [];
+      arr.push(c);
+      coverlettersByApp.set(c.applicationId, arr);
+    }
+    const outdatedByApp = new Map<string, boolean>();
+    for (const a of appsMeta) {
+      outdatedByApp.set(a.id, a.coverletterResearchOutdatedAt !== null);
+    }
+
     const items: {
       type: 'step' | 'exam';
       applicationId?: string;
@@ -105,6 +163,8 @@ export class DashboardService {
       scheduledTime?: string;
       dday: number;
       pinnedContent?: string | null;
+      nextAction?: NextAction;
+      progress?: { current: number; total: number };
     }[] = [];
 
     for (const step of steps) {
@@ -116,6 +176,12 @@ export class DashboardService {
       const dday = Math.round((dateMs - todayMs) / 86400000);
       const hours = kstDate.getUTCHours().toString().padStart(2, '0');
       const minutes = kstDate.getUTCMinutes().toString().padStart(2, '0');
+      const { nextAction, progress } = computeNextAction(
+        step.name,
+        coverlettersByApp.get(step.applicationId) ?? [],
+        outdatedByApp.get(step.applicationId) ?? false,
+      );
+
       items.push({
         type: 'step',
         applicationId: step.applicationId,
@@ -130,6 +196,8 @@ export class DashboardService {
         scheduledTime: `${hours}:${minutes}`,
         dday,
         pinnedContent: step.pinnedContent ?? null,
+        nextAction,
+        progress,
       });
     }
 
@@ -147,6 +215,7 @@ export class DashboardService {
         date: dateStr,
         scheduledTime: `${hours}:${minutes}`,
         dday,
+        nextAction: 'no_action',
       });
     }
 
@@ -188,4 +257,40 @@ export class DashboardService {
         '',
     }));
   }
+}
+
+/**
+ * 캘린더 UX 재구성 — step 별 next_action + progress 산출.
+ *
+ * 자소서 관련 step (서류 계열) 만 4 enum 로 분기, 그 외는 no_action fallback.
+ * - coverletter 문항 0개 or 비-서류 step → no_action
+ * - 문항 있고 answer 0 개 → start_coverletter
+ * - 일부 answer 있음 → writing_coverletter
+ * - 모두 answer 있음 && research outdated → review_company
+ * - 모두 answer 있음 && research 최신 → confirm_submit
+ *
+ * answer 완료 판정: trim() 후 length > 0
+ */
+export function computeNextAction(
+  stepName: string,
+  coverletters: ApplicationCoverletter[],
+  researchOutdated: boolean,
+): { nextAction: NextAction; progress?: { current: number; total: number } } {
+  // 서류 계열이 아니거나 문항 자체가 없으면 fallback
+  const isDocStep = /서류|공채|지원|자소서/i.test(stepName ?? '');
+  if (!isDocStep || coverletters.length === 0) {
+    return { nextAction: 'no_action' };
+  }
+
+  const total = coverletters.length;
+  const completed = coverletters.filter(
+    (c) => c.answer !== null && c.answer.trim().length > 0,
+  ).length;
+  const progress = { current: completed, total };
+
+  if (completed === 0) return { nextAction: 'start_coverletter', progress };
+  if (completed < total) return { nextAction: 'writing_coverletter', progress };
+  // completed === total
+  if (researchOutdated) return { nextAction: 'review_company', progress };
+  return { nextAction: 'confirm_submit', progress };
 }

@@ -65,6 +65,7 @@ describe('LlmService', () => {
     signupJobCategories: null,
     signupOtherText: null,
     sampleCardsDismissedAt: null,
+    calendarHomeIntroDismissedAt: null,
     tier: 'free',
     ...overrides,
   });

@@ -167,6 +167,20 @@ export class UsersService {
     });
   }
 
+  /**
+   * 캘린더 UX 재구성 — 안내 배너 dismiss (멱등).
+   * 배너 = "이제 캘린더가 홈이에요. 회고는 대시보드에서 볼 수 있어요."
+   * 첫 방문 시 노출 · dismiss timestamp 저장 후 재노출 X.
+   */
+  async dismissCalendarHomeIntro(userId: string): Promise<void> {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    if (user.calendarHomeIntroDismissedAt) return; // 멱등
+    await this.repo.update(userId, {
+      calendarHomeIntroDismissedAt: new Date(),
+    });
+  }
+
   async updateNickname(userId: string, nickname: string): Promise<User> {
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');

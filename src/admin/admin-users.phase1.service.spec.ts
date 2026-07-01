@@ -56,6 +56,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     signupJobCategories: null,
     signupOtherText: null,
     sampleCardsDismissedAt: null,
+    calendarHomeIntroDismissedAt: null,
     tier: 'free',
     ...overrides,
   };

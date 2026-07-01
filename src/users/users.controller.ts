@@ -51,6 +51,13 @@ export class UsersController {
     await this.usersService.dismissAllSampleCards(user.id);
   }
 
+  /** 캘린더 UX 재구성 — 홈=/calendar redirect 안내 배너 dismiss (멱등) */
+  @Post('me/dismiss-calendar-home-intro')
+  @HttpCode(204)
+  async dismissCalendarHomeIntro(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.usersService.dismissCalendarHomeIntro(user.id);
+  }
+
   @Post('me/ai-consent')
   @HttpCode(204)
   async agreeAiConsent(

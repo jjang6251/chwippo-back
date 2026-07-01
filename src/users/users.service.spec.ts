@@ -928,4 +928,43 @@ describe('UsersService', () => {
       expect(manager.createQueryBuilder).toHaveBeenCalledTimes(1);
     });
   });
+
+  // ── 캘린더 UX 재구성: dismissCalendarHomeIntro ─────────────
+  describe('dismissCalendarHomeIntro', () => {
+    it('정상 → users.calendar_home_intro_dismissed_at 에 현재 시각 저장', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ calendarHomeIntroDismissedAt: null }),
+      );
+
+      await service.dismissCalendarHomeIntro('user-uuid-1');
+
+      expect(userRepo.update).toHaveBeenCalledWith(
+        'user-uuid-1',
+        expect.objectContaining({
+          calendarHomeIntroDismissedAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('이미 dismiss 됨 → no-op (update 호출 X, 멱등)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({
+          calendarHomeIntroDismissedAt: new Date('2026-07-02'),
+        }),
+      );
+
+      await service.dismissCalendarHomeIntro('user-uuid-1');
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 user → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.dismissCalendarHomeIntro('nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -33,6 +33,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     signupJobCategories: null,
     signupOtherText: null,
     sampleCardsDismissedAt: null,
+    calendarHomeIntroDismissedAt: null,
     tier: 'free',
     ...overrides,
   };
@@ -384,6 +385,7 @@ describe('AuthController', () => {
       signupJobCategories: null,
       signupOtherText: null,
       sampleCardsDismissedAt: null,
+      calendarHomeIntroDismissedAt: null,
     };
 
     it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
@@ -425,6 +427,7 @@ describe('AuthController', () => {
           signupJobCategories: null,
           signupOtherText: null,
           sampleCardsDismissedAt: null,
+          calendarHomeIntroDismissedAt: null,
         },
       });
     });
