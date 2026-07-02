@@ -11,6 +11,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
+import { KakaoNativeService } from './kakao-native.service';
 import { User } from '../users/user.entity';
 
 const FRONTEND_URL = 'http://localhost:5173';
@@ -89,6 +90,10 @@ const mockAppleS2SService = {
   verifyAndParse: jest.fn(),
 };
 
+const mockKakaoNativeService = {
+  verifyAndFetchUser: jest.fn(),
+};
+
 const mockConfigService = {
   get: jest.fn().mockImplementation((key: string, defaultVal?: string) => {
     if (key === 'FRONTEND_URL') return FRONTEND_URL;
@@ -114,6 +119,7 @@ describe('AuthController', () => {
         { provide: AuthService, useValue: mockAuthService },
         { provide: AppleAuthService, useValue: mockAppleAuthService },
         { provide: AppleS2SService, useValue: mockAppleS2SService },
+        { provide: KakaoNativeService, useValue: mockKakaoNativeService },
         { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
@@ -630,6 +636,116 @@ describe('AuthController', () => {
       expect(result.user).not.toHaveProperty('refreshToken');
       expect(result.user).not.toHaveProperty('kakaoId');
       expect(result.user).not.toHaveProperty('appleSub');
+    });
+  });
+
+  // ─── /auth/kakao/native (W2 · 카카오 네이티브 SDK) ─────
+  describe('kakaoNativeLogin() — Kakao 네이티브 SDK', () => {
+    const kakaoUser = {
+      kakaoId: '123456789',
+      nickname: '홍길동',
+      email: 'foo@example.com',
+    };
+
+    beforeEach(() => {
+      mockKakaoNativeService.verifyAndFetchUser.mockResolvedValue(kakaoUser);
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user: makeUser({
+          id: 'u-kakao-1',
+          kakaoId: '123456789',
+          nickname: '홍길동',
+        }),
+        isNew: true,
+      });
+      mockAuthService.issueTokens.mockResolvedValue({
+        accessToken: 'access.token',
+        refreshToken: 'refresh.token',
+      });
+    });
+
+    it('정상 → accessToken · isNew · user 반환 · refresh_token cookie 설정', async () => {
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.kakaoNativeLogin(
+        { accessToken: 'kakao-access-token' },
+        res,
+      );
+
+      expect(mockKakaoNativeService.verifyAndFetchUser).toHaveBeenCalledWith(
+        'kakao-access-token',
+      );
+      expect(mockAuthService.findOrCreateKakaoUser).toHaveBeenCalledWith(
+        kakaoUser,
+      );
+      expect(result.accessToken).toBe('access.token');
+      expect(result.isNew).toBe(true);
+      expect(result.user.id).toBe('u-kakao-1');
+
+      // refresh_token 은 cookie 로만
+      expect(result).not.toHaveProperty('refreshToken');
+      const cookieCall = (res.cookie as jest.Mock).mock.calls[0] as [
+        string,
+        string,
+        Record<string, unknown>,
+      ];
+      expect(cookieCall[0]).toBe('refresh_token');
+      expect(cookieCall[2]).toMatchObject({ httpOnly: true });
+    });
+
+    it('기존 사용자 (isNew=false) → isNew:false 반환', async () => {
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user: makeUser({ kakaoId: '123456789' }),
+        isNew: false,
+      });
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.kakaoNativeLogin(
+        { accessToken: 'valid' },
+        res,
+      );
+
+      expect(result.isNew).toBe(false);
+    });
+
+    it('정지된 계정 → ForbiddenException · 토큰 미발급', async () => {
+      mockAuthService.findOrCreateKakaoUser.mockResolvedValue({
+        user: makeUser({
+          kakaoId: '123456789',
+          suspendedAt: new Date('2026-06-01'),
+        }),
+        isNew: false,
+      });
+      const res = makeRes() as unknown as Response;
+
+      await expect(
+        controller.kakaoNativeLogin({ accessToken: 'valid' }, res),
+      ).rejects.toThrow('정지된 계정입니다.');
+
+      expect(mockAuthService.issueTokens).not.toHaveBeenCalled();
+      expect(res.cookie).not.toHaveBeenCalled();
+    });
+
+    it('verifyAndFetchUser 실패 → 그대로 throw · findOrCreate 미호출', async () => {
+      const err = new Error('카카오 인증 실패');
+      mockKakaoNativeService.verifyAndFetchUser.mockRejectedValue(err);
+      const res = makeRes() as unknown as Response;
+
+      await expect(
+        controller.kakaoNativeLogin({ accessToken: 'bad' }, res),
+      ).rejects.toBe(err);
+      expect(mockAuthService.findOrCreateKakaoUser).not.toHaveBeenCalled();
+    });
+
+    it('응답 user 에 민감 정보 없음 (kakaoId · refreshToken)', async () => {
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.kakaoNativeLogin(
+        { accessToken: 'valid' },
+        res,
+      );
+
+      expect(result.user).not.toHaveProperty('kakaoId');
+      expect(result.user).not.toHaveProperty('refreshToken');
     });
   });
 });
