@@ -15,6 +15,7 @@ import { pickSampleCompanies } from './signup-job-categories.const';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
 import { CURRENT_AI_CONSENT_VERSION } from '../ai/llm.service';
+import { IdentityProviderService } from '../auth/identity-provider.service';
 
 @Injectable()
 export class UsersService {
@@ -23,6 +24,7 @@ export class UsersService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly storageUsage: StorageUsageService,
     private readonly filesService: FilesService,
+    private readonly identityProvider: IdentityProviderService,
   ) {}
 
   async agreeTerms(userId: string): Promise<void> {
@@ -188,16 +190,36 @@ export class UsersService {
     return this.repo.save(user);
   }
 
+  /**
+   * 회원 탈퇴 — Apple Guideline 5.1.1(v) · 카카오 개인정보 처리방침 준수.
+   *
+   * 순서:
+   *   1. 사용자 조회 (없으면 404)
+   *   2. R2 파일 URL 수집 (DB 삭제 후엔 조회 불가하므로 사전 캐싱)
+   *   3. 프로바이더 unlink / revoke (best-effort · 실패해도 로컬 삭제 진행)
+   *      - kakaoId 있음 → Kakao unlink API 호출
+   *      - appleSub 있음 → Apple revoke stub (refresh_token 미저장 · 로그만)
+   *   4. DB hard delete (CASCADE로 자식 테이블 · llm_call_logs 등 모두 삭제)
+   *   5. R2 cascade 정리 (best-effort)
+   *
+   * 프로바이더 액션이 실패해도 로컬 탈퇴는 진행 = 사용자 관점 확실한 탈퇴 보장.
+   * (일시 장애로 탈퇴 자체가 막히면 UX 최악.)
+   */
   async deleteAccount(userId: string): Promise<void> {
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
 
-    // 탈퇴 전 R2에 저장된 파일 URL 수집 (DB 삭제 후엔 조회 불가)
     const fileUrls = await this.storageUsage.collectAllFileUrls(userId);
+
+    if (user.kakaoId) {
+      await this.identityProvider.unlinkKakao(user.kakaoId);
+    }
+    if (user.appleSub) {
+      await this.identityProvider.revokeApple(user.appleSub);
+    }
 
     await this.repo.remove(user);
 
-    // DB 삭제 성공 후 R2 cascade 정리 (best-effort, 실패해도 throw 안 함)
     for (const url of fileUrls) {
       await this.filesService.deleteFile(url);
     }

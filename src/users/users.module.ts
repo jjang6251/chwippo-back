@@ -7,12 +7,14 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { MyinfoModule } from '../myinfo/myinfo.module';
 import { FilesModule } from '../files/files.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Application, ApplicationStep]),
     MyinfoModule,
     FilesModule,
+    AuthModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],
