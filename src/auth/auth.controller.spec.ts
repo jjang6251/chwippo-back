@@ -10,6 +10,7 @@ jest.mock('jose', () => ({
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
+import { AppleS2SService } from './apple-s2s.service';
 import { User } from '../users/user.entity';
 
 const FRONTEND_URL = 'http://localhost:5173';
@@ -83,6 +84,11 @@ const mockAppleAuthService = {
   findOrCreateAppleUser: jest.fn(),
 };
 
+const mockAppleS2SService = {
+  handleNotification: jest.fn(),
+  verifyAndParse: jest.fn(),
+};
+
 const mockConfigService = {
   get: jest.fn().mockImplementation((key: string, defaultVal?: string) => {
     if (key === 'FRONTEND_URL') return FRONTEND_URL;
@@ -107,6 +113,7 @@ describe('AuthController', () => {
       providers: [
         { provide: AuthService, useValue: mockAuthService },
         { provide: AppleAuthService, useValue: mockAppleAuthService },
+        { provide: AppleS2SService, useValue: mockAppleS2SService },
         { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
