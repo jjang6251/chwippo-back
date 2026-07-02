@@ -90,6 +90,7 @@ export class IdentityProviderService {
    *
    * 지금은 로그만 남기고 로컬 삭제만 수행 (Apple 정책 상 로컬 삭제는 문제 없음).
    */
+  // eslint-disable-next-line @typescript-eslint/require-await
   async revokeApple(appleSub: string): Promise<boolean> {
     this.logger.log(
       `revokeApple stub: refresh_token 미저장으로 API 호출 불가 · 로컬 삭제만 (appleSub=${appleSub.slice(0, 12)}...)`,
