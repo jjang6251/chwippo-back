@@ -140,4 +140,17 @@ export class User {
     nullable: true,
   })
   sampleCardsDismissedAt: Date | null;
+
+  /**
+   * 캘린더 UX 재구성 — 홈 = /calendar redirect 전환.
+   *
+   * 첫 방문 시 캘린더 상단 "이제 캘린더가 홈이에요" 안내 배너 노출.
+   * dismiss 하면 timestamp 저장 → 이후 재노출 X.
+   */
+  @Column({
+    name: 'calendar_home_intro_dismissed_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  calendarHomeIntroDismissedAt: Date | null;
 }

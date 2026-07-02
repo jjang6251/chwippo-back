@@ -19,6 +19,12 @@ export interface CalendarEvent {
   stepName: string | null;
   location: string | null;
   content: string | null;
+  /**
+   * 캘린더 UX 재구성 — step 타입 전용.
+   * Application.isStarred (즐겨찾기) 값. 아젠다 즐겨찾기 필터에서 사용.
+   * exam · note 타입은 항상 undefined.
+   */
+  isStarred?: boolean;
 }
 
 function hourSlotToTime(slot: number | null): string | null {
@@ -66,6 +72,7 @@ export class CalendarService {
         'a.id AS application_id',
         's.id AS step_id',
         'a.company_name AS company_name',
+        'a.is_starred AS is_starred',
         's.name AS step_name',
         's.location AS location',
         "TO_CHAR(s.scheduled_date AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS date",
@@ -82,6 +89,7 @@ export class CalendarService {
         application_id: string;
         step_id: string;
         company_name: string;
+        is_starred: boolean;
         step_name: string;
         location: string | null;
         date: string;
@@ -133,6 +141,7 @@ export class CalendarService {
       stepName: i.step_name,
       location: i.location,
       content: null,
+      isStarred: i.is_starred,
     }));
 
     const examEvents: CalendarEvent[] = exams.map((e) => ({

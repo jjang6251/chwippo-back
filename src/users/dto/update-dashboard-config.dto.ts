@@ -8,15 +8,18 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+// 회고=성장 재정의 후 현재 유효 섹션. 프론트가 PATCH 로 보낼 수 있는 값.
+// deprecated 섹션 (dday·todos·today_schedule·top_applications·calendar_mini·goals·cover_letter_quick)
+// 은 GET 응답에서 자동 필터링되므로 PATCH 로 다시 들어올 일 없음.
 const VALID_SECTION_IDS = [
   'stats',
-  'dday',
-  'todos',
-  'today_schedule',
-  'top_applications',
-  'goals',
-  'calendar_mini',
-  'cover_letter_quick',
+  'milestones',
+  'monthly_comparison',
+  'insights',
+  'activity_streak',
+  'status_doughnut',
+  'personal_funnel',
+  'interview_review',
 ] as const;
 
 export class DashboardSectionDto {

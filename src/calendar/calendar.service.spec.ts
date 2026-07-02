@@ -172,6 +172,69 @@ describe('CalendarService', () => {
       expect(result[0].location).toBeNull();
     });
 
+    it('캘린더 UX 재구성 — step 응답에 isStarred 포함 (true 카드)', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      stepRepo.createQueryBuilder.mockReturnValue(
+        makeQb([
+          {
+            application_id: 'app-1',
+            company_name: '카카오',
+            is_starred: true,
+            step_name: '서류 마감',
+            location: null,
+            date: '2026-05-02',
+            time: '23:59',
+          },
+        ]) as any,
+      );
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result[0].isStarred).toBe(true);
+    });
+
+    it('캘린더 UX 재구성 — is_starred=false 도 정확히 응답에 반영', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      stepRepo.createQueryBuilder.mockReturnValue(
+        makeQb([
+          {
+            application_id: 'app-2',
+            company_name: '네이버',
+            is_starred: false,
+            step_name: '1차 면접',
+            location: '강남',
+            date: '2026-05-10',
+            time: '14:00',
+          },
+        ]) as any,
+      );
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result[0].isStarred).toBe(false);
+    });
+
+    it('캘린더 UX 재구성 — exam 이벤트는 isStarred undefined', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      stepRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      examRepo.createQueryBuilder = jest.fn().mockReturnValue(
+        makeQb([
+          {
+            id: 'exam-1',
+            name: 'TOEIC',
+            location: '종로',
+            date: '2026-05-09',
+            time: '09:00',
+          },
+        ]) as any,
+      );
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result[0].type).toBe('exam');
+      expect(result[0].isStarred).toBeUndefined();
+    });
+
     it('같은 날짜에 여러 스텝이 있으면 모두 반환', async () => {
       appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
       stepRepo.createQueryBuilder.mockReturnValue(

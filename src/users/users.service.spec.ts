@@ -228,7 +228,7 @@ describe('UsersService', () => {
 
   // ── getDashboardConfig (LRR P2T1 PR O H-4) ────────────
   describe('getDashboardConfig', () => {
-    it('DB dashboardConfig null → DEFAULT_SECTIONS (stats·dday·todos + W3 activity_streak·status_doughnut) 반환', async () => {
+    it('DB dashboardConfig null → 회고=성장 DEFAULT_SECTIONS 반환 (stats · milestones · monthly_comparison · insights · streak · doughnut · funnel · interview_review)', async () => {
       const user = makeUser({ dashboardConfig: null });
       userRepo.findOneBy.mockResolvedValue(user);
 
@@ -237,18 +237,22 @@ describe('UsersService', () => {
       expect(userRepo.findOneBy).toHaveBeenCalledWith({ id: 'user-uuid-1' });
       expect(result.sections).toEqual([
         { id: 'stats', visible: true },
-        { id: 'dday', visible: true },
-        { id: 'todos', visible: true },
+        { id: 'milestones', visible: true },
+        { id: 'monthly_comparison', visible: true },
+        { id: 'insights', visible: true },
         { id: 'activity_streak', visible: true },
         { id: 'status_doughnut', visible: true },
+        { id: 'personal_funnel', visible: true },
+        { id: 'interview_review', visible: true },
       ]);
     });
 
-    it('W3 lazy merge — 기존 config 에 신규 섹션 (activity_streak·status_doughnut) 자동 append (visible:true)', async () => {
+    it('lazy merge — 기존 config 에 신규 성장 섹션 (milestones·monthly·insights·funnel) 자동 append', async () => {
       const custom = {
         sections: [
           { id: 'stats', visible: true },
-          { id: 'cover_letter_quick', visible: true },
+          { id: 'activity_streak', visible: true },
+          { id: 'status_doughnut', visible: true },
         ],
       };
       const user = makeUser({ dashboardConfig: custom });
@@ -257,19 +261,61 @@ describe('UsersService', () => {
       const result = await service.getDashboardConfig('user-uuid-1');
       expect(result.sections).toEqual([
         { id: 'stats', visible: true },
-        { id: 'cover_letter_quick', visible: true },
-        // W3 신규 2개 lazy merge
         { id: 'activity_streak', visible: true },
         { id: 'status_doughnut', visible: true },
+        // lazy merge — DEFAULT_SECTIONS 순서로 append (milestones · monthly · insights · funnel · interview_review)
+        { id: 'milestones', visible: true },
+        { id: 'monthly_comparison', visible: true },
+        { id: 'insights', visible: true },
+        { id: 'personal_funnel', visible: true },
+        { id: 'interview_review', visible: true },
       ]);
     });
 
-    it('기존 config 에 W3 신규 섹션 이미 있음 → 그대로 반환 (중복 append X)', async () => {
+    it('deprecated 섹션 자동 필터링 — 캘린더 이관 5개 (dday·todos·today_schedule·top_applications·calendar_mini) + 성장 재정의 제거 2개 (cover_letter_quick·goals)', async () => {
       const custom = {
         sections: [
           { id: 'stats', visible: true },
-          { id: 'activity_streak', visible: false }, // 사용자가 toggle off 한 상태
+          { id: 'dday', visible: true }, // 필터 (캘린더 이관)
+          { id: 'activity_streak', visible: true },
+          { id: 'todos', visible: false }, // 필터
           { id: 'status_doughnut', visible: true },
+          { id: 'today_schedule', visible: true }, // 필터
+          { id: 'top_applications', visible: true }, // 필터
+          { id: 'calendar_mini', visible: true }, // 필터
+          { id: 'cover_letter_quick', visible: true }, // 필터 (성장 재정의)
+          { id: 'goals', visible: true }, // 필터 (성장 재정의)
+          { id: 'interview_review', visible: true },
+        ],
+      };
+      const user = makeUser({ dashboardConfig: custom });
+      userRepo.findOneBy.mockResolvedValue(user);
+
+      const result = await service.getDashboardConfig('user-uuid-1');
+      expect(result.sections.map((s) => s.id)).toEqual([
+        'stats',
+        'activity_streak',
+        'status_doughnut',
+        'interview_review',
+        // lazy merge 신규 섹션 (DEFAULT 순서)
+        'milestones',
+        'monthly_comparison',
+        'insights',
+        'personal_funnel',
+      ]);
+    });
+
+    it('기존 config 에 성장 섹션 이미 있음 → 그대로 반환 (중복 append X)', async () => {
+      const custom = {
+        sections: [
+          { id: 'stats', visible: true },
+          { id: 'milestones', visible: true },
+          { id: 'monthly_comparison', visible: true },
+          { id: 'insights', visible: false }, // 사용자가 toggle off
+          { id: 'activity_streak', visible: false },
+          { id: 'status_doughnut', visible: true },
+          { id: 'personal_funnel', visible: false },
+          { id: 'interview_review', visible: true },
         ],
       };
       const user = makeUser({ dashboardConfig: custom });
@@ -286,25 +332,28 @@ describe('UsersService', () => {
       );
     });
 
-    it('orphan section ID 포함된 옛 DB row → 보존 (필터는 PATCH/프론트) + W3 lazy merge append', async () => {
+    it('orphan section ID 포함된 옛 DB row → 보존 (필터는 PATCH/프론트) + 성장 lazy merge append', async () => {
       const orphan = {
         sections: [
           { id: 'stats', visible: true },
-          { id: 'myinfo_progress', visible: true }, // ← deprecated 유지 (사용자 결정 존중)
-          { id: 'dday', visible: true },
+          { id: 'myinfo_progress', visible: true }, // ← deprecated 아닌 orphan (사용자 결정 존중)
         ],
       };
       const user = makeUser({ dashboardConfig: orphan });
       userRepo.findOneBy.mockResolvedValue(user);
 
       const result = await service.getDashboardConfig('user-uuid-1');
+      // lazy merge 순서 = DEFAULT_SECTIONS 순서 (existing 뒤에 append)
       expect(result.sections).toEqual([
         { id: 'stats', visible: true },
         { id: 'myinfo_progress', visible: true },
-        { id: 'dday', visible: true },
-        // W3 lazy merge — 신규 2개 자동 append (orphan 보존과 별개)
+        { id: 'milestones', visible: true },
+        { id: 'monthly_comparison', visible: true },
+        { id: 'insights', visible: true },
         { id: 'activity_streak', visible: true },
         { id: 'status_doughnut', visible: true },
+        { id: 'personal_funnel', visible: true },
+        { id: 'interview_review', visible: true },
       ]);
     });
   });
@@ -926,6 +975,45 @@ describe('UsersService', () => {
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
       expect(manager.update).toHaveBeenCalledTimes(1);
       expect(manager.createQueryBuilder).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── 캘린더 UX 재구성: dismissCalendarHomeIntro ─────────────
+  describe('dismissCalendarHomeIntro', () => {
+    it('정상 → users.calendar_home_intro_dismissed_at 에 현재 시각 저장', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ calendarHomeIntroDismissedAt: null }),
+      );
+
+      await service.dismissCalendarHomeIntro('user-uuid-1');
+
+      expect(userRepo.update).toHaveBeenCalledWith(
+        'user-uuid-1',
+        expect.objectContaining({
+          calendarHomeIntroDismissedAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('이미 dismiss 됨 → no-op (update 호출 X, 멱등)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({
+          calendarHomeIntroDismissedAt: new Date('2026-07-02'),
+        }),
+      );
+
+      await service.dismissCalendarHomeIntro('user-uuid-1');
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 user → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.dismissCalendarHomeIntro('nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+      expect(userRepo.update).not.toHaveBeenCalled();
     });
   });
 });

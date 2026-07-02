@@ -2,10 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
-import { DashboardService } from './dashboard.service';
+import { DashboardService, computeNextAction } from './dashboard.service';
 import { Application } from '../applications/application.entity';
+import { ApplicationCoverletter } from '../applications/application-coverletter.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
+import { CompaniesService } from '../companies/companies.service';
 
 /** QueryBuilder mock 생성 헬퍼 */
 const makeQb = (returnValue: any) => ({
@@ -21,6 +23,7 @@ const makeQb = (returnValue: any) => ({
 describe('DashboardService', () => {
   let service: DashboardService;
   let appRepo: jest.Mocked<Repository<Application>>;
+  let coverletterRepo: jest.Mocked<Repository<ApplicationCoverletter>>;
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
   let examRepo: jest.Mocked<Repository<ExamSchedule>>;
 
@@ -31,23 +34,37 @@ describe('DashboardService', () => {
     // 시험 일정 조회는 기본으로 빈 배열 — 개별 테스트에서 override 가능
     (mockExamRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb([]));
 
+    const mockAppRepo = mock<Repository<Application>>();
+    mockAppRepo.find.mockResolvedValue([]);
+    const mockCoverletterRepo = mock<Repository<ApplicationCoverletter>>();
+    mockCoverletterRepo.find.mockResolvedValue([]);
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DashboardService,
         {
           provide: getRepositoryToken(Application),
-          useValue: mock<Repository<Application>>(),
+          useValue: mockAppRepo,
+        },
+        {
+          provide: getRepositoryToken(ApplicationCoverletter),
+          useValue: mockCoverletterRepo,
         },
         {
           provide: getRepositoryToken(ApplicationStep),
           useValue: mock<Repository<ApplicationStep>>(),
         },
         { provide: getRepositoryToken(ExamSchedule), useValue: mockExamRepo },
+        {
+          provide: CompaniesService,
+          useValue: { getDomainByName: jest.fn().mockReturnValue(undefined) },
+        },
       ],
     }).compile();
 
     service = module.get<DashboardService>(DashboardService);
     appRepo = module.get(getRepositoryToken(Application));
+    coverletterRepo = module.get(getRepositoryToken(ApplicationCoverletter));
     stepRepo = module.get(getRepositoryToken(ApplicationStep));
     examRepo = module.get(getRepositoryToken(ExamSchedule));
   });
@@ -328,6 +345,159 @@ describe('DashboardService', () => {
       const result = await service.getYesterdayInterviews(USER_ID);
 
       expect(result).toHaveLength(2);
+    });
+  });
+
+  // ── 캘린더 UX 재구성: computeNextAction helper (Hero CTA 산출) ─────────────
+  describe('computeNextAction', () => {
+    const makeCoverletter = (answer: string | null): ApplicationCoverletter =>
+      ({
+        id: 'c-' + Math.random().toString(36).slice(2, 6),
+        applicationId: 'app-1',
+        question: '지원 동기',
+        answer,
+      }) as ApplicationCoverletter;
+
+    it('서류 계열 step 아님 → no_action, progress undefined', () => {
+      const result = computeNextAction(
+        '1차 면접',
+        [makeCoverletter('답변')],
+        false,
+      );
+      expect(result.nextAction).toBe('no_action');
+      expect(result.progress).toBeUndefined();
+    });
+
+    it('서류 step 이지만 자소서 문항 0개 → no_action', () => {
+      const result = computeNextAction('서류 마감', [], false);
+      expect(result.nextAction).toBe('no_action');
+      expect(result.progress).toBeUndefined();
+    });
+
+    it('answer 하나도 없음 → start_coverletter, progress { current:0, total:3 }', () => {
+      const result = computeNextAction(
+        '서류 마감',
+        [makeCoverletter(null), makeCoverletter(''), makeCoverletter('   ')],
+        false,
+      );
+      expect(result.nextAction).toBe('start_coverletter');
+      expect(result.progress).toEqual({ current: 0, total: 3 });
+    });
+
+    it('일부만 answer → writing_coverletter, progress current<total', () => {
+      const result = computeNextAction(
+        '서류 마감',
+        [
+          makeCoverletter('답변 있음'),
+          makeCoverletter('두 번째 답변'),
+          makeCoverletter(null),
+        ],
+        false,
+      );
+      expect(result.nextAction).toBe('writing_coverletter');
+      expect(result.progress).toEqual({ current: 2, total: 3 });
+    });
+
+    it('모두 answer + research outdated → review_company', () => {
+      const result = computeNextAction(
+        '서류 마감',
+        [makeCoverletter('a'), makeCoverletter('b')],
+        true,
+      );
+      expect(result.nextAction).toBe('review_company');
+      expect(result.progress).toEqual({ current: 2, total: 2 });
+    });
+
+    it('모두 answer + research 최신 → confirm_submit', () => {
+      const result = computeNextAction(
+        '서류 마감',
+        [makeCoverletter('a'), makeCoverletter('b')],
+        false,
+      );
+      expect(result.nextAction).toBe('confirm_submit');
+      expect(result.progress).toEqual({ current: 2, total: 2 });
+    });
+
+    it('공채·자소서·지원 키워드 step 도 서류 계열로 인식', () => {
+      const testCases = ['공채 마감', '자소서 마감', '지원서 제출'];
+      for (const stepName of testCases) {
+        const result = computeNextAction(
+          stepName,
+          [makeCoverletter(null)],
+          false,
+        );
+        expect(result.nextAction).toBe('start_coverletter');
+      }
+    });
+  });
+
+  // ── 캘린더 UX 재구성: getDdayList 응답에 nextAction/progress 포함 ─────────────
+  describe('getDdayList 응답 확장', () => {
+    const today = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Asia/Seoul',
+    });
+    const todayMs = new Date(today).getTime();
+
+    const makeStep = (
+      id: string,
+      name: string,
+      appId: string,
+      daysFromNow: number,
+    ): ApplicationStep => {
+      const date = new Date(todayMs + daysFromNow * 86400000);
+      return {
+        id,
+        name,
+        applicationId: appId,
+        scheduledDate: date,
+        application: { id: appId, companyName: '카카오' } as Application,
+      } as ApplicationStep;
+    };
+
+    it('step 응답에 nextAction 포함 (자소서 있음 → writing_coverletter)', async () => {
+      const steps = [makeStep('s1', '서류 마감', 'app-1', 2)];
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb(steps));
+      coverletterRepo.find.mockResolvedValue([
+        { applicationId: 'app-1', answer: '답변' },
+        { applicationId: 'app-1', answer: null },
+      ] as ApplicationCoverletter[]);
+      appRepo.find.mockResolvedValue([
+        { id: 'app-1', coverletterResearchOutdatedAt: null },
+      ] as Application[]);
+
+      const result = await service.getDdayList(USER_ID);
+
+      expect(result[0].nextAction).toBe('writing_coverletter');
+      expect(result[0].progress).toEqual({ current: 1, total: 2 });
+    });
+
+    it('exam 응답은 nextAction=no_action, progress 없음', async () => {
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([]));
+      const examDate = new Date(todayMs + 5 * 86400000);
+      const exams = [
+        {
+          id: 'exam-1',
+          name: 'TOEIC',
+          exam_date: examDate,
+        },
+      ];
+      (examRepo.createQueryBuilder as jest.Mock).mockReturnValue(makeQb(exams));
+
+      const result = await service.getDdayList(USER_ID);
+
+      expect(result[0].type).toBe('exam');
+      expect(result[0].nextAction).toBe('no_action');
+      expect(result[0].progress).toBeUndefined();
+    });
+
+    it('자소서 관련 조회는 applicationIds 비어있으면 skip (성능)', async () => {
+      stepRepo.createQueryBuilder = jest.fn().mockReturnValue(makeQb([]));
+
+      await service.getDdayList(USER_ID);
+
+      // application 이 하나도 없으므로 coverletter/app find 호출 X
+      expect(coverletterRepo.find).not.toHaveBeenCalled();
+      expect(appRepo.find).not.toHaveBeenCalled();
     });
   });
 });

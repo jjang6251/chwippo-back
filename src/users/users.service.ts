@@ -167,6 +167,20 @@ export class UsersService {
     });
   }
 
+  /**
+   * 캘린더 UX 재구성 — 안내 배너 dismiss (멱등).
+   * 배너 = "이제 캘린더가 홈이에요. 회고는 대시보드에서 볼 수 있어요."
+   * 첫 방문 시 노출 · dismiss timestamp 저장 후 재노출 X.
+   */
+  async dismissCalendarHomeIntro(userId: string): Promise<void> {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    if (user.calendarHomeIntroDismissedAt) return; // 멱등
+    await this.repo.update(userId, {
+      calendarHomeIntroDismissedAt: new Date(),
+    });
+  }
+
   async updateNickname(userId: string, nickname: string): Promise<User> {
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
@@ -202,22 +216,51 @@ export class UsersService {
 
   private readonly DEFAULT_SECTIONS = [
     { id: 'stats', visible: true },
-    { id: 'dday', visible: true },
-    { id: 'todos', visible: true },
-    // W3 — Dashboard streak + status 도넛 (CEO Q2=A 새 섹션). config 신규 사용자 + 기존 사용자 lazy merge 양쪽 노출
+    // 회고=성장 페이지 Phase A — 마일스톤 (항상 표시, sparse 사용자 CTA 역할)
+    { id: 'milestones', visible: true },
+    // 회고=성장 페이지 Phase A — 월별 활동량 비교
+    { id: 'monthly_comparison', visible: true },
+    // 회고=성장 페이지 Phase A — 개인 패턴 인사이트
+    { id: 'insights', visible: true },
+    // W3 — Dashboard streak + status 도넛
     { id: 'activity_streak', visible: true },
     { id: 'status_doughnut', visible: true },
+    // 회고=성장 페이지 Phase A — 개인 funnel
+    { id: 'personal_funnel', visible: true },
+    // 유지: 어제 면접 회고 유도
+    { id: 'interview_review', visible: true },
   ];
 
   /**
-   * W3 lazy merge 대상 — 기존 사용자가 config 저장한 후 도입된 섹션.
+   * lazy merge 대상 — 기존 사용자가 config 저장한 후 도입된 섹션.
    * config 있는 사용자에게도 자동 append (visible:true) 해야 자동 노출됨.
    * 이미 toggle off 한 경우 (visible:false 로 저장) 는 그대로 유지.
    */
   private readonly LAZY_MERGE_SECTION_IDS = [
     'activity_streak',
     'status_doughnut',
+    'interview_review',
+    // 회고=성장 페이지 Phase A — 신규 섹션 (기존 사용자에게도 자동 노출)
+    'monthly_comparison',
+    'personal_funnel',
+    'milestones',
+    'insights',
   ];
+
+  /**
+   * config 있는 사용자에서 이 id 는 응답 시 자동 필터링.
+   * - dday·todos·today_schedule·top_applications·calendar_mini: 캘린더 UX 재구성으로 캘린더로 이관
+   * - cover_letter_quick·goals: 회고=성장 재정의로 제거 (실행 도구 → 성장 지표에 집중)
+   */
+  private readonly DEPRECATED_SECTION_IDS = new Set([
+    'dday',
+    'todos',
+    'today_schedule',
+    'top_applications',
+    'calendar_mini',
+    'cover_letter_quick',
+    'goals',
+  ]);
 
   async getDashboardConfig(
     userId: string,
@@ -227,15 +270,18 @@ export class UsersService {
     if (!user.dashboardConfig) {
       return { sections: this.DEFAULT_SECTIONS };
     }
+    // 캘린더 UX 재구성 — deprecated 섹션 필터링 (dday·todos 등 캘린더로 이관됨)
+    const filtered = user.dashboardConfig.sections.filter(
+      (s) => !this.DEPRECATED_SECTION_IDS.has(s.id),
+    );
     // W3 — lazy merge: 기존 config 에 신규 lazy-merge 섹션만 자동 append
-    const existing = user.dashboardConfig.sections;
-    const existingIds = new Set(existing.map((s) => s.id));
+    const existingIds = new Set(filtered.map((s) => s.id));
     const missing = this.DEFAULT_SECTIONS.filter(
       (s) =>
         this.LAZY_MERGE_SECTION_IDS.includes(s.id) && !existingIds.has(s.id),
     );
-    if (missing.length === 0) return { sections: existing };
-    return { sections: [...existing, ...missing] };
+    if (missing.length === 0) return { sections: filtered };
+    return { sections: [...filtered, ...missing] };
   }
 
   async updateDashboardConfig(
