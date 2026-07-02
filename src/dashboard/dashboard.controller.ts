@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { DashboardService } from './dashboard.service';
 import { StreakService } from './streak.service';
+import { GrowthService } from './growth.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 interface AuthUser {
@@ -13,6 +14,7 @@ export class DashboardController {
   constructor(
     private readonly dashboardService: DashboardService,
     private readonly streakService: StreakService,
+    private readonly growthService: GrowthService,
   ) {}
 
   @Get('stats')
@@ -38,5 +40,15 @@ export class DashboardController {
   @Get('streak')
   getStreak(@CurrentUser() user: AuthUser) {
     return this.streakService.getDashboardStreak(user.id);
+  }
+
+  /**
+   * 회고=성장 페이지 Phase A — 이번 달 vs 지난 달 활동량 + 개인 funnel.
+   * 5분 in-memory 캐시. Rate limit 30 rpm (streak 와 동일).
+   */
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('growth-metrics')
+  getGrowthMetrics(@CurrentUser() user: AuthUser) {
+    return this.growthService.getGrowthMetrics(user.id);
   }
 }

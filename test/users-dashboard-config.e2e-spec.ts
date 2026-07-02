@@ -29,7 +29,7 @@ describe('Users dashboard-config (e2e, H-7)', () => {
 
   // ── GET ──────────────────────────────────────────────
   describe('GET /users/me/dashboard-config', () => {
-    it('처음 호출 (DB null) → DEFAULT_SECTIONS (stats·dday·todos + W3 activity_streak·status_doughnut)', async () => {
+    it('처음 호출 (DB null) → 회고=성장 DEFAULT_SECTIONS 반환', async () => {
       const { accessToken } = await signInAsUser(app);
 
       const res = await request(app.getHttpServer())
@@ -39,10 +39,13 @@ describe('Users dashboard-config (e2e, H-7)', () => {
 
       expect(res.body.data.sections).toEqual([
         { id: 'stats', visible: true },
-        { id: 'dday', visible: true },
-        { id: 'todos', visible: true },
+        { id: 'milestones', visible: true },
+        { id: 'monthly_comparison', visible: true },
+        { id: 'insights', visible: true },
         { id: 'activity_streak', visible: true },
         { id: 'status_doughnut', visible: true },
+        { id: 'personal_funnel', visible: true },
+        { id: 'interview_review', visible: true },
       ]);
     });
 
@@ -57,11 +60,11 @@ describe('Users dashboard-config (e2e, H-7)', () => {
   describe('PATCH /users/me/dashboard-config', () => {
     const validSections = [
       { id: 'stats', visible: true },
-      { id: 'dday', visible: true },
-      { id: 'cover_letter_quick', visible: false },
+      { id: 'activity_streak', visible: true },
+      { id: 'status_doughnut', visible: false },
     ];
 
-    it('정상 sections → 200 + DB JSONB 저장 + GET 응답에 W3 lazy merge 자동 append', async () => {
+    it('정상 sections → 200 + DB JSONB 저장 + GET 응답에 회고=성장 lazy merge 자동 append (DEFAULT_SECTIONS 순서)', async () => {
       const { accessToken } = await signInAsUser(app);
 
       const res = await request(app.getHttpServer())
@@ -73,15 +76,18 @@ describe('Users dashboard-config (e2e, H-7)', () => {
       // PATCH 응답 = 저장한 그대로 (lazy merge 안 함)
       expect(res.body.data.sections).toEqual(validSections);
 
-      // GET으로 재확인 — W3 lazy merge 로 activity_streak/status_doughnut 자동 append
+      // GET 재확인 — lazy merge 로 신규 5 섹션 자동 append (DEFAULT_SECTIONS 순서)
       const getRes = await request(app.getHttpServer())
         .get('/users/me/dashboard-config')
         .set(bearer(accessToken))
         .expect(200);
       expect(getRes.body.data.sections).toEqual([
         ...validSections,
-        { id: 'activity_streak', visible: true },
-        { id: 'status_doughnut', visible: true },
+        { id: 'milestones', visible: true },
+        { id: 'monthly_comparison', visible: true },
+        { id: 'insights', visible: true },
+        { id: 'personal_funnel', visible: true },
+        { id: 'interview_review', visible: true },
       ]);
     });
 
@@ -92,7 +98,7 @@ describe('Users dashboard-config (e2e, H-7)', () => {
         .set(bearer(accessToken))
         .send({
           sections: [
-            { id: 'dday', visible: true },
+            { id: 'activity_streak', visible: true },
             { id: 'stats', visible: true },
           ],
         })
