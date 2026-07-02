@@ -16,7 +16,9 @@ import { randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
+import { AppleS2SService } from './apple-s2s.service';
 import { AppleNativeLoginDto } from './dto/apple-native-login.dto';
+import { AppleS2SNotificationDto } from './dto/apple-s2s-notification.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from '../common/decorators/public.decorator';
@@ -75,6 +77,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly appleAuthService: AppleAuthService,
+    private readonly appleS2SService: AppleS2SService,
     private readonly config: ConfigService,
   ) {}
 
@@ -126,6 +129,27 @@ export class AuthController {
         aiConsentAt: user.aiConsentAt,
       },
     };
+  }
+
+  /**
+   * W2 RN · Sign in with Apple Server-to-Server Notifications (2026-01-01 필수).
+   *
+   * Apple 이 사용자 계정 이벤트를 우리 서버로 전송:
+   *   - account-delete · consent-revoked → user 삭제 (or Kakao 병합 시 apple_sub 해제)
+   *   - email-disabled · email-enabled → 로그만
+   *
+   * 인증 = payload JWT 의 Apple JWKS 서명 검증만 (public endpoint).
+   * 항상 200 반환 (알 수 없는 sub 이든 실패든 · Apple 재시도 폭주 방지).
+   *
+   * 서명 자체 검증 실패는 401 로 반환 · Apple 이 재시도 (정상 흐름).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @Post('apple/s2s-notification')
+  @HttpCode(HttpStatus.OK)
+  async appleS2SNotification(@Body() dto: AppleS2SNotificationDto) {
+    const result = await this.appleS2SService.handleNotification(dto.payload);
+    return { ok: true, result };
   }
 
   /**
