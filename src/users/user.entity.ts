@@ -24,8 +24,23 @@ export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'kakao_id', unique: true })
-  kakaoId: string;
+  @Column({ name: 'kakao_id', unique: true, nullable: true, type: 'varchar' })
+  kakaoId: string | null;
+
+  /**
+   * W2 RN 하이브리드 · Sign in with Apple (Apple Guideline 4.8).
+   * Apple identity token 의 `sub` claim. 사용자별 고유 · 앱별 다름 · 영구 불변.
+   * NULL = SIWA 로 가입 안 한 사용자 (kakao 만 사용).
+   */
+  @Column({ name: 'apple_sub', unique: true, nullable: true, type: 'varchar' })
+  appleSub: string | null;
+
+  /**
+   * Apple 이메일 relay 사용 시 (@privaterelay.appleid.com).
+   * user 가 hide email 선택하면 여기 저장. `email` 은 표시용 실 이메일 or NULL.
+   */
+  @Column({ name: 'apple_email', nullable: true, type: 'varchar' })
+  appleEmail: string | null;
 
   @Column()
   nickname: string;

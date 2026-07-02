@@ -35,6 +35,8 @@ describe('CompaniesService', () => {
   const makeUser = (overrides: Partial<User> = {}): User => ({
     id: 'u1',
     kakaoId: 'k1',
+    appleSub: null,
+    appleEmail: null,
     nickname: 'tester',
     email: null,
     role: 'user',

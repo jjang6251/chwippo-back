@@ -46,6 +46,8 @@ describe('LlmService', () => {
   const makeUser = (overrides: Partial<User> = {}): User => ({
     id: 'u-1',
     kakaoId: 'k-1',
+    appleSub: null,
+    appleEmail: null,
     nickname: '장성원',
     email: null,
     refreshToken: null,

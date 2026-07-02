@@ -9,6 +9,7 @@ import { ApplicationStep } from '../applications/application-step.entity';
 import { UsersService } from './users.service';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
+import { IdentityProviderService } from '../auth/identity-provider.service';
 import type { SignupAnswerDto } from './dto/signup-answer.dto';
 import type { JobCategory } from './signup-job-categories.const';
 
@@ -17,6 +18,7 @@ describe('UsersService', () => {
   let userRepo: jest.Mocked<Repository<User>>;
   let storageUsage: jest.Mocked<StorageUsageService>;
   let filesService: jest.Mocked<FilesService>;
+  let identityProvider: jest.Mocked<IdentityProviderService>;
   let dataSource: jest.Mocked<DataSource>;
   let manager: jest.Mocked<EntityManager>;
 
@@ -24,6 +26,8 @@ describe('UsersService', () => {
     ({
       id: 'user-uuid-1',
       kakaoId: 'kakao-123',
+      appleSub: null,
+      appleEmail: null,
       nickname: '테스트유저',
       email: null,
       role: 'user',
@@ -37,7 +41,10 @@ describe('UsersService', () => {
     const mockRepo = mock<Repository<User>>();
     const mockStorage = mock<StorageUsageService>();
     const mockFiles = mock<FilesService>();
+    const mockIdp = mock<IdentityProviderService>();
     mockStorage.collectAllFileUrls.mockResolvedValue([]);
+    mockIdp.unlinkKakao.mockResolvedValue(true);
+    mockIdp.revokeApple.mockResolvedValue(false);
 
     manager = mock<EntityManager>();
     manager.create.mockImplementation(
@@ -61,6 +68,7 @@ describe('UsersService', () => {
         { provide: getDataSourceToken(), useValue: dataSource },
         { provide: StorageUsageService, useValue: mockStorage },
         { provide: FilesService, useValue: mockFiles },
+        { provide: IdentityProviderService, useValue: mockIdp },
       ],
     }).compile();
 
@@ -68,6 +76,7 @@ describe('UsersService', () => {
     userRepo = module.get(getRepositoryToken(User));
     storageUsage = module.get(StorageUsageService);
     filesService = module.get(FilesService);
+    identityProvider = module.get(IdentityProviderService);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -223,6 +232,78 @@ describe('UsersService', () => {
       await service.deleteAccount('user-uuid-1');
 
       expect(filesService.deleteFile).not.toHaveBeenCalled();
+    });
+
+    // ── Apple Guideline 5.1.1(v) · 카카오 개인정보 처리방침 ──
+    it('kakaoId 있는 유저 → Kakao unlink 호출 (Apple 5.1.1(v))', async () => {
+      const user = makeUser({ kakaoId: 'kakao-999', appleSub: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+
+      await service.deleteAccount('user-uuid-1');
+
+      expect(identityProvider.unlinkKakao).toHaveBeenCalledWith('kakao-999');
+      expect(identityProvider.revokeApple).not.toHaveBeenCalled();
+    });
+
+    it('appleSub 있는 유저 (kakaoId=null) → Apple revoke 호출 · Kakao 미호출', async () => {
+      const user = makeUser({ kakaoId: null, appleSub: 'apple-sub-abc' });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+
+      await service.deleteAccount('user-uuid-1');
+
+      expect(identityProvider.revokeApple).toHaveBeenCalledWith('apple-sub-abc');
+      expect(identityProvider.unlinkKakao).not.toHaveBeenCalled();
+    });
+
+    it('kakaoId + appleSub 둘 다 있음 (계정 병합 미래 대비) → 양쪽 모두 호출', async () => {
+      const user = makeUser({ kakaoId: 'kakao-1', appleSub: 'apple-1' });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+
+      await service.deleteAccount('user-uuid-1');
+
+      expect(identityProvider.unlinkKakao).toHaveBeenCalledWith('kakao-1');
+      expect(identityProvider.revokeApple).toHaveBeenCalledWith('apple-1');
+    });
+
+    it('Kakao unlink 실패 (false 반환) → 로컬 삭제 계속 진행 (best-effort)', async () => {
+      const user = makeUser({ kakaoId: 'kakao-fail', appleSub: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+      identityProvider.unlinkKakao.mockResolvedValueOnce(false);
+
+      await expect(
+        service.deleteAccount('user-uuid-1'),
+      ).resolves.toBeUndefined();
+      expect(userRepo.remove).toHaveBeenCalledWith(user);
+    });
+
+    it('unlink 순서 → remove 이전 (DB 삭제 후엔 kakaoId 조회 불가)', async () => {
+      const user = makeUser({ kakaoId: 'kakao-order', appleSub: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+
+      await service.deleteAccount('user-uuid-1');
+
+      const unlinkOrder = (identityProvider.unlinkKakao as jest.Mock).mock
+        .invocationCallOrder[0];
+      const removeOrder = (userRepo.remove as jest.Mock).mock
+        .invocationCallOrder[0];
+      expect(unlinkOrder).toBeLessThan(removeOrder);
+    });
+
+    it('kakaoId · appleSub 둘 다 null (극단 케이스) → unlink/revoke 미호출', async () => {
+      const user = makeUser({ kakaoId: null, appleSub: null });
+      userRepo.findOneBy.mockResolvedValue(user);
+      userRepo.remove.mockResolvedValue(user);
+
+      await service.deleteAccount('user-uuid-1');
+
+      expect(identityProvider.unlinkKakao).not.toHaveBeenCalled();
+      expect(identityProvider.revokeApple).not.toHaveBeenCalled();
+      expect(userRepo.remove).toHaveBeenCalled();
     });
   });
 

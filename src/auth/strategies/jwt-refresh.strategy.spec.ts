@@ -17,6 +17,8 @@ function makeUser(overrides: Partial<User> = {}): User {
   return {
     id: 'user-uuid',
     kakaoId: 'kakao-123',
+    appleSub: null,
+    appleEmail: null,
     nickname: '테스트유저',
     email: 'test@test.com',
     // DB엔 hash 저장 (LRR P1T1 M-2)

@@ -37,6 +37,8 @@ function makeUser(overrides: Partial<User> = {}): User {
   return {
     id: TARGET_ID,
     kakaoId: 'kakao-1',
+    appleSub: null,
+    appleEmail: null,
     nickname: '대상유저',
     email: 'target@test.com',
     refreshToken: null,

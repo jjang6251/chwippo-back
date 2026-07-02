@@ -1,5 +1,7 @@
 import {
+  Body,
   Controller,
+  ForbiddenException,
   Get,
   Post,
   Req,
@@ -13,6 +15,12 @@ import { Throttle } from '@nestjs/throttler';
 import { randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { AppleAuthService } from './apple-auth.service';
+import { AppleS2SService } from './apple-s2s.service';
+import { KakaoNativeService } from './kakao-native.service';
+import { AppleNativeLoginDto } from './dto/apple-native-login.dto';
+import { AppleS2SNotificationDto } from './dto/apple-s2s-notification.dto';
+import { KakaoNativeLoginDto } from './dto/kakao-native-login.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from '../common/decorators/public.decorator';
@@ -70,8 +78,130 @@ const KAKAO_AUTHORIZE_URL = 'https://kauth.kakao.com/oauth/authorize';
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly appleAuthService: AppleAuthService,
+    private readonly appleS2SService: AppleS2SService,
+    private readonly kakaoNativeService: KakaoNativeService,
     private readonly config: ConfigService,
   ) {}
+
+  /**
+   * W2 RN 하이브리드 · Sign in with Apple (App Store Guideline 4.8) native 로그인.
+   *
+   * expo-apple-authentication signInAsync() 응답의 `identityToken` (JWT) 검증 후 우리 JWT 발급.
+   * 첫 sign-in 시에만 fullName 옵셔널로 전달됨 (Apple 정책).
+   *
+   * refresh_token 은 web 과 동일하게 httpOnly cookie 로 · access_token 은 body.
+   * mobile 은 SecureStore 로 access_token 저장 · cookie 는 axios 가 자동 관리.
+   *
+   * 429: 초당 10회 제한 (mobile 재시도 · brute force 방어).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Post('apple/native')
+  @HttpCode(HttpStatus.OK)
+  async appleNativeLogin(
+    @Body() dto: AppleNativeLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const payload = await this.appleAuthService.verifyIdentityToken(
+      dto.identityToken,
+    );
+    const info = this.appleAuthService.extractUserInfo(payload, dto.fullName);
+    const { user, isNew } =
+      await this.appleAuthService.findOrCreateAppleUser(info);
+
+    if (user.suspendedAt) {
+      throw new ForbiddenException('정지된 계정입니다.');
+    }
+
+    const { accessToken, refreshToken } =
+      await this.authService.issueTokens(user);
+
+    res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    return {
+      accessToken,
+      isNew,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        role: user.role,
+        onboardedAt: user.onboardedAt,
+        termsAgreedAt: user.termsAgreedAt,
+        aiConsentAt: user.aiConsentAt,
+      },
+    };
+  }
+
+  /**
+   * W2 RN · 카카오 네이티브 SDK 로그인.
+   *
+   * mobile 이 `@react-native-kakao/user` 로 획득한 access_token 을 서버가
+   * Kakao `GET /v2/user/me` 로 검증 + 사용자 정보 조회 → 우리 JWT 발급.
+   *
+   * refresh_token 은 web 과 동일하게 httpOnly cookie 로 · access_token 은 body.
+   *
+   * 429: 초당 10회 제한 (재시도 · brute force 방어).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Post('kakao/native')
+  @HttpCode(HttpStatus.OK)
+  async kakaoNativeLogin(
+    @Body() dto: KakaoNativeLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const kakaoUser = await this.kakaoNativeService.verifyAndFetchUser(
+      dto.accessToken,
+    );
+    const { user, isNew } =
+      await this.authService.findOrCreateKakaoUser(kakaoUser);
+
+    if (user.suspendedAt) {
+      throw new ForbiddenException('정지된 계정입니다.');
+    }
+
+    const { accessToken, refreshToken } =
+      await this.authService.issueTokens(user);
+
+    res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    return {
+      accessToken,
+      isNew,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        role: user.role,
+        onboardedAt: user.onboardedAt,
+        termsAgreedAt: user.termsAgreedAt,
+        aiConsentAt: user.aiConsentAt,
+      },
+    };
+  }
+
+  /**
+   * W2 RN · Sign in with Apple Server-to-Server Notifications (2026-01-01 필수).
+   *
+   * Apple 이 사용자 계정 이벤트를 우리 서버로 전송:
+   *   - account-delete · consent-revoked → user 삭제 (or Kakao 병합 시 apple_sub 해제)
+   *   - email-disabled · email-enabled → 로그만
+   *
+   * 인증 = payload JWT 의 Apple JWKS 서명 검증만 (public endpoint).
+   * 항상 200 반환 (알 수 없는 sub 이든 실패든 · Apple 재시도 폭주 방지).
+   *
+   * 서명 자체 검증 실패는 401 로 반환 · Apple 이 재시도 (정상 흐름).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @Post('apple/s2s-notification')
+  @HttpCode(HttpStatus.OK)
+  async appleS2SNotification(@Body() dto: AppleS2SNotificationDto) {
+    const result = await this.appleS2SService.handleNotification(dto.payload);
+    return { ok: true, result };
+  }
 
   /**
    * 카카오 로그인 시작.

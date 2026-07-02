@@ -6,5 +6,5 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
-  "transformIgnorePatterns": ["node_modules/(?!(@nodable/entities|uuid)/)"]
+  "transformIgnorePatterns": ["node_modules/(?!(@nodable/entities|uuid|jose)/)"]
 }
