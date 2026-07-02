@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
+import { KakaoNativeService } from './kakao-native.service';
 import { IdentityProviderService } from './identity-provider.service';
 import { KakaoStrategy } from './strategies/kakao.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -27,6 +28,7 @@ import { FilesModule } from '../files/files.module';
     AuthService,
     AppleAuthService,
     AppleS2SService,
+    KakaoNativeService,
     IdentityProviderService,
     KakaoStrategy,
     JwtStrategy,

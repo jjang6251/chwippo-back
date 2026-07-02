@@ -17,8 +17,10 @@ import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
+import { KakaoNativeService } from './kakao-native.service';
 import { AppleNativeLoginDto } from './dto/apple-native-login.dto';
 import { AppleS2SNotificationDto } from './dto/apple-s2s-notification.dto';
+import { KakaoNativeLoginDto } from './dto/kakao-native-login.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from '../common/decorators/public.decorator';
@@ -78,6 +80,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly appleAuthService: AppleAuthService,
     private readonly appleS2SService: AppleS2SService,
+    private readonly kakaoNativeService: KakaoNativeService,
     private readonly config: ConfigService,
   ) {}
 
@@ -106,6 +109,54 @@ export class AuthController {
     const info = this.appleAuthService.extractUserInfo(payload, dto.fullName);
     const { user, isNew } =
       await this.appleAuthService.findOrCreateAppleUser(info);
+
+    if (user.suspendedAt) {
+      throw new ForbiddenException('정지된 계정입니다.');
+    }
+
+    const { accessToken, refreshToken } =
+      await this.authService.issueTokens(user);
+
+    res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    return {
+      accessToken,
+      isNew,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        role: user.role,
+        onboardedAt: user.onboardedAt,
+        termsAgreedAt: user.termsAgreedAt,
+        aiConsentAt: user.aiConsentAt,
+      },
+    };
+  }
+
+  /**
+   * W2 RN · 카카오 네이티브 SDK 로그인.
+   *
+   * mobile 이 `@react-native-kakao/user` 로 획득한 access_token 을 서버가
+   * Kakao `GET /v2/user/me` 로 검증 + 사용자 정보 조회 → 우리 JWT 발급.
+   *
+   * refresh_token 은 web 과 동일하게 httpOnly cookie 로 · access_token 은 body.
+   *
+   * 429: 초당 10회 제한 (재시도 · brute force 방어).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Post('kakao/native')
+  @HttpCode(HttpStatus.OK)
+  async kakaoNativeLogin(
+    @Body() dto: KakaoNativeLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const kakaoUser = await this.kakaoNativeService.verifyAndFetchUser(
+      dto.accessToken,
+    );
+    const { user, isNew } =
+      await this.authService.findOrCreateKakaoUser(kakaoUser);
 
     if (user.suspendedAt) {
       throw new ForbiddenException('정지된 계정입니다.');
