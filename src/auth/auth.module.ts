@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/user.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { AppleAuthService } from './apple-auth.service';
 import { KakaoStrategy } from './strategies/kakao.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
@@ -16,7 +17,13 @@ import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
     TypeOrmModule.forFeature([User]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, KakaoStrategy, JwtStrategy, JwtRefreshStrategy],
-  exports: [AuthService],
+  providers: [
+    AuthService,
+    AppleAuthService,
+    KakaoStrategy,
+    JwtStrategy,
+    JwtRefreshStrategy,
+  ],
+  exports: [AuthService, AppleAuthService],
 })
 export class AuthModule {}

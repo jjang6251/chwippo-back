@@ -1,5 +1,7 @@
 import {
+  Body,
   Controller,
+  ForbiddenException,
   Get,
   Post,
   Req,
@@ -13,6 +15,8 @@ import { Throttle } from '@nestjs/throttler';
 import { randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { AppleAuthService } from './apple-auth.service';
+import { AppleNativeLoginDto } from './dto/apple-native-login.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from '../common/decorators/public.decorator';
@@ -70,8 +74,59 @@ const KAKAO_AUTHORIZE_URL = 'https://kauth.kakao.com/oauth/authorize';
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly appleAuthService: AppleAuthService,
     private readonly config: ConfigService,
   ) {}
+
+  /**
+   * W2 RN 하이브리드 · Sign in with Apple (App Store Guideline 4.8) native 로그인.
+   *
+   * expo-apple-authentication signInAsync() 응답의 `identityToken` (JWT) 검증 후 우리 JWT 발급.
+   * 첫 sign-in 시에만 fullName 옵셔널로 전달됨 (Apple 정책).
+   *
+   * refresh_token 은 web 과 동일하게 httpOnly cookie 로 · access_token 은 body.
+   * mobile 은 SecureStore 로 access_token 저장 · cookie 는 axios 가 자동 관리.
+   *
+   * 429: 초당 10회 제한 (mobile 재시도 · brute force 방어).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Post('apple/native')
+  @HttpCode(HttpStatus.OK)
+  async appleNativeLogin(
+    @Body() dto: AppleNativeLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const payload = await this.appleAuthService.verifyIdentityToken(
+      dto.identityToken,
+    );
+    const info = this.appleAuthService.extractUserInfo(payload, dto.fullName);
+    const { user, isNew } =
+      await this.appleAuthService.findOrCreateAppleUser(info);
+
+    if (user.suspendedAt) {
+      throw new ForbiddenException('정지된 계정입니다.');
+    }
+
+    const { accessToken, refreshToken } =
+      await this.authService.issueTokens(user);
+
+    res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    return {
+      accessToken,
+      isNew,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        role: user.role,
+        onboardedAt: user.onboardedAt,
+        termsAgreedAt: user.termsAgreedAt,
+        aiConsentAt: user.aiConsentAt,
+      },
+    };
+  }
 
   /**
    * 카카오 로그인 시작.
