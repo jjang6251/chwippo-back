@@ -5,6 +5,7 @@ import { Application } from '../applications/application.entity';
 import { ApplicationCoverletter } from '../applications/application-coverletter.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
+import { CompaniesService } from '../companies/companies.service';
 
 /**
  * 캘린더 UX 재구성 — Hero CTA 라벨/링크 산출용 next_action enum.
@@ -34,6 +35,7 @@ export class DashboardService {
     private readonly stepRepo: Repository<ApplicationStep>,
     @InjectRepository(ExamSchedule)
     private readonly examRepo: Repository<ExamSchedule>,
+    private readonly companiesService: CompaniesService,
   ) {}
 
   async getStats(userId: string) {
@@ -135,6 +137,7 @@ export class DashboardService {
             select: {
               id: true,
               coverletterResearchOutdatedAt: true,
+              jobUrl: true,
             },
           })
         : Promise.resolve([]),
@@ -148,8 +151,10 @@ export class DashboardService {
       coverlettersByApp.set(c.applicationId, arr);
     }
     const outdatedByApp = new Map<string, boolean>();
+    const jobUrlByApp = new Map<string, string | null>();
     for (const a of appsMeta) {
       outdatedByApp.set(a.id, a.coverletterResearchOutdatedAt !== null);
+      jobUrlByApp.set(a.id, a.jobUrl ?? null);
     }
 
     const items: {
@@ -165,6 +170,8 @@ export class DashboardService {
       pinnedContent?: string | null;
       nextAction?: NextAction;
       progress?: { current: number; total: number };
+      jobUrl?: string | null;
+      domain?: string | null;
     }[] = [];
 
     for (const step of steps) {
@@ -182,15 +189,16 @@ export class DashboardService {
         outdatedByApp.get(step.applicationId) ?? false,
       );
 
+      const companyName =
+        (step as ApplicationStep & { app_company_name?: string })
+          .app_company_name ??
+        step.application?.companyName ??
+        '';
       items.push({
         type: 'step',
         applicationId: step.applicationId,
         stepId: step.id,
-        companyName:
-          (step as ApplicationStep & { app_company_name?: string })
-            .app_company_name ??
-          step.application?.companyName ??
-          '',
+        companyName,
         stepName: step.name,
         date: dateStr,
         scheduledTime: `${hours}:${minutes}`,
@@ -198,6 +206,8 @@ export class DashboardService {
         pinnedContent: step.pinnedContent ?? null,
         nextAction,
         progress,
+        jobUrl: jobUrlByApp.get(step.applicationId) ?? null,
+        domain: this.companiesService.getDomainByName(companyName) ?? null,
       });
     }
 
@@ -216,6 +226,7 @@ export class DashboardService {
         scheduledTime: `${hours}:${minutes}`,
         dday,
         nextAction: 'no_action',
+        domain: this.companiesService.getDomainByName(exam.name) ?? null,
       });
     }
 

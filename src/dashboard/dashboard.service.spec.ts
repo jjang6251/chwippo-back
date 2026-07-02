@@ -7,6 +7,7 @@ import { Application } from '../applications/application.entity';
 import { ApplicationCoverletter } from '../applications/application-coverletter.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
+import { CompaniesService } from '../companies/companies.service';
 
 /** QueryBuilder mock 생성 헬퍼 */
 const makeQb = (returnValue: any) => ({
@@ -54,6 +55,10 @@ describe('DashboardService', () => {
           useValue: mock<Repository<ApplicationStep>>(),
         },
         { provide: getRepositoryToken(ExamSchedule), useValue: mockExamRepo },
+        {
+          provide: CompaniesService,
+          useValue: { getDomainByName: jest.fn().mockReturnValue(undefined) },
+        },
       ],
     }).compile();
 

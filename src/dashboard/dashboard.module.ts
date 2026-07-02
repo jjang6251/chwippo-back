@@ -6,7 +6,9 @@ import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { DashboardService } from './dashboard.service';
 import { StreakService } from './streak.service';
+import { GrowthService } from './growth.service';
 import { DashboardController } from './dashboard.controller';
+import { CompaniesModule } from '../companies/companies.module';
 
 @Module({
   imports: [
@@ -16,8 +18,9 @@ import { DashboardController } from './dashboard.controller';
       ApplicationStep,
       ExamSchedule,
     ]),
+    CompaniesModule,
   ],
-  providers: [DashboardService, StreakService],
+  providers: [DashboardService, StreakService, GrowthService],
   controllers: [DashboardController],
 })
 export class DashboardModule {}
