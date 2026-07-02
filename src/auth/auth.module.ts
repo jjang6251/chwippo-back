@@ -6,6 +6,7 @@ import { User } from '../users/user.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
+import { IdentityProviderService } from './identity-provider.service';
 import { KakaoStrategy } from './strategies/kakao.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
@@ -20,10 +21,11 @@ import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
   providers: [
     AuthService,
     AppleAuthService,
+    IdentityProviderService,
     KakaoStrategy,
     JwtStrategy,
     JwtRefreshStrategy,
   ],
-  exports: [AuthService, AppleAuthService],
+  exports: [AuthService, AppleAuthService, IdentityProviderService],
 })
 export class AuthModule {}
