@@ -253,7 +253,9 @@ describe('UsersService', () => {
 
       await service.deleteAccount('user-uuid-1');
 
-      expect(identityProvider.revokeApple).toHaveBeenCalledWith('apple-sub-abc');
+      expect(identityProvider.revokeApple).toHaveBeenCalledWith(
+        'apple-sub-abc',
+      );
       expect(identityProvider.unlinkKakao).not.toHaveBeenCalled();
     });
 

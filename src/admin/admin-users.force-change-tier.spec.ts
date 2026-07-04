@@ -22,6 +22,7 @@ import { Award } from '../myinfo/entities/award.entity';
 import { Document } from '../myinfo/entities/document.entity';
 import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
+import { AdminNotifyService } from '../notifications/admin-notify.service';
 
 /**
  * PR_B2 Phase 3 — forceChangeTier 매트릭스.
@@ -45,6 +46,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     lastActiveAt: null,
     termsAgreedAt: null,
     dashboardConfig: null,
+    alarmConfig: null,
+    alarmPromptedAt: null,
+    alarmPermissionGranted: false,
     onboardedAt: null,
     suspendedAt: null,
     aiConsentAt: null,
@@ -145,6 +149,13 @@ describe('AdminUsersService.forceChangeTier', () => {
         {
           provide: StorageUsageService,
           useValue: mock<StorageUsageService>(),
+        },
+        {
+          provide: AdminNotifyService,
+          useValue: {
+            notifySuspended: jest.fn().mockResolvedValue(undefined),
+            notifyUnsuspended: jest.fn().mockResolvedValue(undefined),
+          },
         },
       ],
     }).compile();

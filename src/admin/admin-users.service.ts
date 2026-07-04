@@ -26,6 +26,7 @@ import { Award } from '../myinfo/entities/award.entity';
 import { Document } from '../myinfo/entities/document.entity';
 import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
+import { AdminNotifyService } from '../notifications/admin-notify.service';
 import { AdminAuditLog } from './admin-audit-log.entity';
 
 /** PR_B2 Phase 1 — Q24 사용자 통지 의 reason 한국어 라벨 매핑 */
@@ -76,6 +77,7 @@ export class AdminUsersService {
     private readonly dataSource: DataSource,
     private readonly auditService: AdminAuditService,
     private readonly storageUsage: StorageUsageService,
+    private readonly adminNotify: AdminNotifyService,
   ) {}
 
   async findAll(query: {
@@ -554,57 +556,71 @@ export class AdminUsersService {
       }
     }
 
-    return await this.dataSource.transaction(async (manager) => {
-      const target = await manager.findOne(User, {
-        where: { id: targetUserId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!target) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    const { result, wasSuspended } = await this.dataSource.transaction(
+      async (manager) => {
+        const target = await manager.findOne(User, {
+          where: { id: targetUserId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!target) throw new NotFoundException('사용자를 찾을 수 없습니다.');
 
-      // Q25 — admin 끼리 정지 차단
-      if (target.role === 'admin') {
-        throw new ForbiddenException('admin 계정은 정지할 수 없습니다.');
-      }
+        // Q25 — admin 끼리 정지 차단
+        if (target.role === 'admin') {
+          throw new ForbiddenException('admin 계정은 정지할 수 없습니다.');
+        }
 
-      const wasSuspended = target.suspendedAt !== null;
-      const now = wasSuspended ? target.suspendedAt! : new Date();
-      const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+        const wasSuspended = target.suspendedAt !== null;
+        const now = wasSuspended ? target.suspendedAt! : new Date();
+        const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
 
-      await manager.update(
-        User,
-        { id: targetUserId },
-        {
-          suspendedAt: now,
-          suspendReason: dto.reason,
-          suspendExpiresAt: expiresAt,
-        },
-      );
+        await manager.update(
+          User,
+          { id: targetUserId },
+          {
+            suspendedAt: now,
+            suspendReason: dto.reason,
+            suspendExpiresAt: expiresAt,
+          },
+        );
 
-      const action = wasSuspended ? 'update_suspend_reason' : 'suspend';
-      await this.auditService.log(
-        adminId,
-        action,
-        'user',
-        targetUserId,
-        wasSuspended
-          ? {
-              before: {
-                reason: target.suspendReason,
-                expiresAt: target.suspendExpiresAt,
-              },
-              after: { reason: dto.reason, expiresAt },
-            }
-          : { reason: dto.reason, expiresAt },
-        manager,
-        ctx,
-      );
+        const action = wasSuspended ? 'update_suspend_reason' : 'suspend';
+        await this.auditService.log(
+          adminId,
+          action,
+          'user',
+          targetUserId,
+          wasSuspended
+            ? {
+                before: {
+                  reason: target.suspendReason,
+                  expiresAt: target.suspendExpiresAt,
+                },
+                after: { reason: dto.reason, expiresAt },
+              }
+            : { reason: dto.reason, expiresAt },
+          manager,
+          ctx,
+        );
 
-      return {
-        suspendedAt: now,
-        suspendReason: dto.reason,
-        suspendExpiresAt: expiresAt,
-      };
-    });
+        return {
+          result: {
+            suspendedAt: now,
+            suspendReason: dto.reason,
+            suspendExpiresAt: expiresAt,
+          },
+          wasSuspended,
+        };
+      },
+    );
+
+    // 신규 정지만 즉시 통지 (재정지·사유변경은 재발송 안 함). best-effort.
+    if (!wasSuspended) {
+      await this.adminNotify
+        .notifySuspended(targetUserId, dto.reason)
+        .catch(() => undefined);
+    }
+
+    return result;
   }
 
   /**
@@ -853,7 +869,7 @@ export class AdminUsersService {
     targetUserId: string,
     ctx?: { ip?: string | null; userAgent?: string | null },
   ): Promise<{ ok: true }> {
-    return await this.dataSource.transaction(async (manager) => {
+    const didUnsuspend = await this.dataSource.transaction(async (manager) => {
       const target = await manager.findOne(User, {
         where: { id: targetUserId },
         lock: { mode: 'pessimistic_write' },
@@ -862,7 +878,7 @@ export class AdminUsersService {
 
       // idempotent — 정지 안 됨 시 audit 미발생
       if (target.suspendedAt === null) {
-        return { ok: true as const };
+        return false;
       }
 
       await manager.update(
@@ -888,7 +904,16 @@ export class AdminUsersService {
         ctx,
       );
 
-      return { ok: true as const };
+      return true;
     });
+
+    // 실제 해제된 경우만 통지 (idempotent no-op 은 제외). best-effort.
+    if (didUnsuspend) {
+      await this.adminNotify
+        .notifyUnsuspended(targetUserId)
+        .catch(() => undefined);
+    }
+
+    return { ok: true };
   }
 }
