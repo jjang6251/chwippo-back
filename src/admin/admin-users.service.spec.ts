@@ -19,6 +19,7 @@ import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity'
 import { Document } from '../myinfo/entities/document.entity';
 import { Education } from '../myinfo/entities/education.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
+import { AdminNotifyService } from '../notifications/admin-notify.service';
 
 const ADMIN_ID = 'admin-uuid';
 const USER_ID = 'user-uuid';
@@ -37,6 +38,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     lastActiveAt: new Date('2026-05-01'),
     termsAgreedAt: new Date('2026-01-01'),
     dashboardConfig: null,
+    alarmConfig: null,
+    alarmPromptedAt: null,
+    alarmPermissionGranted: false,
     onboardedAt: null,
     suspendedAt: null,
     aiConsentAt: null,
@@ -157,6 +161,13 @@ describe('AdminUsersService', () => {
         { provide: AdminAuditService, useValue: mockAuditService },
         { provide: DataSource, useValue: mockDataSource },
         { provide: StorageUsageService, useValue: mockStorageUsage },
+        {
+          provide: AdminNotifyService,
+          useValue: {
+            notifySuspended: jest.fn().mockResolvedValue(undefined),
+            notifyUnsuspended: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 

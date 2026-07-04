@@ -6,5 +6,8 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
-  "transformIgnorePatterns": ["node_modules/(?!(@nodable/entities|uuid|jose)/)"]
+  "transformIgnorePatterns": ["node_modules/(?!(@nodable/entities|uuid|jose)/)"],
+  "moduleNameMapper": {
+    "^expo-server-sdk$": "<rootDir>/mocks/expo-server-sdk.ts"
+  }
 }

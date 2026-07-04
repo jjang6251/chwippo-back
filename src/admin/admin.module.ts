@@ -32,6 +32,7 @@ import { CompanyResearchMetricsService } from './company-research-metrics.servic
 import { CompanyResearchCache } from '../interview-prep/entities/company-research-cache.entity';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../users/user.entity';
 import { Application } from '../applications/application.entity';
 import { Inquiry } from '../inquiries/inquiry.entity';
@@ -73,6 +74,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     UsersModule,
     InquiriesModule,
     MyinfoModule,
+    NotificationsModule,
     // F6 PR 2 Phase 5.4 — DiscordNotifier 공유 (abuser-ban 과 같은 webhook URL)
     forwardRef(() => AiModule),
   ],
