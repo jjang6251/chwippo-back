@@ -20,8 +20,25 @@ async function bootstrap() {
   // prod chain 확정 후 hop 수 조정 가능 (현재 1 hop 가정)
   app.set('trust proxy', 1);
 
+  // CORS · production + Vercel preview URL + 로컬 dev 허용.
+  // Vercel 은 preview branch 마다 별도 도메인 (`chwippo-front-*.vercel.app`) 생성.
+  // Mobile 앱이 preview URL 로 로드 시 이 CORS 통과해야 백엔드 호출 가능.
+  const productionOrigin =
+    process.env.FRONTEND_URL || 'http://localhost:5173';
+  const vercelPreviewPattern = /^https:\/\/chwippo-front-[a-z0-9-]+\.vercel\.app$/;
+  const localDevOrigins = new Set([
+    'http://localhost:5173',
+    'http://localhost:4173',
+  ]);
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      // origin 없음 (같은 host 요청 · Postman 등) → 허용
+      if (!origin) return callback(null, true);
+      if (origin === productionOrigin) return callback(null, true);
+      if (localDevOrigins.has(origin)) return callback(null, true);
+      if (vercelPreviewPattern.test(origin)) return callback(null, true);
+      return callback(new Error(`CORS: origin ${origin} not allowed`), false);
+    },
     credentials: true,
   });
 
