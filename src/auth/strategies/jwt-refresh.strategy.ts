@@ -62,6 +62,8 @@ export class JwtRefreshStrategy extends PassportStrategy(
       sampleCardsDismissedAt: user.sampleCardsDismissedAt ?? null,
       // 캘린더 UX 재구성 — 첫 방문 안내 배너 표시 여부 (NULL → 표시)
       calendarHomeIntroDismissedAt: user.calendarHomeIntroDismissedAt ?? null,
+      // 알림 — soft-ask 모달 표시 여부 (NULL → native 에서 최초 1회 모달)
+      alarmPromptedAt: user.alarmPromptedAt ?? null,
     };
   }
 }

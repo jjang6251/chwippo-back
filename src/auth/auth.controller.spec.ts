@@ -419,6 +419,7 @@ describe('AuthController', () => {
       signupOtherText: null,
       sampleCardsDismissedAt: null,
       calendarHomeIntroDismissedAt: null,
+      alarmPromptedAt: null,
     };
 
     it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
@@ -461,6 +462,7 @@ describe('AuthController', () => {
           signupOtherText: null,
           sampleCardsDismissedAt: null,
           calendarHomeIntroDismissedAt: null,
+          alarmPromptedAt: null,
         },
       });
     });
