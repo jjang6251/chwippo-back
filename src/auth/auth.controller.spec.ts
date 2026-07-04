@@ -33,6 +33,9 @@ function makeUser(overrides: Partial<User> = {}): User {
     lastActiveAt: null,
     termsAgreedAt: new Date('2026-01-01'),
     dashboardConfig: null,
+    alarmConfig: null,
+    alarmPromptedAt: null,
+    alarmPermissionGranted: false,
     onboardedAt: null,
     suspendedAt: null,
     aiConsentAt: null,
@@ -416,6 +419,7 @@ describe('AuthController', () => {
       signupOtherText: null,
       sampleCardsDismissedAt: null,
       calendarHomeIntroDismissedAt: null,
+      alarmPromptedAt: null,
     };
 
     it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
@@ -458,6 +462,7 @@ describe('AuthController', () => {
           signupOtherText: null,
           sampleCardsDismissedAt: null,
           calendarHomeIntroDismissedAt: null,
+          alarmPromptedAt: null,
         },
       });
     });

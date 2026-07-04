@@ -5,6 +5,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import type { CoinTier } from '../ai/entities/tier-config.entity';
+import type { AlarmConfig } from '../notifications/notification.types';
 
 /** PR_B2 Phase 1 — Q24 사용자 통지. admin 액션 후 사용자 me 호출 시 1회 모달 표시 */
 export interface PendingNotification {
@@ -65,6 +66,22 @@ export class User {
 
   @Column({ name: 'dashboard_config', type: 'jsonb', nullable: true })
   dashboardConfig: { sections: { id: string; visible: boolean }[] } | null;
+
+  // 알림 시스템 — 알림 설정 (NULL = 기본값 merge · notification.types resolveAlarmConfig)
+  @Column({ name: 'alarm_config', type: 'jsonb', nullable: true })
+  alarmConfig: AlarmConfig | null;
+
+  // 알림 시스템 — soft-ask 모달 표시 시각 (NULL = 미표시 → 로그인 후 모달)
+  @Column({ name: 'alarm_prompted_at', type: 'timestamptz', nullable: true })
+  alarmPromptedAt: Date | null;
+
+  // 알림 시스템 — OS 푸시 권한 실제 허용 여부 (앱 시작 시 동기화)
+  @Column({
+    name: 'alarm_permission_granted',
+    type: 'boolean',
+    default: false,
+  })
+  alarmPermissionGranted: boolean;
 
   @Column({ name: 'onboarded_at', type: 'timestamptz', nullable: true })
   onboardedAt: Date | null;

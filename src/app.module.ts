@@ -25,6 +25,7 @@ import { AiModule } from './ai/ai.module';
 import { InterviewPrepModule } from './interview-prep/interview-prep.module';
 import { AiContentReportsModule } from './ai-content-reports/ai-content-reports.module';
 import { UserDevicesModule } from './devices/user-devices.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -54,6 +55,7 @@ import { HealthController } from './health/health.controller';
     InterviewPrepModule,
     AiContentReportsModule,
     UserDevicesModule,
+    NotificationsModule,
     TypeOrmModule.forFeature([User]), // PR_B2 Phase 1 — SuspendedGuard 의 User repo 의존성
   ],
   controllers: [HealthController],
