@@ -12,6 +12,8 @@ import { FilesService } from '../files/files.service';
 import { IdentityProviderService } from '../auth/identity-provider.service';
 import type { SignupAnswerDto } from './dto/signup-answer.dto';
 import type { JobCategory } from './signup-job-categories.const';
+import { DiscordNotifier } from '../common/discord-notifier';
+import { UserDeletionLog } from './user-deletion-log.entity';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -63,8 +65,16 @@ describe('UsersService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: DiscordNotifier,
+          useValue: { notify: jest.fn().mockResolvedValue('sent') },
+        },
         UsersService,
         { provide: getRepositoryToken(User), useValue: mockRepo },
+        {
+          provide: getRepositoryToken(UserDeletionLog),
+          useValue: { insert: jest.fn().mockResolvedValue({}) },
+        },
         { provide: getDataSourceToken(), useValue: dataSource },
         { provide: StorageUsageService, useValue: mockStorage },
         { provide: FilesService, useValue: mockFiles },

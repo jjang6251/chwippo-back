@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository, IsNull, Not } from 'typeorm';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { User } from '../users/user.entity';
+import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 
 /**
  * Sign in with Apple (Apple Guideline 4.8) 백엔드 검증.
@@ -60,6 +61,7 @@ export class AppleAuthService {
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly config: ConfigService,
+    private readonly discord: DiscordNotifier,
   ) {}
 
   /**
@@ -170,6 +172,22 @@ export class AppleAuthService {
         user = existing;
         isNew = false;
       }
+    }
+
+    if (isNew) {
+      void this.discord
+        .notify(
+          {
+            title: '🎉 신규 가입',
+            color: DISCORD_COLORS.green,
+            fields: [
+              { name: '경로', value: '애플', inline: true },
+              { name: 'userId', value: user.id, inline: true },
+            ],
+          },
+          'growth',
+        )
+        .catch(() => undefined);
     }
 
     return { user, isNew };

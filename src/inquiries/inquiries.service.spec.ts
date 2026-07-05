@@ -7,6 +7,8 @@ import { Repository } from 'typeorm';
 import { Inquiry } from './inquiry.entity';
 import { InquiryComment } from './inquiry-comment.entity';
 import { InquiriesService } from './inquiries.service';
+import { ConfigService } from '@nestjs/config';
+import { DiscordNotifier } from '../common/discord-notifier';
 
 describe('InquiriesService', () => {
   let service: InquiriesService;
@@ -59,6 +61,10 @@ describe('InquiriesService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: DiscordNotifier,
+          useValue: { notify: jest.fn().mockResolvedValue('sent') },
+        },
         InquiriesService,
         { provide: getRepositoryToken(Inquiry), useValue: mockRepo },
         {
@@ -66,6 +72,10 @@ describe('InquiriesService', () => {
           useValue: mockCommentRepo,
         },
         { provide: DataSource, useValue: mockDataSource },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue('http://localhost:5173') },
+        },
       ],
     }).compile();
 

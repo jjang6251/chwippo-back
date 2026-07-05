@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
 import { QueryFailedError, Repository } from 'typeorm';
 import { User } from '../users/user.entity';
+import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 
 /**
  * Refresh token을 DB에 저장하기 전 SHA-256 hex로 해싱.
@@ -34,6 +35,7 @@ export class AuthService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly discord: DiscordNotifier,
   ) {}
 
   async findOrCreateKakaoUser(
@@ -88,6 +90,22 @@ export class AuthService {
     ) {
       await this.userRepo.update(user.id, { role: 'admin' });
       user.role = 'admin';
+    }
+
+    if (isNew) {
+      void this.discord
+        .notify(
+          {
+            title: '🎉 신규 가입',
+            color: DISCORD_COLORS.green,
+            fields: [
+              { name: '경로', value: '카카오', inline: true },
+              { name: 'userId', value: user.id, inline: true },
+            ],
+          },
+          'growth',
+        )
+        .catch(() => undefined);
     }
 
     return { user, isNew };

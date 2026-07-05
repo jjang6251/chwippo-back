@@ -16,6 +16,7 @@ import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
 import { CreateApplicationDto } from './dto/create-application.dto';
+import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateStepsDto } from './dto/update-steps.dto';
 import { UpdateStepDetailDto } from './dto/update-step-detail.dto';
@@ -44,6 +45,7 @@ export class ApplicationsService {
     private readonly companyResearch: CompanyResearchService,
     // W2 — domain inject (favicon 로딩)
     private readonly companiesService: CompaniesService,
+    private readonly discord: DiscordNotifier,
   ) {}
 
   /** W2 — application 응답에 회사 domain inject (CompaniesService lookup, in-memory Map O(1)) */
@@ -86,34 +88,65 @@ export class ApplicationsService {
   async create(userId: string, dto: CreateApplicationDto) {
     const status = dto.status ?? 'IN_PROGRESS';
 
-    return this.dataSource.transaction(async (em) => {
-      const app = em.create(Application, {
-        userId,
-        companyName: dto.companyName,
-        jobTitle: dto.jobTitle ?? null,
-        jobCategory: dto.jobCategory ?? null,
-        status,
-        jobUrl: dto.jobUrl ?? null,
-        needsDetail:
-          dto.needsDetail ?? (status === 'IN_PROGRESS' && !dto.jobTitle),
-      });
-      const saved = await em.save(Application, app);
+    return this.dataSource
+      .transaction(async (em) => {
+        const app = em.create(Application, {
+          userId,
+          companyName: dto.companyName,
+          jobTitle: dto.jobTitle ?? null,
+          jobCategory: dto.jobCategory ?? null,
+          status,
+          jobUrl: dto.jobUrl ?? null,
+          needsDetail:
+            dto.needsDetail ?? (status === 'IN_PROGRESS' && !dto.jobTitle),
+        });
+        const saved = await em.save(Application, app);
 
-      if (status === 'IN_PROGRESS') {
-        await this.createDefaultSteps(
-          em,
-          saved.id,
-          dto.deadline,
-          dto.templateId,
-        );
-      }
+        if (status === 'IN_PROGRESS') {
+          await this.createDefaultSteps(
+            em,
+            saved.id,
+            dto.deadline,
+            dto.templateId,
+          );
+        }
 
-      const created = await em.findOne(Application, {
-        where: { id: saved.id },
-        relations: ['steps'],
+        const created = await em.findOne(Application, {
+          where: { id: saved.id },
+          relations: ['steps'],
+        });
+        return this.withDomain(created);
+      })
+      .then(async (result) => {
+        // aha moment — 첫 실 카드 생성 시 growth 알림.
+        // ⚠️ 이 create() 경로는 항상 실 카드 (샘플은 W1 가입 플로우가 별도 생성).
+        // 판정은 count 의 is_sample=false 로 (샘플 카드 카운팅 제외 필수).
+        // deleted_at 무관 전체 이력 기준 (삭제 후 재생성 시 재발송 방지) → withDeleted.
+        try {
+          const realCount = await this.appRepo.count({
+            where: { userId, isSample: false },
+            withDeleted: true,
+          });
+          if (realCount === 1) {
+            void this.discord
+              .notify(
+                {
+                  title: '🎯 첫 지원 카드 생성 (aha moment)',
+                  color: DISCORD_COLORS.gold,
+                  fields: [
+                    { name: 'company', value: dto.companyName, inline: true },
+                    { name: 'userId', value: userId, inline: true },
+                  ],
+                },
+                'growth',
+              )
+              .catch(() => undefined);
+          }
+        } catch {
+          // 집계 실패해도 카드 생성은 이미 완료 · 무시
+        }
+        return result;
       });
-      return this.withDomain(created);
-    });
   }
 
   async update(userId: string, id: string, dto: UpdateApplicationDto) {

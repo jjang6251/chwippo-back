@@ -146,7 +146,8 @@ describe('UserDevicesService', () => {
       await new Promise((r) => setImmediate(r));
 
       expect(discord.notify).toHaveBeenCalledWith(
-        expect.stringContaining('Multi-device alert'),
+        expect.objectContaining({ title: '⚠️ Multi-device alert' }),
+        'critical',
       );
     });
 
