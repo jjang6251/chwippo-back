@@ -1,0 +1,12 @@
+# Railway nixpacks 빌드 설정.
+#
+# postgresql_18: N1 DB 백업 cron 의 pg_dump 바이너리.
+# Railway Postgres 서버 = postgres-ssl:18 (2026-07-06 확인) — 클라이언트도 18 정합.
+# "..." = node provider 기본 패키지 유지 + 추가.
+#
+# ⚠️ 만약 Railway 빌드가 "undefined variable 'postgresql_18'" 로 실패하면
+# (nixpacks 의 nixpkgs 아카이브가 오래된 경우) → postgresql_17 로 내리고
+# 배포 후 첫 04:00 critical 알림의 mismatch 메시지 확인 (18 서버는 17 클라이언트 거부).
+# 그 경우 [phases.setup] nixpkgsArchive 를 최신 nixpkgs 커밋으로 pin 하는 게 정석.
+[phases.setup]
+nixPkgs = ["...", "postgresql_18"]
