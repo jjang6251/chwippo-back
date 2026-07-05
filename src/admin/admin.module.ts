@@ -2,6 +2,8 @@ import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { ActivationService } from './activation.service';
+import { ActivationController } from './activation.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminUsersService } from './admin-users.service';
 import { AdminAuditService } from './admin-audit.service';
@@ -90,9 +92,11 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AdminAuditLogsController, // PR_B2 Phase 4
     AdminNotificationsController, // PR_B2 Phase 4
     CompanyResearchMetricsController, // PR_B2 Phase 4
+    ActivationController, // A8 Activation 측정
   ],
   providers: [
     AdminService,
+    ActivationService, // A8 Activation 측정
     AdminUsersService,
     AdminAuditService,
     AlertThresholdsService,
