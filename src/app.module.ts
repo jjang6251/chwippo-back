@@ -28,6 +28,7 @@ import { UserDevicesModule } from './devices/user-devices.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { NotifierModule } from './common/notifier.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
+import { BackupModule } from './backup/backup.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -60,6 +61,7 @@ import { HealthController } from './health/health.controller';
     AiContentReportsModule,
     UserDevicesModule,
     NotificationsModule,
+    BackupModule,
     TypeOrmModule.forFeature([User]), // PR_B2 Phase 1 — SuspendedGuard 의 User repo 의존성
   ],
   controllers: [HealthController],
