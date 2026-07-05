@@ -104,7 +104,8 @@ describe('AiContentReportsService', () => {
       // 비동기 fire-and-forget · queue 다음 tick 에서 실행되도록 대기
       await new Promise((r) => setImmediate(r));
       expect(discord.notify).toHaveBeenCalledWith(
-        expect.stringContaining('(상세 없음)'),
+        expect.objectContaining({ description: '(상세 없음)' }),
+        'inquiries',
       );
     });
 
@@ -113,7 +114,9 @@ describe('AiContentReportsService', () => {
       await new Promise((r) => setImmediate(r));
 
       expect(discord.notify).toHaveBeenCalledTimes(1);
-      const msg = discord.notify.mock.calls[0][0];
+      const [embed, channel] = discord.notify.mock.calls[0];
+      expect(channel).toBe('inquiries');
+      const msg = JSON.stringify(embed);
       expect(msg).toContain('AI 콘텐츠 신고 접수');
       expect(msg).toContain('coverletter');
       expect(msg).toContain('misinformation');
@@ -139,7 +142,7 @@ describe('AiContentReportsService', () => {
       await service.createReport('user-1', dto);
       await new Promise((r) => setImmediate(r));
 
-      const msg = discord.notify.mock.calls[0][0];
+      const msg = JSON.stringify(discord.notify.mock.calls[0][0]);
       expect(msg).toContain('x'.repeat(120));
       expect(msg).not.toContain('x'.repeat(121));
     });

@@ -9,6 +9,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { User } from '../users/user.entity';
+import { UserDeletionLog } from '../users/user-deletion-log.entity';
+import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
 
@@ -80,6 +82,9 @@ export class AppleS2SService {
     private readonly config: ConfigService,
     private readonly storageUsage: StorageUsageService,
     private readonly filesService: FilesService,
+    private readonly discord: DiscordNotifier,
+    @InjectRepository(UserDeletionLog)
+    private readonly deletionLogRepo: Repository<UserDeletionLog>,
   ) {}
 
   /**
@@ -93,6 +98,24 @@ export class AppleS2SService {
     this.logger.log(
       `Apple S2S event received (type=${event.type} · sub=${event.sub.slice(0, 12)}...)`,
     );
+
+    void this.discord
+      .notify(
+        {
+          title: '🍎 Apple S2S 이벤트',
+          color: DISCORD_COLORS.gray,
+          fields: [
+            { name: 'type', value: event.type, inline: true },
+            {
+              name: 'sub',
+              value: `${event.sub.slice(0, 12)}...`,
+              inline: true,
+            },
+          ],
+        },
+        'growth',
+      )
+      .catch(() => undefined);
 
     switch (event.type) {
       case 'account-delete':
@@ -186,6 +209,9 @@ export class AppleS2SService {
     for (const url of fileUrls) {
       await this.filesService.deleteFile(url);
     }
+    void this.deletionLogRepo
+      .insert({ provider: 'apple', source: 'apple_s2s' })
+      .catch(() => undefined);
     this.logger.log(`Apple S2S: user hard-deleted (id=${user.id})`);
     return { action: 'deleted', userId: user.id };
   }

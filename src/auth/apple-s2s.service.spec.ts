@@ -9,6 +9,8 @@ import { AppleS2SService } from './apple-s2s.service';
 import { User } from '../users/user.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
+import { DiscordNotifier } from '../common/discord-notifier';
+import { UserDeletionLog } from '../users/user-deletion-log.entity';
 
 /**
  * AppleS2SService spec.
@@ -44,8 +46,16 @@ describe('AppleS2SService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: DiscordNotifier,
+          useValue: { notify: jest.fn().mockResolvedValue('sent') },
+        },
         AppleS2SService,
         { provide: getRepositoryToken(User), useValue: mockRepo },
+        {
+          provide: getRepositoryToken(UserDeletionLog),
+          useValue: { insert: jest.fn().mockResolvedValue({}) },
+        },
         { provide: StorageUsageService, useValue: mockStorage },
         { provide: FilesService, useValue: mockFiles },
         {

@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserDevice } from './user-device.entity';
 import { RegisterDeviceDto } from './dto/register-device.dto';
-import { DiscordNotifier } from '../common/discord-notifier';
+import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 
 /**
  * W2 RN — 사용자 device token 등록·조회·해제.
@@ -63,7 +63,16 @@ export class UserDevicesService {
     if (count >= UserDevicesService.ABUSER_DEVICE_THRESHOLD) {
       void this.discord
         .notify(
-          `⚠️ **Multi-device alert**\n- userId: \`${userId}\`\n- device count: ${count}\n- 최신 platform: \`${dto.platform}\``,
+          {
+            title: '⚠️ Multi-device alert',
+            color: DISCORD_COLORS.red,
+            fields: [
+              { name: 'device count', value: String(count), inline: true },
+              { name: 'platform', value: dto.platform, inline: true },
+              { name: 'userId', value: userId },
+            ],
+          },
+          'critical',
         )
         .catch((err) =>
           this.logger.warn(

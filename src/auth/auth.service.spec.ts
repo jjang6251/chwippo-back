@@ -8,6 +8,7 @@ import { createHash } from 'crypto';
 import { QueryFailedError, Repository } from 'typeorm';
 import { AuthService, KakaoUser } from './auth.service';
 import { User } from '../users/user.entity';
+import { DiscordNotifier } from '../common/discord-notifier';
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -50,6 +51,10 @@ describe('AuthService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: DiscordNotifier,
+          useValue: { notify: jest.fn().mockResolvedValue('sent') },
+        },
         AuthService,
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: JwtService, useValue: mockJwtService },

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './user.entity';
+import { UserDeletionLog } from './user-deletion-log.entity';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { UsersService } from './users.service';
@@ -11,7 +12,12 @@ import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Application, ApplicationStep]),
+    TypeOrmModule.forFeature([
+      User,
+      Application,
+      ApplicationStep,
+      UserDeletionLog,
+    ]),
     MyinfoModule,
     FilesModule,
     AuthModule,

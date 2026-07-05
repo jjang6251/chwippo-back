@@ -81,5 +81,15 @@ export const envValidationSchema = Joi.object({
   ANTHROPIC_MODEL_HEAVY: Joi.string().default('claude-sonnet-4-6'),
 
   // PR 1 Phase 3 — AbuserBan Discord webhook (자동 ban 발동 알림). 미설정 시 ban 발동 + webhook skip
+  // (채널 분리 후 fallback 용 · deprecated 예정)
   ADMIN_ALERT_WEBHOOK_URL: Joi.string().uri().allow('').optional(),
+
+  // Discord 알람 채널 분리 (critical/inquiries/growth/ops). 미설정 시 ADMIN_ALERT_WEBHOOK_URL fallback
+  DISCORD_WEBHOOK_CRITICAL: Joi.string().uri().allow('').optional(),
+  DISCORD_WEBHOOK_INQUIRIES: Joi.string().uri().allow('').optional(),
+  DISCORD_WEBHOOK_GROWTH: Joi.string().uri().allow('').optional(),
+  DISCORD_WEBHOOK_OPS: Joi.string().uri().allow('').optional(),
+
+  // 5xx 스파이크 알림 임계치 (10분 window · 초과 시 critical)
+  HTTP_5XX_ALERT_THRESHOLD: Joi.number().integer().min(1).default(20),
 });
