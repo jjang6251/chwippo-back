@@ -86,15 +86,29 @@ export class AdminService {
         [since, tz],
       ),
 
-      // 일별 활성 사용자 (DAU)
+      // 일별 활성 사용자 (DAU) — A8: user_daily_visits 가 정확한 소스.
+      // 구 last_active_at 집계는 유저당 최신일 1건만 남아 과거 DAU 과소집계 →
+      // 테이블 도입(2026-07) 이전 구간은 구 방식이 자연 우세하도록 일자별 GREATEST 전환.
       q<DayRow[]>(
         `
-        SELECT TO_CHAR(last_active_at AT TIME ZONE $2, 'YYYY-MM-DD') AS date,
-               COUNT(*)::int AS count
-        FROM users
-        WHERE last_active_at IS NOT NULL
-          AND last_active_at AT TIME ZONE $2 >= $1
-        GROUP BY 1 ORDER BY 1
+        SELECT COALESCE(o.date, v.date) AS date,
+               GREATEST(COALESCE(o.count, 0), COALESCE(v.count, 0))::int AS count
+        FROM (
+          SELECT TO_CHAR(last_active_at AT TIME ZONE $2, 'YYYY-MM-DD') AS date,
+                 COUNT(*)::int AS count
+          FROM users
+          WHERE last_active_at IS NOT NULL
+            AND last_active_at AT TIME ZONE $2 >= $1
+          GROUP BY 1
+        ) o
+        FULL OUTER JOIN (
+          SELECT TO_CHAR(visit_date, 'YYYY-MM-DD') AS date,
+                 COUNT(*)::int AS count
+          FROM user_daily_visits
+          WHERE visit_date >= ($1)::date
+          GROUP BY 1
+        ) v ON v.date = o.date
+        ORDER BY 1
       `,
         [since, tz],
       ),

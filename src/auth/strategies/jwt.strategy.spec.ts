@@ -43,6 +43,8 @@ function makeUser(overrides: Partial<User> = {}): User {
 const mockUserRepo = () => ({
   findOne: jest.fn(),
   update: jest.fn().mockResolvedValue(undefined),
+  // A8 — user_daily_visits insert 경로 (manager.query)
+  manager: { query: jest.fn().mockResolvedValue(undefined) },
 });
 
 const mockConfigService = {
@@ -104,5 +106,55 @@ describe('JwtStrategy', () => {
     await expect(
       strategy.validate({ sub: 'user-uuid', role: 'admin' }),
     ).rejects.toThrow(UnauthorizedException);
+  });
+
+  // A8 — 일별 방문 기록 (user_daily_visits)
+  describe('방문 기록 (A8)', () => {
+    const managerQuery = () =>
+      (userRepo.manager as unknown as { query: jest.Mock }).query;
+
+    it('KST 오늘 첫 요청 (lastActiveAt 과거) → lastActiveAt 갱신 + 방문 insert', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date('2026-05-01') }),
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).toHaveBeenCalledTimes(1);
+      expect(managerQuery()).toHaveBeenCalledTimes(1);
+      const [sql, params] = managerQuery().mock.calls[0] as [
+        string,
+        [string, string],
+      ];
+      expect(sql).toContain('INSERT INTO user_daily_visits');
+      expect(sql).toContain('ON CONFLICT DO NOTHING');
+      expect(params[0]).toBe('user-uuid');
+      expect(params[1]).toMatch(/^\d{4}-\d{2}-\d{2}$/); // KST YYYY-MM-DD
+    });
+
+    it('lastActiveAt 이 KST 오늘이면 → 갱신·insert 모두 안 탐', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date() }),
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+      expect(managerQuery()).not.toHaveBeenCalled();
+    });
+
+    it('방문 insert 실패해도 인증(validate)은 정상 성공 — best-effort', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date('2026-05-01') }),
+      );
+      managerQuery().mockRejectedValue(new Error('DB down'));
+
+      const result = await strategy.validate({
+        sub: 'user-uuid',
+        role: 'user',
+      });
+
+      expect(result).toMatchObject({ id: 'user-uuid' });
+    });
   });
 });
