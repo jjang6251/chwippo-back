@@ -46,6 +46,14 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       this.userRepo
         .update(user.id, { lastActiveAt: new Date() })
         .catch(() => {});
+      // A8 — 일별 방문 기록 (코호트 리텐션·DAU 소스). best-effort, 인증 무영향.
+      this.userRepo.manager
+        .query(
+          `INSERT INTO user_daily_visits (user_id, visit_date)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [user.id, todayKST],
+        )
+        .catch(() => {});
     }
 
     return {
