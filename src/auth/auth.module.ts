@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/user.entity';
+import { UserDeletionLog } from '../users/user-deletion-log.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
@@ -19,7 +20,7 @@ import { FilesModule } from '../files/files.module';
   imports: [
     PassportModule,
     JwtModule.register({}), // 각 메서드에서 secret 직접 주입
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, UserDeletionLog]),
     MyinfoModule, // AppleS2SService StorageUsageService 의존
     FilesModule, // AppleS2SService FilesService 의존
   ],

@@ -10,6 +10,7 @@ import {
   type AppleIdentityTokenPayload,
 } from './apple-auth.service';
 import { User } from '../users/user.entity';
+import { DiscordNotifier } from '../common/discord-notifier';
 
 /**
  * AppleAuthService spec.
@@ -42,6 +43,10 @@ describe('AppleAuthService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: DiscordNotifier,
+          useValue: { notify: jest.fn().mockResolvedValue('sent') },
+        },
         AppleAuthService,
         { provide: getRepositoryToken(User), useValue: mockRepo },
         {

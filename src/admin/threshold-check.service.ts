@@ -155,7 +155,7 @@ export class ThresholdCheckService {
       return 'skipped_dedup';
     }
 
-    const result = await this.discord.notify(message);
+    const result = await this.discord.notify(message, 'critical');
     await this.insertHistory(type, triggered, threshold, message, result);
     return result;
   }

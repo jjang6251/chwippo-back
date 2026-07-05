@@ -26,6 +26,8 @@ import { InterviewPrepModule } from './interview-prep/interview-prep.module';
 import { AiContentReportsModule } from './ai-content-reports/ai-content-reports.module';
 import { UserDevicesModule } from './devices/user-devices.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { NotifierModule } from './common/notifier.module';
+import { MonitoringModule } from './monitoring/monitoring.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -37,6 +39,8 @@ import { HealthController } from './health/health.controller';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
     // F6 PR 2 Phase 5.4 — ThresholdCheckService cron (10분)
     ScheduleModule.forRoot(),
+    NotifierModule,
+    MonitoringModule,
     DatabaseModule,
     AuthModule,
     ApplicationsModule,

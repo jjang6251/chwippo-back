@@ -6,6 +6,7 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { User } from './user.entity';
+import { UserDeletionLog } from './user-deletion-log.entity';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { stepsForTemplate } from '../applications/application-templates';
@@ -14,6 +15,7 @@ import { SignupAnswerDto } from './dto/signup-answer.dto';
 import { pickSampleCompanies } from './signup-job-categories.const';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
+import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 import { CURRENT_AI_CONSENT_VERSION } from '../ai/llm.service';
 import { IdentityProviderService } from '../auth/identity-provider.service';
 
@@ -25,6 +27,9 @@ export class UsersService {
     private readonly storageUsage: StorageUsageService,
     private readonly filesService: FilesService,
     private readonly identityProvider: IdentityProviderService,
+    private readonly discord: DiscordNotifier,
+    @InjectRepository(UserDeletionLog)
+    private readonly deletionLogRepo: Repository<UserDeletionLog>,
   ) {}
 
   async agreeTerms(userId: string): Promise<void> {
@@ -218,11 +223,37 @@ export class UsersService {
       await this.identityProvider.revokeApple(user.appleSub);
     }
 
+    const hadKakao = !!user.kakaoId;
+    const hadApple = !!user.appleSub;
+
     await this.repo.remove(user);
 
     for (const url of fileUrls) {
       await this.filesService.deleteFile(url);
     }
+
+    const provider =
+      [hadKakao && 'kakao', hadApple && 'apple'].filter(Boolean).join('+') ||
+      '-';
+
+    // 탈퇴 집계 로그 (best-effort · users hard delete 라 사후 조회 불가)
+    void this.deletionLogRepo
+      .insert({ provider, source: 'self' })
+      .catch(() => undefined);
+
+    void this.discord
+      .notify(
+        {
+          title: '👋 회원 탈퇴',
+          color: DISCORD_COLORS.gray,
+          fields: [
+            { name: '계정', value: provider, inline: true },
+            { name: 'userId', value: userId, inline: true },
+          ],
+        },
+        'growth',
+      )
+      .catch(() => undefined);
   }
 
   async countAll(): Promise<number> {

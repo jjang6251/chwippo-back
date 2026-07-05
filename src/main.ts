@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { Http5xxMonitorService } from './monitoring/http-5xx-monitor.service';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
@@ -69,7 +70,9 @@ async function bootstrap() {
       },
     }),
   );
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // 5xx 스파이크 감시 훅 주입 (DI 싱글톤 · 없어도 필터 동작)
+  const http5xxMonitor = app.get(Http5xxMonitorService);
+  app.useGlobalFilters(new AllExceptionsFilter(http5xxMonitor));
   app.useGlobalInterceptors(new ResponseTransformInterceptor());
 
   const reflector = app.get(Reflector);

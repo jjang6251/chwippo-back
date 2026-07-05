@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { DiscordNotifier } from '../common/discord-notifier';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -93,8 +94,12 @@ describe('ApplicationsService', () => {
     return { em: em as EntityManager, savedSteps };
   };
 
+  const mockDiscord = { notify: jest.fn().mockResolvedValue('sent') };
+  let mockAppRepo: jest.Mocked<Repository<Application>>;
+
   beforeEach(async () => {
-    const mockAppRepo = mock<Repository<Application>>();
+    mockDiscord.notify.mockClear();
+    mockAppRepo = mock<Repository<Application>>();
     const mockStepRepo = mock<Repository<ApplicationStep>>();
     const mockDataSource = {
       transaction: jest.fn(),
@@ -123,6 +128,7 @@ describe('ApplicationsService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        { provide: DiscordNotifier, useValue: mockDiscord },
         ApplicationsService,
         { provide: getRepositoryToken(Application), useValue: mockAppRepo },
         {
@@ -237,6 +243,54 @@ describe('ApplicationsService', () => {
         Application,
         expect.objectContaining({ status: 'IN_PROGRESS' }),
       );
+    });
+
+    // aha moment — 첫 실 카드 growth 알림 (샘플 제외)
+    describe('aha moment 알림', () => {
+      it('실 카드 count=1 → growth 알림 · count 는 is_sample=false + withDeleted 로 조회', async () => {
+        const app = makeApp({ status: 'IN_PROGRESS' });
+        const { em } = makeEntityManager(app);
+        dataSource.transaction.mockImplementation((cb: any) => cb(em));
+        mockAppRepo.count.mockResolvedValue(1);
+
+        await service.create('user-uuid-1', { companyName: '카카오' });
+        await new Promise((r) => setImmediate(r));
+
+        // 샘플 카드 카운팅 제외 검증 (사용자 명시 요구)
+        expect(mockAppRepo.count).toHaveBeenCalledWith({
+          where: { userId: 'user-uuid-1', isSample: false },
+          withDeleted: true,
+        });
+        expect(mockDiscord.notify).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: expect.stringContaining('첫 지원 카드'),
+          }),
+          'growth',
+        );
+      });
+
+      it('실 카드 count=2 (이미 있음) → 알림 없음', async () => {
+        const app = makeApp({ status: 'IN_PROGRESS' });
+        const { em } = makeEntityManager(app);
+        dataSource.transaction.mockImplementation((cb: any) => cb(em));
+        mockAppRepo.count.mockResolvedValue(2);
+
+        await service.create('user-uuid-1', { companyName: '네이버' });
+        await new Promise((r) => setImmediate(r));
+
+        expect(mockDiscord.notify).not.toHaveBeenCalled();
+      });
+
+      it('count 집계 실패해도 카드 생성은 정상 반환', async () => {
+        const app = makeApp({ status: 'IN_PROGRESS' });
+        const { em } = makeEntityManager(app);
+        dataSource.transaction.mockImplementation((cb: any) => cb(em));
+        mockAppRepo.count.mockRejectedValue(new Error('db'));
+
+        await expect(
+          service.create('user-uuid-1', { companyName: '토스' }),
+        ).resolves.toBeDefined();
+      });
     });
 
     it('status=IN_PROGRESS → 기본 4스텝 생성 (이름, orderIndex 0~3)', async () => {

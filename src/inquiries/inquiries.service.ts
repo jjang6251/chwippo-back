@@ -3,11 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Inquiry } from './inquiry.entity';
 import { InquiryComment } from './inquiry-comment.entity';
 import { CreateInquiryDto } from './dto/create-inquiry.dto';
+import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 
 @Injectable()
 export class InquiriesService {
@@ -16,6 +18,8 @@ export class InquiriesService {
     @InjectRepository(InquiryComment)
     private commentRepo: Repository<InquiryComment>,
     private dataSource: DataSource,
+    private readonly discord: DiscordNotifier,
+    private readonly config: ConfigService,
   ) {}
 
   // ── 사용자: 문의 생성 ──────────────────────────────────
@@ -27,7 +31,29 @@ export class InquiriesService {
       user_unread: 0,
       admin_unread: 1,
     });
-    return this.repo.save(inquiry);
+    const saved = await this.repo.save(inquiry);
+
+    // 해당 문의로 바로 이동하는 딥링크 (admin 문의 페이지 · ?id 로 자동 선택)
+    const base =
+      this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:5173';
+    const link = `${base}/ops/inquiries?id=${saved.id}`;
+
+    void this.discord
+      .notify(
+        {
+          title: '📨 문의 접수',
+          description:
+            `[👉 이 문의 바로 열기](${link})\n` +
+            `\`${saved.id}\`\n\n` +
+            `- 분류 · ${saved.category}\n` +
+            `- 제목 · ${saved.title || '(제목 없음)'}`,
+          color: DISCORD_COLORS.yellow,
+        },
+        'inquiries',
+      )
+      .catch(() => undefined);
+
+    return saved;
   }
 
   // ── 사용자: 내 문의 목록 ──────────────────────────────

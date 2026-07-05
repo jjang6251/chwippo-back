@@ -151,7 +151,7 @@ export class AbuserBanService {
     validUntil: Date,
   ): Promise<void> {
     const content = `🚨 AI Auto-Ban\nuser=${userId}\nfeature=${feature}\nuntil=${validUntil.toISOString()}\ndaily_cap=${BAN_DAILY_CAP}`;
-    const status = await this.discord.notify(content);
+    const status = await this.discord.notify(content, 'critical');
     // 5.6.3 — alert_history 통합 가시화 (/ops/monitoring 의 admin UI 에서 임계치 알람과 함께 표시)
     try {
       await this.historyRepo.save(

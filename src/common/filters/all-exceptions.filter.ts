@@ -44,9 +44,16 @@ function extractMessage(exception: unknown, status: number): string {
   return '서버 오류가 발생했습니다.';
 }
 
+/** 5xx 스파이크 감시 훅 (main.ts 에서 app.get 으로 주입 · 없어도 동작) */
+export interface Http5xxRecorder {
+  record(path: string): void;
+}
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
+
+  constructor(private readonly monitor?: Http5xxRecorder) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -59,6 +66,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (status >= 500) {
       this.logger.error(exception);
+      // 쿼리스트링 제외 — path 만 기록 (OAuth code·state 등이 Discord 로 새지 않도록)
+      this.monitor?.record(request.path);
     }
 
     response
