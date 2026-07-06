@@ -170,7 +170,33 @@ export function buildMockLlmResponse(
 
     case 'coverletter_feedback':
       return {
-        text: '[MOCK] **잘된 점**: 구체적 정량 (1.2→1.8) 제시.\n\n**개선점**: 도전·실패 경험이 부족합니다. 본문 중반에 시행착오 사례 1개 추가 권장.',
+        text: '[MOCK]',
+        json: {
+          strengths: [
+            '[MOCK] 구체적 정량 (ROAS 1.2→1.8) 제시가 신뢰를 줍니다.',
+          ],
+          issues: [
+            {
+              kind: 'ai_tone',
+              quote: '끊임없는 열정과 도전정신으로',
+              advice:
+                '[MOCK] AI 티가 나는 상투 표현이에요. 본인 사례의 구체 동사로 바꿔보세요.',
+            },
+            {
+              kind: 'structure',
+              quote: '저는 어릴 때부터',
+              advice: '[MOCK] 두괄식이 아니에요 — 결론 문장을 맨 앞으로.',
+            },
+          ],
+          suggestions: [
+            {
+              target: '끊임없는 열정과 도전정신으로',
+              improved: '[MOCK] 광고 채널 7개를 2주간 직접 비교하며',
+            },
+          ],
+          summary:
+            '[MOCK] 정량 근거는 좋으나 도입부 상투 표현 정리가 필요해요.',
+        },
         ...baseTokens,
       };
 

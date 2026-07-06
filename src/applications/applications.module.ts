@@ -22,6 +22,7 @@ import { CoverletterSourceRefsController } from './coverletter-source-refs.contr
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
 import { AiCoverletterController } from './ai-coverletter.controller';
 import { AiCoverletterDraftService } from './ai-coverletter-draft.service';
+import { AiCoverletterFeedbackService } from './ai-coverletter-feedback.service';
 import { CoverletterDocController } from './coverletter-doc.controller';
 import { CoverletterChatService } from './coverletter-chat.service';
 import { CoverletterChatCleanupCron } from './coverletter-chat-cleanup.cron';
@@ -65,6 +66,7 @@ import { CoverletterGenerationStuckCron } from './coverletter-generation-stuck.c
     ApplicationCoverlettersService,
     CoverletterSourceRefsService,
     AiCoverletterDraftService,
+    AiCoverletterFeedbackService,
     CoverletterChatService,
     CoverletterChatCleanupCron,
     CoverletterGenerationStuckCron,

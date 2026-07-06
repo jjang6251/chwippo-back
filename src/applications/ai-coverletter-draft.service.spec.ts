@@ -9,6 +9,7 @@ import { mock } from 'jest-mock-extended';
 import type { Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import { LlmService } from '../ai/llm.service';
+import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { ActivityReflection } from '../activity/entities/activity-reflection.entity';
@@ -46,6 +47,7 @@ describe('AiCoverletterDraftService', () => {
   let reflectionRepo: jest.Mocked<Repository<ActivityReflection>>;
   let activityRepo: { find: jest.Mock };
   let sourceRefs: jest.Mocked<CoverletterSourceRefsService>;
+  let companyResearchMock: { getCachedForApplication: jest.Mock };
   let llm: jest.Mocked<LlmService>;
   let quotaCheck: jest.Mocked<QuotaCheckService>;
   let myinfo: jest.Mocked<MyinfoService>;
@@ -126,6 +128,9 @@ describe('AiCoverletterDraftService', () => {
     activityRepo = { find: jest.fn().mockResolvedValue([]) };
     sourceRefs = mock<CoverletterSourceRefsService>();
     llm = mock<LlmService>();
+    companyResearchMock = {
+      getCachedForApplication: jest.fn().mockResolvedValue(null),
+    };
     quotaCheck = mock<QuotaCheckService>();
     myinfo = mock<MyinfoService>();
     abuserBan = mock<AbuserBanService>();
@@ -172,6 +177,10 @@ describe('AiCoverletterDraftService', () => {
         },
         { provide: CoverletterSourceRefsService, useValue: sourceRefs },
         { provide: LlmService, useValue: llm },
+        {
+          provide: CompanyResearchService,
+          useValue: companyResearchMock,
+        },
         { provide: QuotaCheckService, useValue: quotaCheck },
         { provide: MyinfoService, useValue: myinfo },
         { provide: AbuserBanService, useValue: abuserBan },
@@ -181,6 +190,121 @@ describe('AiCoverletterDraftService', () => {
   });
 
   // ── 1. 정상 흐름 ──
+
+  it('A1: 회사조사 미완(idle) 상태에서도 draft 정상 진행 (가드 제거 검증)', async () => {
+    // 기존 가드는 completed 외 전부 차단 — 3경로 개편 후 조사 상태와 무관해야 함
+    const idleCl = makeClWithApp();
+    idleCl.application.coverletterGenerationStatus = 'idle';
+    clRepo.findOne.mockResolvedValue(idleCl);
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '조사 없이 생성된 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-idle',
+      outputRedacted: false,
+    });
+    const result = await service.generate(USER_ID, CL_ID, {});
+    expect(result.status).toBe('ok');
+  });
+
+  it('A1(CEO): 회사조사 캐시 있으면 초안 프롬프트에 조사 섹션 주입 — 조회 전용(코인 0)', async () => {
+    companyResearchMock.getCachedForApplication.mockResolvedValue({
+      status: 'ok',
+      research: {
+        businessSummary: '메신저·커머스 플랫폼',
+        talentProfile: ['주도적인 인재'],
+        interviewKeywords: [{ keyword: 'MAU' }],
+      },
+    });
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '조사 반영 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-r',
+      outputRedacted: false,
+    });
+
+    await service.generate(USER_ID, CL_ID, {});
+
+    const prompt = (llm.call.mock.calls[0][0] as { userPrompt: string })
+      .userPrompt;
+    expect(prompt).toContain('# 회사 조사');
+    expect(prompt).toContain('메신저·커머스 플랫폼');
+    expect(prompt).toContain('주도적인 인재');
+    // 조회 전용 메서드만 사용 — fetch(50코인 차감) 트리거 아님 (M3 재발 방지)
+    expect(companyResearchMock.getCachedForApplication).toHaveBeenCalled();
+  });
+
+  it('A1(CEO): 캐시 없음 → 조사 섹션 미포함 (초안은 정상 진행)', async () => {
+    companyResearchMock.getCachedForApplication.mockResolvedValue(null);
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '조사 없는 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-nr',
+      outputRedacted: false,
+    });
+
+    const r = await service.generate(USER_ID, CL_ID, {});
+    expect(r.status).toBe('ok');
+    const prompt = (llm.call.mock.calls[0][0] as { userPrompt: string })
+      .userPrompt;
+    expect(prompt).not.toContain('# 회사 조사');
+  });
+
+  it('A1: draft 첫 생성(origin null) → answerOrigin=ai_draft 기록', async () => {
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '생성된 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-origin',
+      outputRedacted: false,
+    });
+    await service.generate(USER_ID, CL_ID, {});
+    const saved = clRepo.save.mock.calls.at(-1)?.[0] as {
+      answerOrigin?: string;
+    };
+    expect(saved.answerOrigin).toBe('ai_draft');
+  });
+
+  it('A1: 기존 manual 답변 위에 재생성 → 최초 출처(manual) 불변', async () => {
+    // 저장 대상 cl 은 sourceRefsService.assertOwnsCoverletter 반환 객체
+    sourceRefs.assertOwnsCoverletter.mockResolvedValue(
+      makeCl({ answerOrigin: 'manual' }),
+    );
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '재생성 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-regen',
+      outputRedacted: false,
+    });
+    await service.generate(USER_ID, CL_ID, {});
+    const saved = clRepo.save.mock.calls.at(-1)?.[0] as {
+      answerOrigin?: string;
+    };
+    expect(saved.answerOrigin).toBe('manual');
+  });
 
   it('정상: draft 만 (recommend candidates 0) → answer 저장 + meta 반환', async () => {
     llm.call.mockResolvedValue({
