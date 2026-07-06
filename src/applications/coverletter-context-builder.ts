@@ -83,6 +83,17 @@ export interface BuildCoverletterContextInput {
    * 활동 1개 = entry 1개. 5000자 cap (entity 검증).
    */
   activitySummaries?: Array<{ activityName: string; summary: string }>;
+  /**
+   * A1 (CEO 지시 2026-07-06) — 회사조사 캐시 요약 (있을 때만, 조회 전용·코인 0).
+   * 초안 마무리 "회사 키워드 착지" 규칙의 실제 근거 데이터.
+   * 토큰 예산: 최대 ~1,200 토큰으로 요약 잘라서 주입 (문항·선택 자료가 우선).
+   */
+  companyResearch?: {
+    businessSummary?: string;
+    talentProfile?: string | string[];
+    recentTrends?: string;
+    interviewKeywords?: Array<{ keyword: string } | string>;
+  } | null;
   /** myinfo PII 제외 dump (priority 3) */
   myinfo: MyinfoSafeDump;
 }
@@ -243,6 +254,39 @@ export function buildCoverletterContext(
 
   const sections: string[] = [header];
   const droppedRefIds: string[] = [];
+
+  // 1.5) A1 — 회사조사 요약 (캐시 있을 때만). 마무리 착지의 근거 데이터.
+  //   과도한 토큰 방지: 항목별 앞부분만 + 전체 1,200 토큰 상한.
+  if (input.companyResearch) {
+    const r = input.companyResearch;
+    const clip = (t: string | string[] | undefined, n: number) => {
+      const text = Array.isArray(t) ? t.join(' · ') : t;
+      return text && text.trim() ? text.trim().slice(0, n) : null;
+    };
+    const keywords = (r.interviewKeywords ?? [])
+      .map((k) => (typeof k === 'string' ? k : k.keyword))
+      .filter(Boolean)
+      .slice(0, 10)
+      .join(', ');
+    const parts = [
+      clip(r.businessSummary, 600) &&
+        `- 사업 요약: ${clip(r.businessSummary, 600)}`,
+      clip(r.talentProfile, 400) && `- 인재상: ${clip(r.talentProfile, 400)}`,
+      clip(r.recentTrends, 400) && `- 최근 동향: ${clip(r.recentTrends, 400)}`,
+      keywords && `- 핵심 키워드: ${keywords}`,
+    ].filter(Boolean) as string[];
+    if (parts.length > 0) {
+      const researchBlock = [
+        `# 회사 조사 (검증된 최신 정보 — 마무리 착지에 활용)`,
+        ...parts,
+      ].join('\n');
+      const researchTokens = Math.min(estimateTokens(researchBlock), 1200);
+      if (usedTokens + researchTokens <= budget) {
+        sections.push(researchBlock);
+        usedTokens += researchTokens;
+      }
+    }
+  }
   let logsUsed = 0;
   let reflectionsUsed = 0;
 

@@ -17,6 +17,7 @@ import { ActivityReflection } from '../activity/entities/activity-reflection.ent
 import { Activity } from '../activity/entities/activity.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { buildCoverletterContext } from './coverletter-context-builder';
+import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { CoverletterSourceRef } from './coverletter-source-ref.entity';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
 
@@ -116,6 +117,9 @@ export class AiCoverletterDraftService {
     private readonly activityRepo: Repository<Activity>,
     private readonly sourceRefsService: CoverletterSourceRefsService,
     private readonly llm: LlmService,
+    // A1 — 회사조사 캐시 조회 전용 (chat 과 동일 패턴, forwardRef 순환 회피)
+    @Inject(forwardRef(() => CompanyResearchService))
+    private readonly companyResearch: CompanyResearchService,
     private readonly quotaCheck: QuotaCheckService,
     @Inject(forwardRef(() => MyinfoService))
     private readonly myinfo: MyinfoService,
@@ -290,6 +294,16 @@ export class AiCoverletterDraftService {
     }
 
     // 9. 컨텍스트 빌드
+    // A1 (CEO 지시) — 회사조사 캐시가 있으면 초안에도 주입 (조회 전용, 코인 0.
+    //   getCachedForApplication 은 fetch 를 트리거하지 않음 — M3 재발 방지 확인됨)
+    const cachedResearch = await this.companyResearch
+      .getCachedForApplication(userId, clWithApp.application.id)
+      .catch(() => null);
+    const researchForContext =
+      cachedResearch?.status === 'ok'
+        ? (cachedResearch.research ?? null)
+        : null;
+
     const ctx = buildCoverletterContext({
       application: {
         companyName: clWithApp.application.companyName,
@@ -302,6 +316,7 @@ export class AiCoverletterDraftService {
       selectedReflections: selReflections,
       aiRecommendedLogs: recommendedLogObjs,
       activitySummaries,
+      companyResearch: researchForContext,
       myinfo: myinfoDump,
     });
 
