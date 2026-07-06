@@ -3,9 +3,24 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { startOfTodayKst } from '../common/datetime';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { DailyNote } from './daily-note.entity';
 import { CreateDailyNoteDto, UpdateDailyNoteDto } from './dto/daily-note.dto';
+
+/** A3 — 체크리스트 "오늘 할 일" 합류 기준: 스텝 날짜가 오늘 ~ D-3 이내 */
+const URGENT_CHECKLIST_DAYS = 3;
+
+export interface UrgentChecklistItem {
+  itemId: string;
+  content: string;
+  stepId: string;
+  stepName: string;
+  applicationId: string;
+  companyName: string;
+  /** 스텝 날짜 (KST YYYY-MM-DD) — D-day 계산은 프론트 dday 유틸 */
+  date: string;
+}
 
 export interface CalendarEvent {
   date: string;
@@ -236,5 +251,65 @@ export class CalendarService {
     const note = await this.noteRepo.findOne({ where: { id, userId } });
     if (!note) throw new NotFoundException('일정을 찾을 수 없습니다.');
     await this.noteRepo.remove(note);
+  }
+
+  /**
+   * A3 — D-day 임박 스텝의 미완 체크리스트 (오늘 할 일 자동 합류, read-through).
+   * 오늘(KST) ~ D-3 사이 scheduled_date 스텝의 is_done=false 항목만 반환.
+   * 복사하지 않음 — 체크는 기존 checklist PATCH 재사용 (카드 상세와 단일 소스).
+   */
+  async getUrgentChecklist(userId: string): Promise<UrgentChecklistItem[]> {
+    const start = startOfTodayKst();
+    // 오늘 포함 D-3 까지 → [오늘 00:00, 오늘+4일 00:00) KST
+    const end = new Date(
+      start.getTime() + (URGENT_CHECKLIST_DAYS + 1) * 86_400_000,
+    );
+
+    const rows = await this.stepRepo
+      .createQueryBuilder('s')
+      .innerJoin(
+        'applications',
+        'a',
+        "a.id = s.application_id AND a.user_id = :userId AND a.deleted_at IS NULL AND a.status NOT IN ('FAILED', 'PASSED')",
+        { userId },
+      )
+      .innerJoin(
+        'step_checklist_items',
+        'c',
+        'c.step_id = s.id AND c.is_done = FALSE',
+      )
+      .select([
+        'c.id AS item_id',
+        'c.content AS content',
+        's.id AS step_id',
+        's.name AS step_name',
+        'a.id AS application_id',
+        'a.company_name AS company_name',
+        "TO_CHAR(s.scheduled_date AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS date",
+      ])
+      .where('s.scheduled_date IS NOT NULL')
+      .andWhere('s.scheduled_date >= :start', { start })
+      .andWhere('s.scheduled_date < :end', { end })
+      .orderBy('s.scheduled_date', 'ASC')
+      .addOrderBy('c.order_index', 'ASC')
+      .getRawMany<{
+        item_id: string;
+        content: string;
+        step_id: string;
+        step_name: string;
+        application_id: string;
+        company_name: string;
+        date: string;
+      }>();
+
+    return rows.map((r) => ({
+      itemId: r.item_id,
+      content: r.content,
+      stepId: r.step_id,
+      stepName: r.step_name,
+      applicationId: r.application_id,
+      companyName: r.company_name,
+      date: r.date,
+    }));
   }
 }
