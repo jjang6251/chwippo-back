@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { QuotaNotifyService } from './quota-notify.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository } from 'typeorm';
@@ -7,7 +8,10 @@ import { AbuserBanService } from './abuser-ban.service';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
-import { QuotaCheckService } from './quota-check.service';
+import {
+  QuotaCheckService,
+  resolveEffectiveDayLimit,
+} from './quota-check.service';
 
 /**
  * F6 PR 2 Phase 1 — QuotaCheckService spec.
@@ -64,6 +68,18 @@ describe('QuotaCheckService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: QuotaNotifyService,
+          useValue: {
+            notifyOverrideSet: jest.fn().mockResolvedValue(undefined),
+            notifyOverrideCleared: jest.fn().mockResolvedValue(undefined),
+            notifyAutoBan: jest.fn().mockResolvedValue(undefined),
+            notifyUserReset: jest.fn().mockResolvedValue(undefined),
+            notifyAllReset: jest.fn().mockResolvedValue(undefined),
+            notifyMatrixChanged: jest.fn().mockResolvedValue(undefined),
+            notifyQuotaExceeded: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         QuotaCheckService,
         { provide: getRepositoryToken(User), useValue: userRepo },
         {
@@ -348,7 +364,8 @@ describe('QuotaCheckService', () => {
       const r = await service.checkAndPrepare(USER_ID, 'note_summary');
       expect(r.blocked).toBe(false);
       // count 쿼리의 createdAt 범위가 24h ago 기반
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
       expect(callWhere.createdAt).toBeDefined();
     });
 
@@ -362,7 +379,8 @@ describe('QuotaCheckService', () => {
       logRepo.count.mockResolvedValue(0);
       await service.checkAndPrepare(USER_ID, 'note_summary');
       // count 쿼리의 createdAt 범위가 1h ago 부터 시작
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
       const between = callWhere.createdAt as { _value: Date[] };
       const start = between._value[0];
       // GREATEST(24h ago, 1h ago) = 1h ago
@@ -378,7 +396,8 @@ describe('QuotaCheckService', () => {
       } as unknown as UserAiQuota);
       logRepo.count.mockResolvedValue(0);
       await service.checkAndPrepare(USER_ID, 'note_summary');
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
       const between = callWhere.createdAt as { _value: Date[] };
       const start = between._value[0];
       // 24h ago 가 25h ago 보다 최근 → start ≈ 24h ago
@@ -395,11 +414,64 @@ describe('QuotaCheckService', () => {
       } as UserAiQuota);
       logRepo.count.mockResolvedValue(0);
       await service.checkAndPrepare(USER_ID, 'note_summary');
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where;
+      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
+      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
       const between = callWhere.createdAt as { _value: Date[] };
       const start = between._value[0];
       const expected24hAgo = Date.now() - 24 * 60 * 60 * 1000;
       expect(Math.abs(start.getTime() - expected24hAgo)).toBeLessThan(60_000);
     });
+  });
+});
+
+// ── cost hardening B-4 — override 적용 규칙 (순수 함수) ──
+describe('resolveEffectiveDayLimit', () => {
+  it('override 없음 → base 그대로', () => {
+    expect(resolveEffectiveDayLimit(10, null)).toBe(10);
+    expect(
+      resolveEffectiveDayLimit(10, {
+        dailyCapOverride: null,
+        reason: 'manual_admin',
+      }),
+    ).toBe(10);
+  });
+
+  it('auto ban → 항상 하향(min): override 가 base 보다 커도 완화되지 않음', () => {
+    expect(
+      resolveEffectiveDayLimit(3, {
+        dailyCapOverride: 5,
+        reason: 'auto_ban_3_consecutive_days',
+      }),
+    ).toBe(3);
+    expect(
+      resolveEffectiveDayLimit(10, {
+        dailyCapOverride: 5,
+        reason: 'auto_ban_3_consecutive_days',
+      }),
+    ).toBe(5);
+  });
+
+  it('manual_admin·fair_use → admin 의도 그대로 (상향 지원 — 베타 테스터)', () => {
+    expect(
+      resolveEffectiveDayLimit(3, {
+        dailyCapOverride: 100,
+        reason: 'fair_use',
+      }),
+    ).toBe(100);
+    expect(
+      resolveEffectiveDayLimit(10, {
+        dailyCapOverride: 1,
+        reason: 'manual_admin',
+      }),
+    ).toBe(1);
+  });
+
+  it('하향 0 → 사실상 전면 차단도 가능', () => {
+    expect(
+      resolveEffectiveDayLimit(10, {
+        dailyCapOverride: 0,
+        reason: 'manual_admin',
+      }),
+    ).toBe(0);
   });
 });

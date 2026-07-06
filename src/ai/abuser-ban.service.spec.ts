@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { QuotaNotifyService } from './quota-notify.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository } from 'typeorm';
@@ -47,6 +48,18 @@ describe('AbuserBanService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: QuotaNotifyService,
+          useValue: {
+            notifyOverrideSet: jest.fn().mockResolvedValue(undefined),
+            notifyOverrideCleared: jest.fn().mockResolvedValue(undefined),
+            notifyAutoBan: jest.fn().mockResolvedValue(undefined),
+            notifyUserReset: jest.fn().mockResolvedValue(undefined),
+            notifyAllReset: jest.fn().mockResolvedValue(undefined),
+            notifyMatrixChanged: jest.fn().mockResolvedValue(undefined),
+            notifyQuotaExceeded: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         AbuserBanService,
         { provide: getRepositoryToken(UserAiQuota), useValue: quotaRepo },
         { provide: getRepositoryToken(LlmCallLog), useValue: logRepo },
@@ -268,6 +281,127 @@ describe('AbuserBanService', () => {
       logRepo.count.mockResolvedValue(30);
       const r = await service.checkAndBan(USER_ID, 'note_summary', 30);
       expect(r.banned).toBe(true);
+    });
+  });
+  // ── cost hardening B-4 — admin 수동 개별 한도 ──
+  describe('setManualOverride / clearOverride', () => {
+    it('set: upsert(userId conflict) + audit set_user_ai_quota_override (before=null)', async () => {
+      quotaRepo.findOne
+        .mockResolvedValueOnce(null) // before
+        .mockResolvedValueOnce({
+          userId: USER_ID,
+          dailyCapOverride: 100,
+          validUntil: null,
+          reason: 'fair_use',
+        } as UserAiQuota); // after
+      quotaRepo.upsert.mockResolvedValue({} as import('typeorm').InsertResult);
+
+      const result = await service.setManualOverride('admin-1', USER_ID, {
+        dailyCapOverride: 100,
+        validUntil: null,
+        reason: 'fair_use',
+      });
+
+      expect(quotaRepo.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: USER_ID,
+          dailyCapOverride: 100,
+          reason: 'fair_use',
+        }),
+        ['userId'],
+      );
+      expect(auditService.log).toHaveBeenCalledWith(
+        'admin-1',
+        'set_user_ai_quota_override',
+        'user_ai_quotas',
+        USER_ID,
+        expect.objectContaining({
+          before: null,
+          after: expect.objectContaining({ dailyCapOverride: 100 }),
+        }),
+      );
+      expect(result.dailyCapOverride).toBe(100);
+    });
+
+    it('set: 기존 auto ban 위에 덮어쓰기 → before 에 이전 값 보존 (audit 추적)', async () => {
+      quotaRepo.findOne
+        .mockResolvedValueOnce({
+          userId: USER_ID,
+          dailyCapOverride: 5,
+          validUntil: new Date('2026-07-10'),
+          reason: 'auto_ban_3_consecutive_days',
+        } as UserAiQuota)
+        .mockResolvedValueOnce({
+          userId: USER_ID,
+          dailyCapOverride: 50,
+          validUntil: null,
+          reason: 'manual_admin',
+        } as UserAiQuota);
+      quotaRepo.upsert.mockResolvedValue({} as import('typeorm').InsertResult);
+
+      await service.setManualOverride('admin-1', USER_ID, {
+        dailyCapOverride: 50,
+        validUntil: null,
+        reason: 'manual_admin',
+      });
+
+      expect(auditService.log).toHaveBeenCalledWith(
+        'admin-1',
+        'set_user_ai_quota_override',
+        'user_ai_quotas',
+        USER_ID,
+        expect.objectContaining({
+          before: expect.objectContaining({
+            dailyCapOverride: 5,
+            reason: 'auto_ban_3_consecutive_days',
+          }),
+        }),
+      );
+    });
+
+    it('clear: row 존재 → delete + audit clear_user_ai_quota_override', async () => {
+      quotaRepo.findOne.mockResolvedValueOnce({
+        userId: USER_ID,
+        dailyCapOverride: 100,
+        validUntil: null,
+        reason: 'fair_use',
+      } as UserAiQuota);
+      quotaRepo.delete.mockResolvedValue({} as import('typeorm').DeleteResult);
+
+      const r = await service.clearOverride('admin-1', USER_ID);
+
+      expect(r.cleared).toBe(true);
+      expect(quotaRepo.delete).toHaveBeenCalledWith({ userId: USER_ID });
+      expect(auditService.log).toHaveBeenCalledWith(
+        'admin-1',
+        'clear_user_ai_quota_override',
+        'user_ai_quotas',
+        USER_ID,
+        expect.anything(),
+      );
+    });
+
+    it('clear: row 없음 → no-op (delete·audit 미호출)', async () => {
+      quotaRepo.findOne.mockResolvedValueOnce(null);
+
+      const r = await service.clearOverride('admin-1', USER_ID);
+
+      expect(r.cleared).toBe(false);
+      expect(quotaRepo.delete).not.toHaveBeenCalled();
+      expect(auditService.log).not.toHaveBeenCalled();
+    });
+
+    it('getOverrideRaw: 만료 row 도 반환 (getActiveOverride 와 대비 — 표시용)', async () => {
+      const expired = {
+        userId: USER_ID,
+        dailyCapOverride: 5,
+        validUntil: new Date('2020-01-01'),
+        reason: 'auto_ban_3_consecutive_days',
+      } as UserAiQuota;
+      quotaRepo.findOne.mockResolvedValue(expired);
+
+      expect(await service.getOverrideRaw(USER_ID)).toBe(expired);
+      expect(await service.getActiveOverride(USER_ID)).toBeNull();
     });
   });
 });

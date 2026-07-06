@@ -71,10 +71,15 @@ export class OpenAIProvider implements LlmProvider {
     try {
       json = JSON.parse(res.text) as T;
     } catch (err) {
+      // 응답은 이미 수신·과금됨 — 실측 usage 동봉 (cost hardening 🔴1)
       throw new LlmJsonParseError(
         this.name,
         res.text,
         err instanceof Error ? err.message : 'unknown JSON parse error',
+        {
+          promptTokens: res.promptTokens,
+          completionTokens: res.completionTokens,
+        },
       );
     }
     return { ...res, json };

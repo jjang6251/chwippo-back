@@ -12,6 +12,7 @@ export interface PendingNotification {
   type:
     | 'coin_grant'
     | 'coin_revoke'
+    | 'quota_override' // cost hardening ④ — AI 개별 한도 설정/해제/자동제재 모달
     | 'matrix_change'
     | 'tier_downgrade'
     | 'tier_upgrade';

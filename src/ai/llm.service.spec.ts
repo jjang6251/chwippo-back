@@ -39,9 +39,12 @@ describe('LlmService', () => {
   } & {
     complete: jest.Mock;
     callJson: jest.Mock;
+    /** cost hardening 🔴2 — 스트림 경로 테스트용 (AnthropicProvider 전용 메서드) */
+    callJsonStream?: jest.Mock;
   };
   let openai: MutableProvider;
   let anthropic: MutableProvider;
+  let costGuardMock: { check: jest.Mock; invalidate: jest.Mock };
 
   const makeUser = (overrides: Partial<User> = {}): User => ({
     id: 'u-1',
@@ -152,7 +155,7 @@ describe('LlmService', () => {
     };
 
     // AI cost guard — 기본 통과 mock (개별 spec 가 mockReturnValueOnce 로 차단 케이스 가능)
-    const costGuard = {
+    const costGuard = (costGuardMock = {
       check: jest.fn().mockResolvedValue({
         blocked: false,
         currentUserTotal: 0,
@@ -161,7 +164,7 @@ describe('LlmService', () => {
         perFeatureCap: 5,
       }),
       invalidate: jest.fn(),
-    };
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -1005,6 +1008,174 @@ describe('LlmService', () => {
       });
       expect(r.status).toBe('ok');
       if (r.status === 'ok') expect(r.wasFallback).toBe(true);
+    });
+  });
+  // ── cost hardening (2026-07-06) — 실패 비용 실측 기록 · fallback 연쇄 차단 · 스트림 cost guard ──
+  describe('cost hardening', () => {
+    const schema = {
+      name: 'hardening',
+      schema: { type: 'object', properties: { v: { type: 'number' } } },
+    };
+    const USAGE = { promptTokens: 1000, completionTokens: 500 };
+
+    it('🔴1 parse 실패(usage 동봉) 1회 → 재시도 성공: retry_parsing row 에 실측 tokens·cost 기록', async () => {
+      anthropic.callJson = jest
+        .fn()
+        .mockRejectedValueOnce(
+          new LlmJsonParseError('anthropic', 'garbage', 'bad json', USAGE),
+        )
+        .mockResolvedValueOnce({
+          text: '',
+          json: { v: 1 },
+          promptTokens: 50,
+          completionTokens: 20,
+          finishReason: 'tool_use',
+        });
+
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_feedback',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: schema,
+      });
+      expect(r.status).toBe('ok');
+
+      const retryRow = logRepo.save.mock.calls
+        .map((c) => c[0] as Partial<LlmCallLog>)
+        .find((row) => row.status === 'retry_parsing');
+      expect(retryRow).toBeDefined();
+      expect(retryRow!.promptTokens).toBe(1000);
+      expect(retryRow!.completionTokens).toBe(500);
+      expect(Number(retryRow!.costUsd)).toBeGreaterThan(0);
+    });
+
+    it('🔴1+🟡2 parse 실패(usage) 2회 → error row 실측 기록 + fallback 미발동 (유료 3연쇄 차단)', async () => {
+      anthropic.callJson = jest
+        .fn()
+        .mockRejectedValue(
+          new LlmJsonParseError('anthropic', 'garbage', 'bad json', USAGE),
+        );
+      openai.callJson = jest.fn();
+      openai.complete = jest.fn();
+
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2', // fallback 매핑이 있는 anthropic feature
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: schema,
+      });
+
+      expect(r.status).toBe('error');
+      // 🟡2 — JsonParseError 는 recoverable 아님: 3번째 유료 호출 없음
+      expect(openai.callJson).not.toHaveBeenCalled();
+      expect(openai.complete).not.toHaveBeenCalled();
+
+      // 🔴1 — 최종 error row 에 실측 tokens·cost
+      const errorRow = logRepo.save.mock.calls
+        .map((c) => c[0] as Partial<LlmCallLog>)
+        .find((row) => row.status === 'error');
+      expect(errorRow).toBeDefined();
+      expect(errorRow!.promptTokens).toBe(1000);
+      expect(errorRow!.completionTokens).toBe(500);
+      expect(Number(errorRow!.costUsd)).toBeGreaterThan(0);
+    });
+
+    it('🔴1 usage 없는 parse 실패 (구형 throw) → 0 기록 유지 (하위 호환)', async () => {
+      anthropic.callJson = jest
+        .fn()
+        .mockRejectedValue(
+          new LlmJsonParseError('anthropic', 'garbage', 'bad json'),
+        );
+
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_feedback',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: schema,
+      });
+      expect(r.status).toBe('error');
+      const errorRow = logRepo.save.mock.calls
+        .map((c) => c[0] as Partial<LlmCallLog>)
+        .find((row) => row.status === 'error');
+      expect(errorRow!.promptTokens).toBe(0);
+      expect(errorRow!.costUsd).toBe('0');
+    });
+
+    describe('🔴2 callStream cost guard', () => {
+      const collect = async (gen: AsyncGenerator<unknown>) => {
+        const events: Array<{ type: string; message?: string }> = [];
+        for await (const e of gen) {
+          events.push(e as { type: string; message?: string });
+        }
+        return events;
+      };
+
+      it('cost guard 차단 → error event + blocked_cost_quota audit + provider 미호출', async () => {
+        costGuardMock.check.mockResolvedValueOnce({
+          blocked: true,
+          reason: '오늘 AI 사용 비용 한도를 초과했어요.',
+        });
+        anthropic.callJsonStream = jest.fn();
+
+        const events = await collect(
+          service.callStream({
+            userId: 'u-1',
+            feature: 'coverletter_chat',
+            systemPrompt: 's',
+            userPrompt: 'u',
+            jsonSchema: schema,
+          }),
+        );
+
+        expect(events).toEqual([
+          {
+            type: 'error',
+            message: '오늘 AI 사용 비용 한도를 초과했어요.',
+          },
+        ]);
+        expect(anthropic.callJsonStream).not.toHaveBeenCalled();
+        const blockedRow = logRepo.save.mock.calls
+          .map((c) => c[0] as Partial<LlmCallLog>)
+          .find((row) => row.status === 'blocked_cost_quota');
+        expect(blockedRow).toBeDefined();
+      });
+
+      it('cost guard 통과 → check 호출 확인 + 정상 스트림 완주 (차감 포함)', async () => {
+        anthropic.callJsonStream = jest
+          .fn()
+          .mockImplementation(async function* () {
+            yield { type: 'partial', json: { v: 1 } };
+            yield {
+              type: 'done',
+              json: { v: 1 },
+              response: {
+                text: '{"v":1}',
+                promptTokens: 30,
+                completionTokens: 10,
+                finishReason: 'tool_use',
+              },
+            };
+          });
+
+        const events = await collect(
+          service.callStream({
+            userId: 'u-1',
+            feature: 'coverletter_chat',
+            systemPrompt: 's',
+            userPrompt: 'u',
+            jsonSchema: schema,
+          }),
+        );
+
+        expect(costGuardMock.check).toHaveBeenCalledWith(
+          'u-1',
+          'coverletter_chat',
+        );
+        expect(events.at(-1)?.type).toBe('done');
+      });
     });
   });
 });

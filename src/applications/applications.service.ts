@@ -10,6 +10,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
 import { CoinService } from '../ai/coin.service';
+import { LlmService } from '../ai/llm.service';
 import { CompaniesService } from '../companies/companies.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
@@ -41,6 +42,7 @@ export class ApplicationsService {
     // PR_B1c — generateCoverletter (자소서 생성 시 회사조사 + 50 코인 차감)
     @Inject(forwardRef(() => CoinService))
     private readonly coinService: CoinService,
+    private readonly llmService: LlmService,
     @Inject(forwardRef(() => CompanyResearchService))
     private readonly companyResearch: CompanyResearchService,
     // W2 — domain inject (favicon 로딩)
@@ -424,9 +426,21 @@ export class ApplicationsService {
 
       // cache hit → 수동 charge (LlmService 안 거쳤음)
       if (result.isCached) {
-        await this.coinService.charge(userId, 'company_research', {
-          inputTokens: 0,
-          outputTokens: 0,
+        const cacheCharge = await this.coinService.charge(
+          userId,
+          'company_research',
+          {
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        );
+        // cost hardening 🟡7 — 무흔적 과금 방지: cache-hit 도 audit row
+        await this.llmService.auditCacheHitCharge({
+          userId,
+          feature: 'company_research',
+          coinCost: String(cacheCharge.coinCost),
+          resourceType: 'application',
+          resourceId: applicationId,
         });
       }
       // cache miss → LlmService.call() 이 fixed_coin_cost=50 적용해 자동 charge

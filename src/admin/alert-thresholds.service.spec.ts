@@ -3,10 +3,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository, SelectQueryBuilder } from 'typeorm';
+import { CostGuardService } from '../ai/cost-guard.service';
 import { AdminAuditService } from './admin-audit.service';
 import { AlertThresholdsService } from './alert-thresholds.service';
 import { AlertHistory } from './entities/alert-history.entity';
 import { AlertThresholds } from './entities/alert-thresholds.entity';
+
+const mockCostGuard = { invalidate: jest.fn() };
 
 describe('AlertThresholdsService', () => {
   let service: AlertThresholdsService;
@@ -24,6 +27,7 @@ describe('AlertThresholdsService', () => {
         { provide: getRepositoryToken(AlertThresholds), useValue: repo },
         { provide: getRepositoryToken(AlertHistory), useValue: historyRepo },
         { provide: AdminAuditService, useValue: audit },
+        { provide: CostGuardService, useValue: mockCostGuard },
       ],
     }).compile();
     service = module.get(AlertThresholdsService);
@@ -110,6 +114,20 @@ describe('AlertThresholdsService', () => {
       await service.recentHistory();
       expect(qb.orderBy).toHaveBeenCalledWith('h.created_at', 'DESC');
       expect(qb.limit).toHaveBeenCalledWith(50);
+    });
+  });
+  // cost hardening 🟡3 — 임계치 저장 즉시 CostGuard 캐시 무효화
+  describe('costGuard invalidate (🟡3)', () => {
+    it('update 성공 → costGuard.invalidate 1회 호출 (기존엔 최대 5분 stale)', async () => {
+      mockCostGuard.invalidate.mockClear(); // 모듈 레벨 mock — 이전 update 테스트 호출분 제거
+      repo.findOne.mockResolvedValue({ id: 1 } as AlertThresholds);
+      repo.save.mockImplementation((r) =>
+        Promise.resolve(r as AlertThresholds),
+      );
+
+      await service.update('admin-1', { perUserDailyCostUsd: 1.0 });
+
+      expect(mockCostGuard.invalidate).toHaveBeenCalledTimes(1);
     });
   });
 });
