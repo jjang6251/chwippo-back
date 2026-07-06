@@ -354,6 +354,9 @@ export class LlmService {
 
         // 이전 시도가 retry_parsing 이었으면 그 row 도 별도 저장 (audit 분리)
         if (attempts > 1 && lastJsonParseError) {
+          // cost hardening 🔴1 — parse 실패도 provider 는 전액 과금.
+          // 실측 usage 기록 (cost guard·quota·admin 추적이 실패 비용을 보게)
+          const failedUsage = lastJsonParseError.usage;
           await this.saveAudit({
             input,
             model: cfg.model,
@@ -362,9 +365,17 @@ export class LlmService {
             promptExcerpt,
             status: 'retry_parsing',
             errorMessage: lastJsonParseError.reason,
-            promptTokens: 0,
-            completionTokens: 0,
-            costUsd: '0',
+            promptTokens: failedUsage?.promptTokens ?? 0,
+            completionTokens: failedUsage?.completionTokens ?? 0,
+            costUsd: failedUsage
+              ? String(
+                  calcCostUsd(
+                    cfg.model,
+                    failedUsage.promptTokens,
+                    failedUsage.completionTokens,
+                  ),
+                )
+              : '0',
             latencyMs: 0,
             outputRedacted: false,
             attempts: 1,
@@ -438,18 +449,22 @@ export class LlmService {
 
         // === PR Phase 3 — fallback provider retry ===
         // 5xx · timeout · network error 만 fallback. 429/400/401/403 은 fallback X (비용·버그·인증 문제).
+        // cost hardening 🟡2 — JsonParseError 도 fallback X: 이미 유료 응답 2회를
+        // 받은 뒤의 형식 문제라, 3번째 유료 호출로 이어지면 요청 1건 = 과금 3건.
         const errStatus = (err as { status?: number })?.status;
         const isRecoverable =
-          !errStatus ||
-          errStatus >= 500 ||
-          errStatus === 408 ||
-          /timeout/i.test(message);
+          !(err instanceof LlmJsonParseError) &&
+          (!errStatus ||
+            errStatus >= 500 ||
+            errStatus === 408 ||
+            /timeout/i.test(message));
         const fallbackCfg = getFallbackConfig(cfg, this.config);
         if (isRecoverable && fallbackCfg) {
           const fbProvider =
             this.providers[fallbackCfg.provider as 'openai' | 'anthropic'];
           if (fbProvider?.isAvailable) {
-            // 1차 실패 audit row 먼저 저장 (관측성)
+            // 1차 실패 audit row 먼저 저장 (관측성).
+            // 5xx/timeout 은 응답 자체가 없어 usage 0 이 실측값 (cost hardening 🔴1 주석)
             await this.saveAudit({
               input,
               model: cfg.model,
@@ -558,6 +573,10 @@ export class LlmService {
         }
         // === end fallback ===
 
+        // cost hardening 🔴1 — parse 실패(2회차)는 응답을 받은 뒤의 실패라
+        // provider 가 전액 과금함. 실측 usage 기록 (5xx/timeout 은 usage 없음 → 0)
+        const parseUsage =
+          err instanceof LlmJsonParseError ? err.usage : undefined;
         const log = await this.saveAudit({
           input,
           model: cfg.model,
@@ -566,9 +585,17 @@ export class LlmService {
           promptExcerpt,
           status: 'error',
           errorMessage: message,
-          promptTokens: 0,
-          completionTokens: 0,
-          costUsd: '0',
+          promptTokens: parseUsage?.promptTokens ?? 0,
+          completionTokens: parseUsage?.completionTokens ?? 0,
+          costUsd: parseUsage
+            ? String(
+                calcCostUsd(
+                  cfg.model,
+                  parseUsage.promptTokens,
+                  parseUsage.completionTokens,
+                ),
+              )
+            : '0',
           latencyMs: Date.now() - startedAt,
           outputRedacted: false,
           attempts,
@@ -631,6 +658,29 @@ export class LlmService {
     );
     if (!coinCheck.ok) {
       yield { type: 'error', message: coinCheck.reason ?? '코인이 부족해요' };
+      return;
+    }
+
+    // 1.7. cost hardening 🔴2 — AI cost guard (call 경로와 동일한 USD hard cap).
+    //   스트림 채팅이 주력 UX 인데 이 경로만 캡 밖이었음. blocked 는 audit 도 남김.
+    const streamCostGuard = await this.costGuard.check(
+      input.userId,
+      input.feature,
+    );
+    if (streamCostGuard.blocked) {
+      const cfgForAudit = getModelConfig(input.feature, this.config);
+      await this.saveBlocked(
+        input,
+        cfgForAudit.model,
+        cfgForAudit.provider,
+        'blocked_cost_quota',
+        streamCostGuard.reason,
+        startedAt,
+      );
+      yield {
+        type: 'error',
+        message: streamCostGuard.reason,
+      };
       return;
     }
 
@@ -743,6 +793,9 @@ export class LlmService {
       this.logger.error(
         `Streaming failed (feature=${input.feature}): ${message}`,
       );
+      // cost hardening 🔴1 — 스트림 parse 실패도 완주 후 실패라 전액 과금됨 → 실측 기록
+      const streamParseUsage =
+        err instanceof LlmJsonParseError ? err.usage : undefined;
       await this.saveAudit({
         input,
         model: cfg.model,
@@ -751,9 +804,17 @@ export class LlmService {
         promptExcerpt,
         status: 'error',
         errorMessage: `[STREAMING_ERROR] ${message}`,
-        promptTokens: 0,
-        completionTokens: 0,
-        costUsd: '0',
+        promptTokens: streamParseUsage?.promptTokens ?? 0,
+        completionTokens: streamParseUsage?.completionTokens ?? 0,
+        costUsd: streamParseUsage
+          ? String(
+              calcCostUsd(
+                cfg.model,
+                streamParseUsage.promptTokens,
+                streamParseUsage.completionTokens,
+              ),
+            )
+          : '0',
         latencyMs: Date.now() - startedAt,
         outputRedacted: false,
         attempts: 1,
@@ -863,6 +924,49 @@ export class LlmService {
       errorMessage,
       callLogId: log.id,
     };
+  }
+
+  /**
+   * cost hardening 🟡7 — LLM 을 거치지 않는 결과-캐시 hit 과금도 audit.
+   * (원칙: 모든 AI 과금은 llm_call_logs 에서 추적 가능해야 함 — cache-hit 수동
+   * charge 가 유일한 무흔적 과금 경로였음. errorMessage 마커로 구분.)
+   */
+  async auditCacheHitCharge(args: {
+    userId: string;
+    feature: LlmFeature;
+    coinCost: string;
+    resourceType?: string;
+    resourceId?: string;
+  }): Promise<void> {
+    const cfg = getModelConfig(args.feature, this.config);
+    try {
+      await this.saveAudit({
+        input: {
+          userId: args.userId,
+          feature: args.feature,
+          systemPrompt: '',
+          userPrompt: '',
+          resourceType: args.resourceType,
+          resourceId: args.resourceId,
+        },
+        model: cfg.model,
+        provider: cfg.provider,
+        promptHash: null,
+        promptExcerpt: null,
+        status: 'ok',
+        errorMessage: '[CACHE_HIT_CHARGE] LLM 미호출 — 결과 캐시 과금',
+        promptTokens: 0,
+        completionTokens: 0,
+        costUsd: '0',
+        latencyMs: 0,
+        outputRedacted: false,
+        attempts: 0,
+        coinCost: args.coinCost,
+      });
+    } catch (err) {
+      // audit 은 best-effort — 과금 흐름을 막지 않음
+      this.logger.warn(`cache-hit audit 실패: ${(err as Error).message}`);
+    }
   }
 
   private async saveAudit(args: {

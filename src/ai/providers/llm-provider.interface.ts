@@ -69,12 +69,27 @@ export interface LlmProvider {
   ): Promise<LlmProviderResponse & { json: T }>;
 }
 
+/**
+ * parse 실패는 **완성된 응답을 받은 뒤** 실패하므로 provider 는 전액 과금한다.
+ * 실측 usage 를 실어 보내야 audit·cost guard·quota 가 실패 비용을 볼 수 있음
+ * (cost hardening 🔴1 — 없으면 실패 비용이 전 시스템에서 $0 으로 기록됨).
+ */
+export interface LlmFailureUsage {
+  promptTokens: number;
+  completionTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
+  webSearchCount?: number;
+}
+
 /** parsing 실패 시 throw — LlmService 가 catch 해서 retry */
 export class LlmJsonParseError extends Error {
   constructor(
     public readonly provider: LlmProviderName,
     public readonly rawText: string,
     public readonly reason: string,
+    /** 실측 토큰 (응답은 받았으므로 항상 존재해야 함 — provider 가 채움) */
+    public readonly usage?: LlmFailureUsage,
   ) {
     super(`[${provider}] JSON parse failed: ${reason}`);
     this.name = 'LlmJsonParseError';

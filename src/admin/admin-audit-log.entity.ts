@@ -24,6 +24,8 @@ export type AuditAction =
   // adminUserId = NULL (시스템 자동), targetType = 'user', targetId = userId
   // detail: { reason, duration_days, daily_cap_override, triggered_feature, consecutive_days }
   | 'auto_ban_ai'
+  | 'set_user_ai_quota_override' // cost hardening B-4 — admin 수동 개별 한도 설정
+  | 'clear_user_ai_quota_override' // cost hardening B-4 — 수동 해제
   // F6 PR 2 — admin 이 feature_quota_configs 변경 (dayLimit·monthLimit·cooldown·enabled)
   // targetType = 'feature_quota', targetId = `${feature}:${tier}`
   // detail: { feature, tier, before, after }

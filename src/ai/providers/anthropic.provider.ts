@@ -129,10 +129,19 @@ export class AnthropicProvider implements LlmProvider {
         block.type === 'tool_use' && block.name === toolName,
     );
     if (!toolUseBlock) {
+      // 응답은 이미 수신·과금됨 (web_search 포함) — 실측 usage 동봉 (cost hardening 🔴1)
+      const billed = this.toResponse(message);
       throw new LlmJsonParseError(
         this.name,
         JSON.stringify(message.content),
         'no tool_use block in response',
+        {
+          promptTokens: billed.promptTokens,
+          completionTokens: billed.completionTokens,
+          cacheCreationTokens: billed.cacheCreationTokens,
+          cacheReadTokens: billed.cacheReadTokens,
+          webSearchCount: billed.webSearchCount,
+        },
       );
     }
 
@@ -216,10 +225,18 @@ export class AnthropicProvider implements LlmProvider {
         block.type === 'tool_use' && block.name === toolName,
     );
     if (!toolUseBlock) {
+      const billed = this.toResponse(finalMessage);
       throw new LlmJsonParseError(
         this.name,
         JSON.stringify(finalMessage.content),
         'no tool_use block in streaming response',
+        {
+          promptTokens: billed.promptTokens,
+          completionTokens: billed.completionTokens,
+          cacheCreationTokens: billed.cacheCreationTokens,
+          cacheReadTokens: billed.cacheReadTokens,
+          webSearchCount: billed.webSearchCount,
+        },
       );
     }
     yield {

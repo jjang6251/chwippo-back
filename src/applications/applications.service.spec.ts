@@ -9,6 +9,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { CoinService } from '../ai/coin.service';
+import { LlmService } from '../ai/llm.service';
 import { CompaniesService } from '../companies/companies.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
@@ -95,6 +96,7 @@ describe('ApplicationsService', () => {
   };
 
   const mockDiscord = { notify: jest.fn().mockResolvedValue('sent') };
+  let mockLlmService: { auditCacheHitCharge: jest.Mock };
   let mockAppRepo: jest.Mocked<Repository<Application>>;
 
   beforeEach(async () => {
@@ -107,6 +109,10 @@ describe('ApplicationsService', () => {
     };
 
     // PR_B1c — CoinService + CompanyResearchService mock
+    // cost hardening 🟡7 — cache-hit audit mock
+    mockLlmService = {
+      auditCacheHitCharge: jest.fn().mockResolvedValue(undefined),
+    };
     const mockCoinService = {
       canCharge: jest.fn().mockResolvedValue({ ok: true }),
       charge: jest.fn().mockResolvedValue({
@@ -142,6 +148,7 @@ describe('ApplicationsService', () => {
         // checklistRepo는 module.get로 따로 받지 않고 위 inline mock 그대로 사용
         { provide: DataSource, useValue: mockDataSource },
         { provide: CoinService, useValue: mockCoinService },
+        { provide: LlmService, useValue: mockLlmService },
         { provide: CompanyResearchService, useValue: mockCompanyResearch },
         // W2 — CompaniesService.getDomainByName (응답 inject). spec 은 undefined 반환 mock
         {
@@ -976,6 +983,26 @@ describe('ApplicationsService', () => {
         'company_research',
         { inputTokens: 0, outputTokens: 0 },
       );
+      // cost hardening 🟡7 — 무흔적 과금 방지: cache-hit 도 audit row
+      expect(mockLlmService.auditCacheHitCharge).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-uuid-1',
+          feature: 'company_research',
+          resourceType: 'application',
+          resourceId: 'app-uuid-1',
+        }),
+      );
+    });
+
+    it('B2-b) cache miss — auditCacheHitCharge 미호출 (LlmService 가 자체 audit)', async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(mockLlmService.auditCacheHitCharge).not.toHaveBeenCalled();
     });
 
     it("B3) race — UPDATE affected=0 + 현재 status='in_progress' → already_in_progress", async () => {

@@ -1,6 +1,8 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, In, Repository } from 'typeorm';
+import { billableCallWhere } from './billable-call-filter';
+import { QuotaNotifyService } from './quota-notify.service';
+import { Between, Repository } from 'typeorm';
 import { AdminAuditService } from '../admin/admin-audit.service';
 import { AlertHistory } from '../admin/entities/alert-history.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
@@ -35,6 +37,7 @@ export class AbuserBanService {
   constructor(
     @InjectRepository(UserAiQuota)
     private readonly quotaRepo: Repository<UserAiQuota>,
+    private readonly quotaNotify: QuotaNotifyService,
     @InjectRepository(LlmCallLog)
     private readonly logRepo: Repository<LlmCallLog>,
     @Inject(forwardRef(() => AdminAuditService))
@@ -108,6 +111,8 @@ export class AbuserBanService {
 
     // Discord webhook (best-effort, 실패해도 ban 자체 영향 X)
     await this.notifyDiscord(userId, feature, validUntil);
+    // cost hardening ④ — 제재는 유저 본인도 알아야 함 (인앱+push+모달)
+    await this.quotaNotify.notifyAutoBan(userId, BAN_DAILY_CAP, validUntil);
 
     this.logger.warn(
       `Auto-ban activated (user=${userId}, feature=${feature}, until=${validUntil.toISOString()})`,
@@ -132,13 +137,13 @@ export class AbuserBanService {
       const dayStart = new Date(dayEnd);
       dayStart.setDate(dayStart.getDate() - 1);
 
+      // cost hardening 🟡1 — 토큰 소모된 실패도 "한도 도달" 판정에 포함
       const count = await this.logRepo.count({
-        where: {
+        where: billableCallWhere({
           userId,
           feature,
-          status: In(['ok', 'retry_parsing']),
           createdAt: Between(dayStart, dayEnd),
-        },
+        }),
       });
       counts.push(count);
     }
@@ -168,5 +173,83 @@ export class AbuserBanService {
         `alert_history insert 실패 (abuser_ban, user=${userId}): ${(err as Error).message}`,
       );
     }
+  }
+  // ── cost hardening B-4 — admin 수동 개별 한도 ─────────────────
+
+  /** 표시용 — 만료된 row 도 반환 (getActiveOverride 는 만료 시 null) */
+  async getOverrideRaw(userId: string): Promise<UserAiQuota | null> {
+    return this.quotaRepo.findOne({ where: { userId } });
+  }
+
+  /**
+   * admin 수동 개별 한도 설정 (상향·하향 모두).
+   * - manual_admin: 제재·CS 대응 / fair_use: 베타 테스터·이벤트 상향
+   * - 기존 row 의 quota_reset_at 은 보존 (upsert 대상 컬럼 제한)
+   */
+  async setManualOverride(
+    adminUserId: string,
+    targetUserId: string,
+    input: {
+      dailyCapOverride: number;
+      validUntil: Date | null;
+      reason: 'manual_admin' | 'fair_use';
+    },
+  ): Promise<UserAiQuota> {
+    const before = await this.getOverrideRaw(targetUserId);
+    await this.quotaRepo.upsert(
+      {
+        userId: targetUserId,
+        dailyCapOverride: input.dailyCapOverride,
+        validUntil: input.validUntil,
+        reason: input.reason,
+      },
+      ['userId'],
+    );
+    const after = await this.getOverrideRaw(targetUserId);
+    await this.auditService.log(
+      adminUserId,
+      'set_user_ai_quota_override',
+      'user_ai_quotas',
+      targetUserId,
+      {
+        before: before
+          ? {
+              dailyCapOverride: before.dailyCapOverride,
+              validUntil: before.validUntil,
+              reason: before.reason,
+            }
+          : null,
+        after: {
+          dailyCapOverride: input.dailyCapOverride,
+          validUntil: input.validUntil,
+          reason: input.reason,
+        },
+      },
+    );
+    return after!;
+  }
+
+  /** 수동 해제 — row 삭제 (통상 한도 복귀). 없으면 no-op */
+  async clearOverride(
+    adminUserId: string,
+    targetUserId: string,
+  ): Promise<{ cleared: boolean }> {
+    const before = await this.getOverrideRaw(targetUserId);
+    if (!before) return { cleared: false };
+    await this.quotaRepo.delete({ userId: targetUserId });
+    await this.auditService.log(
+      adminUserId,
+      'clear_user_ai_quota_override',
+      'user_ai_quotas',
+      targetUserId,
+      {
+        before: {
+          dailyCapOverride: before.dailyCapOverride,
+          validUntil: before.validUntil,
+          reason: before.reason,
+        },
+      },
+    );
+    return { cleared: true };
   }
 }

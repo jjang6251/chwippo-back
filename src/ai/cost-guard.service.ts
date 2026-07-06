@@ -82,7 +82,8 @@ export class CostGuardService {
       .addSelect('SUM(l.cost_usd)', 'cost')
       .where('l.user_id = :userId', { userId })
       .andWhere('l.created_at >= :from', { from })
-      .andWhere("l.status = 'ok'")
+      // cost hardening 🔴1 연동 — 토큰 소모된 실패 비용도 일일 캡 합산
+      .andWhere("(l.status = 'ok' OR l.cost_usd > 0)")
       .groupBy('l.feature')
       .getRawMany<{ feature: LlmFeature; cost: string }>();
 

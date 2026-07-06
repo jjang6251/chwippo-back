@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { CostGuardService } from '../ai/cost-guard.service';
 import { AdminAuditService } from './admin-audit.service';
 import { AlertHistory } from './entities/alert-history.entity';
 import { AlertThresholds } from './entities/alert-thresholds.entity';
@@ -32,6 +33,8 @@ export class AlertThresholdsService {
     @InjectRepository(AlertHistory)
     private readonly historyRepo: Repository<AlertHistory>,
     private readonly audit: AdminAuditService,
+    // cost hardening 🟡3 — 임계치 수정 시 CostGuard 5분 캐시 즉시 무효화
+    private readonly costGuard: CostGuardService,
   ) {}
 
   /** 단일 row — 마이그레이션이 id=1 row 보장. 누락 시 NotFound (자동 생성 X — 의도적 데이터 무결성) */
@@ -82,6 +85,8 @@ export class AlertThresholdsService {
       row.perFeatureDailyCostUsd = dto.perFeatureDailyCostUsd;
     row.updatedBy = adminUserId;
     const saved = await this.repo.save(row);
+    // 🟡3 — 저장 즉시 CostGuard 캐시 무효화 (기존엔 최대 5분 stale)
+    this.costGuard.invalidate();
 
     await this.audit.log(
       adminUserId,

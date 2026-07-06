@@ -594,7 +594,8 @@ describe('NoteSummaryService', () => {
       });
       await service.summarize('user-1', 'log-1');
       const callArgs = emCount.mock.calls[0];
-      const whereCondition = callArgs[1].where;
+      // billableCallWhere 배열 — [0] ok·retry / [1] 토큰 소모된 error
+      const whereCondition = callArgs[1].where[0];
       expect(whereCondition.status).toBeDefined();
     });
 
@@ -692,7 +693,7 @@ describe('NoteSummaryService', () => {
         perResourceDayLimit: 5,
       } as FeatureQuotaConfig);
       await service.getStatus('user-1', 'log-1');
-      const where = llmLogCount.mock.calls[0][0].where;
+      const where = llmLogCount.mock.calls[0][0].where[0]; // billableCallWhere 배열
       expect(where.status).toBeDefined();
     });
 
@@ -723,7 +724,7 @@ describe('NoteSummaryService', () => {
       quotaCheck.resolveSince24h.mockResolvedValueOnce(oneHourAgo);
       await service.getStatus('user-1', 'log-1');
       expect(quotaCheck.resolveSince24h).toHaveBeenCalledWith('user-1');
-      const where = llmLogCount.mock.calls[0][0].where;
+      const where = llmLogCount.mock.calls[0][0].where[0]; // billableCallWhere 배열
       // Between 의 시작 시각이 oneHourAgo 와 같아야 함
       const between = where.createdAt as { _value: Date[] };
       expect(between._value[0]).toBe(oneHourAgo);
@@ -751,7 +752,7 @@ describe('NoteSummaryService', () => {
       });
       await service.summarize('user-1', 'log-1');
       expect(quotaCheck.resolveSince24h).toHaveBeenCalledWith('user-1');
-      const where = emCount.mock.calls[0][1].where;
+      const where = emCount.mock.calls[0][1].where[0]; // billableCallWhere 배열
       const between = where.createdAt as { _value: Date[] };
       expect(between._value[0]).toBe(oneHourAgo);
     });

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AdminAuditService } from '../admin/admin-audit.service';
 import { User } from '../users/user.entity';
+import { QuotaNotifyService } from './quota-notify.service';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
 
 export interface ResetAiQuotaDto {
@@ -35,6 +36,7 @@ export class AdminQuotaResetService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly audit: AdminAuditService,
+    private readonly quotaNotify: QuotaNotifyService,
   ) {}
 
   async reset(
@@ -70,6 +72,8 @@ export class AdminQuotaResetService {
         affected,
         resetAt: nowIso,
       });
+      // cost hardening ④ — 전체 유저 통지 (best-effort)
+      await this.quotaNotify.notifyAllReset();
       return { affected, scope: 'all_users' };
     }
 
@@ -108,6 +112,8 @@ export class AdminQuotaResetService {
       affected: 1,
       resetAt: nowIso,
     });
+    // cost hardening ④ — 해당 유저 통지 (best-effort)
+    await this.quotaNotify.notifyUserReset(dto.userId);
     return { affected: 1, scope: 'single_user' };
   }
 }

@@ -339,4 +339,62 @@ describe('CoverletterDocController', () => {
       expect(r).toEqual({ ok: true });
     });
   });
+  // ── cost hardening 🟡6 — SSE 스트림 drain ──
+  describe('POST chat/stream — 클라이언트 끊김 drain (🟡6)', () => {
+    const USER = { id: 'u-1' } as never;
+    const DTO = { message: '안녕' } as never;
+
+    function makeRes(writableEndedFrom: number) {
+      let writes = 0;
+      return {
+        setHeader: jest.fn(),
+        flushHeaders: jest.fn(),
+        get writableEnded() {
+          // writableEndedFrom 번째 write 이후부터 끊긴 것으로 시뮬레이션
+          return writes >= writableEndedFrom;
+        },
+        write: jest.fn(() => {
+          writes++;
+          return true;
+        }),
+        end: jest.fn(),
+      };
+    }
+
+    it('스트림 중간에 클라이언트 끊김 → generator 는 done 까지 완주 (차감·audit 보존)', async () => {
+      const consumed: string[] = [];
+      chat.chatStream.mockImplementation(async function* () {
+        consumed.push('partial-1');
+        yield { type: 'partial' } as never;
+        consumed.push('partial-2');
+        yield { type: 'partial' } as never;
+        // 이 지점이 LlmService 의 charge+audit 에 해당 — 도달해야 함
+        consumed.push('done');
+        yield { type: 'done' } as never;
+      });
+      const res = makeRes(2); // 첫 이벤트(write 2회) 후 끊김
+
+      await controller.sendChatStream(USER, 'app-1', DTO, res as never);
+
+      // 끊긴 뒤에도 generator 가 끝까지 소비됨 (break 로 abandon 하지 않음)
+      expect(consumed).toEqual(['partial-1', 'partial-2', 'done']);
+      // 끊긴 후엔 write 없음 (첫 이벤트 2회뿐)
+      expect(res.write).toHaveBeenCalledTimes(2);
+      // 이미 ended 라 end() 재호출 없음
+      expect(res.end).not.toHaveBeenCalled();
+    });
+
+    it('정상 완주 → 모든 이벤트 write + end 호출 (기존 동작 회귀)', async () => {
+      chat.chatStream.mockImplementation(async function* () {
+        yield { type: 'partial' } as never;
+        yield { type: 'done' } as never;
+      });
+      const res = makeRes(Number.MAX_SAFE_INTEGER);
+
+      await controller.sendChatStream(USER, 'app-1', DTO, res as never);
+
+      expect(res.write).toHaveBeenCalledTimes(4); // 이벤트 2 × (event+data)
+      expect(res.end).toHaveBeenCalledTimes(1);
+    });
+  });
 });

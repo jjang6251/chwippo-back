@@ -5,8 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { billableCallWhere } from './billable-call-filter';
 import { createHash } from 'crypto';
-import { Between, DataSource, In, Repository } from 'typeorm';
+import { Between, DataSource, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { AbuserBanService } from './abuser-ban.service';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
@@ -127,14 +128,13 @@ export class NoteSummaryService {
       const since24h = await this.quotaCheck.resolveSince24h(userId);
       // 5.6.8 fix — blocked/error row 제외 (QuotaCheckService 와 동일 정책).
       const perNoteCount = await em.count(LlmCallLog, {
-        where: {
+        where: billableCallWhere({
           userId,
-          feature: 'note_summary',
-          resourceType: 'activity_log',
+          feature: 'note_summary' as const,
+          resourceType: 'activity_log' as const,
           resourceId: logId,
-          status: In(['ok', 'retry_parsing']),
           createdAt: Between(since24h, new Date()),
-        },
+        }),
       });
       if (perNoteCount >= perNoteLimit) {
         await this.llm.call({
@@ -278,14 +278,13 @@ export class NoteSummaryService {
     const since24h = await this.quotaCheck.resolveSince24h(userId);
     // 5.6.8 fix — summarize 와 동일 status 필터 (ok·retry_parsing 만 카운트)
     const perNoteUsed = await this.llmLogRepo.count({
-      where: {
+      where: billableCallWhere({
         userId,
-        feature: 'note_summary',
-        resourceType: 'activity_log',
+        feature: 'note_summary' as const,
+        resourceType: 'activity_log' as const,
         resourceId: logId,
-        status: In(['ok', 'retry_parsing']),
         createdAt: Between(since24h, new Date()),
-      },
+      }),
     });
 
     return {

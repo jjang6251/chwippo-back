@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { QuotaNotifyService } from './quota-notify.service';
 import { AdminAuditService } from '../admin/admin-audit.service';
 import {
   FeatureQuotaConfig,
@@ -43,6 +44,7 @@ export class AdminFeatureQuotasService {
   constructor(
     @InjectRepository(FeatureQuotaConfig)
     private readonly repo: Repository<FeatureQuotaConfig>,
+    private readonly quotaNotify: QuotaNotifyService,
     @Inject(forwardRef(() => AdminAuditService))
     private readonly auditService: AdminAuditService,
   ) {}
@@ -152,6 +154,13 @@ export class AdminFeatureQuotasService {
         },
       },
     );
+
+    // cost hardening ④ — 한도(일·월) 변경 시 해당 tier 전체 유저 통지 (best-effort)
+    await this.quotaNotify.notifyMatrixChanged(feature as LlmFeature, tier, {
+      dayLimit: before.dayLimit !== saved.dayLimit ? saved.dayLimit : undefined,
+      monthLimit:
+        before.monthLimit !== saved.monthLimit ? saved.monthLimit : undefined,
+    });
 
     return saved;
   }
