@@ -172,6 +172,26 @@ describe('AiCoverletterFeedbackService', () => {
     );
   });
 
+  it('글자수 초과 시 서버가 결정적으로 over_limit 지적 강제 지시 주입', async () => {
+    // charLimit 200 · 답변 300자 → 100자 초과
+    sourceRefs.assertOwnsCoverletter.mockResolvedValue(
+      makeCl({ answer: '가'.repeat(300), charLimit: 200 }),
+    );
+    await service.review(USER_ID, CL_ID);
+    const call = llm.call.mock.calls[0][0];
+    expect(call.userPrompt).toContain('100자 초과');
+    expect(call.userPrompt).toContain('over_limit');
+  });
+
+  it('글자수 제한 내면 초과 지시 미주입', async () => {
+    sourceRefs.assertOwnsCoverletter.mockResolvedValue(
+      makeCl({ answer: '가'.repeat(300), charLimit: 1000 }),
+    );
+    await service.review(USER_ID, CL_ID);
+    const call = llm.call.mock.calls[0][0];
+    expect(call.userPrompt).not.toContain('초과했다');
+  });
+
   it('llm error → status error + reason (throw 안 함)', async () => {
     llm.call.mockResolvedValue({
       status: 'error',

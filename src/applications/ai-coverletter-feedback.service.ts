@@ -110,6 +110,11 @@ const SYSTEM_PROMPT = `너는 한국 취준생의 자소서를 제출 직전에 
 - 각 지적(issues)마다 답변 원문에서 해당 문장을 quote 로 정확히 인용 (프론트가 하이라이트).
 - 예시 문장(suggestions)은 최대 2개 — 사용자가 참고할 방향 제시용.
 
+[suggestions 형식 — 절대 준수. 사용자가 버튼 한 번으로 target→improved 자동 치환한다]
+- target: 답변 원문에서 **글자 그대로 복사한 연속 문자열** (조금이라도 바꾸면 치환 실패).
+- improved: target 자리에 **그대로 들어갈 대체 문장만.** 설명·지시·평가("~하면 더 간결합니다", "이 문장을 삭제하고" 등)를 improved 에 절대 섞지 마라 — 섞이면 그 말이 자소서 본문에 박힌다.
+- 문장 삭제·구조 변경을 권하고 싶으면 suggestions 가 아니라 issues 의 advice 로 써라.
+
 [점검 관점 — kind 별]
 - ai_tone: AI 가 쓴 티가 나는 상투 표현 (예: "끊임없는 열정", 과도한 병렬 구조, 구체성 없는 미사여구, 반복 어미). 기업들이 AI 판별기를 쓰는 시대 — 본인 사례의 구체 동사·수치로 바꾸도록 조언
 - structure: 두괄식 아님 / 소제목 부재 / STAR 흐름 붕괴
@@ -197,11 +202,19 @@ export class AiCoverletterFeedbackService {
     const research = cached?.status === 'ok' ? cached.research : null;
 
     // 5. user prompt — 사용자 입력은 전부 user 역할 (system 은 코드 상수만)
+    // 글자수 초과는 서버가 결정적으로 판정 — LLM 재량에 맡기지 않고 지적을 강제
+    const overBy =
+      cl2.charLimit && answer.length > cl2.charLimit
+        ? answer.length - cl2.charLimit
+        : 0;
     const parts: string[] = [
       `# 자소서 문항\n${cl2.question ?? ''}`,
       cl2.charLimit
         ? `(글자수 제한: ${cl2.charLimit}자 · 현재 ${answer.length}자)`
         : `(현재 ${answer.length}자)`,
+      overBy > 0
+        ? `⚠️ 현재 답변이 제한을 ${overBy}자 초과했다. over_limit issue 로 쳐낼 문장을 반드시 지목하고, 가능하면 suggestions 에 해당 문장의 압축본(대체 문장만)을 1개 포함하라.`
+        : null,
       cl2.application?.companyName
         ? `# 지원 회사\n${cl2.application.companyName}`
         : null,
