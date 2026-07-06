@@ -50,6 +50,14 @@ export class Application {
   @Column({ type: 'text', nullable: true })
   memo: string | null;
 
+  /** A9 — 탈락 회고 한 줄 ("이번 지원에서 얻은 것"). 선택 입력 · 수정 허용 */
+  @Column({ name: 'failed_takeaway', type: 'text', nullable: true })
+  failedTakeaway: string | null;
+
+  /** A9 — 회고 입력·수정 시각 (성장 페이지 정렬 기준) */
+  @Column({ name: 'failed_takeaway_at', type: 'timestamptz', nullable: true })
+  failedTakeawayAt: Date | null;
+
   @Column({ name: 'current_step_index', default: 0 })
   currentStepIndex: number;
 

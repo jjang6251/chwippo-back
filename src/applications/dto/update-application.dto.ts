@@ -43,6 +43,12 @@ export class UpdateApplicationDto {
   @MaxLength(2000)
   memo?: string;
 
+  /** A9 — 탈락 회고. 빈 문자열 = 삭제(null 처리) */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  failedTakeaway?: string;
+
   @IsOptional()
   @IsInt()
   @Min(0)
