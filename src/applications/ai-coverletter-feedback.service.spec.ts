@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import { LlmService } from '../ai/llm.service';
@@ -7,6 +8,7 @@ import { QuotaCheckService } from '../ai/quota-check.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { AiCoverletterFeedbackService } from './ai-coverletter-feedback.service';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
+import { Application } from './application.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 
 /**
@@ -28,6 +30,7 @@ describe('AiCoverletterFeedbackService', () => {
   let quotaCheck: jest.Mocked<QuotaCheckService>;
   let abuserBan: jest.Mocked<AbuserBanService>;
   let research: { getCachedForApplication: jest.Mock };
+  let appRepo: { findOne: jest.Mock };
 
   const USER_ID = 'user-1';
   const CL_ID = 'cl-1';
@@ -45,7 +48,6 @@ describe('AiCoverletterFeedbackService', () => {
       answerOrigin: 'manual',
       charLimit: 1000,
       orderIndex: 0,
-      application: { id: 'app-1', companyName: '카카오' },
       createdAt: new Date(),
       updatedAt: new Date(),
       ...over,
@@ -80,6 +82,11 @@ describe('AiCoverletterFeedbackService', () => {
     quotaCheck.checkAndPrepare.mockResolvedValue({ blocked: false } as never);
     abuserBan = mock<AbuserBanService>();
     research = { getCachedForApplication: jest.fn().mockResolvedValue(null) };
+    appRepo = {
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ id: 'app-1', companyName: '카카오' }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -89,6 +96,7 @@ describe('AiCoverletterFeedbackService', () => {
         { provide: QuotaCheckService, useValue: quotaCheck },
         { provide: AbuserBanService, useValue: abuserBan },
         { provide: CompanyResearchService, useValue: research },
+        { provide: getRepositoryToken(Application), useValue: appRepo },
       ],
     }).compile();
     service = module.get(AiCoverletterFeedbackService);
@@ -106,6 +114,8 @@ describe('AiCoverletterFeedbackService', () => {
     expect(call.userPrompt).toContain('지원 동기를 작성하세요');
     expect(call.userPrompt).toContain(LONG_ANSWER);
     expect(call.userPrompt).toContain('1000자');
+    // 회사명은 appRepo 조회로 주입 (assertOwns 반환 cl 엔 application 관계 없음)
+    expect(call.userPrompt).toContain('카카오');
     // prompt injection 1차 방어 — 사용자 입력이 system 으로 새지 않음
     expect(call.systemPrompt).not.toContain(LONG_ANSWER);
     expect(call.jsonSchema).toBeDefined();

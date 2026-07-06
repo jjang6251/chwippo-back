@@ -5,10 +5,13 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import { LlmService } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
+import { Application } from './application.entity';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
 
 /**
@@ -139,6 +142,8 @@ export class AiCoverletterFeedbackService {
     private readonly abuserBan: AbuserBanService,
     @Inject(forwardRef(() => CompanyResearchService))
     private readonly companyResearch: CompanyResearchService,
+    @InjectRepository(Application)
+    private readonly appRepo: Repository<Application>,
   ) {}
 
   async review(
@@ -188,15 +193,15 @@ export class AiCoverletterFeedbackService {
     }
 
     // 4. 회사조사 캐시 (조회 전용·코인 0 — company_mismatch 판단 근거)
-    const cl2 = cl as typeof cl & {
-      application?: { id: string; companyName?: string };
-      charLimit?: number | null;
-      question?: string;
-    };
-    const appId = cl2.application?.id;
-    const cached = appId
+    //    assertOwnsCoverletter 는 application 관계를 로드하지 않음 (innerJoin only)
+    //    → companyName 은 appRepo 로 직접 조회. cl.applicationId 는 컬럼이라 항상 존재.
+    const app = await this.appRepo.findOne({
+      where: { id: cl.applicationId, userId },
+      select: ['id', 'companyName'],
+    });
+    const cached = app
       ? await this.companyResearch
-          .getCachedForApplication(userId, appId)
+          .getCachedForApplication(userId, app.id)
           .catch(() => null)
       : null;
     const research = cached?.status === 'ok' ? cached.research : null;
@@ -204,20 +209,18 @@ export class AiCoverletterFeedbackService {
     // 5. user prompt — 사용자 입력은 전부 user 역할 (system 은 코드 상수만)
     // 글자수 초과는 서버가 결정적으로 판정 — LLM 재량에 맡기지 않고 지적을 강제
     const overBy =
-      cl2.charLimit && answer.length > cl2.charLimit
-        ? answer.length - cl2.charLimit
+      cl.charLimit && answer.length > cl.charLimit
+        ? answer.length - cl.charLimit
         : 0;
     const parts: string[] = [
-      `# 자소서 문항\n${cl2.question ?? ''}`,
-      cl2.charLimit
-        ? `(글자수 제한: ${cl2.charLimit}자 · 현재 ${answer.length}자)`
+      `# 자소서 문항\n${cl.question ?? ''}`,
+      cl.charLimit
+        ? `(글자수 제한: ${cl.charLimit}자 · 현재 ${answer.length}자)`
         : `(현재 ${answer.length}자)`,
       overBy > 0
         ? `⚠️ 현재 답변이 제한을 ${overBy}자 초과했다. over_limit issue 로 쳐낼 문장을 반드시 지목하고, 가능하면 suggestions 에 해당 문장의 압축본(대체 문장만)을 1개 포함하라.`
         : null,
-      cl2.application?.companyName
-        ? `# 지원 회사\n${cl2.application.companyName}`
-        : null,
+      app?.companyName ? `# 지원 회사\n${app.companyName}` : null,
       research?.businessSummary
         ? `# 회사 조사 요약 (company_mismatch 판단 근거)\n${String(research.businessSummary).slice(0, 600)}`
         : null,
