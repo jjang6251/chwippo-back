@@ -182,6 +182,68 @@ describe('AiCoverletterDraftService', () => {
 
   // ── 1. 정상 흐름 ──
 
+  it('A1: 회사조사 미완(idle) 상태에서도 draft 정상 진행 (가드 제거 검증)', async () => {
+    // 기존 가드는 completed 외 전부 차단 — 3경로 개편 후 조사 상태와 무관해야 함
+    const idleCl = makeClWithApp();
+    idleCl.application.coverletterGenerationStatus = 'idle';
+    clRepo.findOne.mockResolvedValue(idleCl);
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '조사 없이 생성된 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-idle',
+      outputRedacted: false,
+    });
+    const result = await service.generate(USER_ID, CL_ID, {});
+    expect(result.status).toBe('ok');
+  });
+
+  it('A1: draft 첫 생성(origin null) → answerOrigin=ai_draft 기록', async () => {
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '생성된 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-origin',
+      outputRedacted: false,
+    });
+    await service.generate(USER_ID, CL_ID, {});
+    const saved = clRepo.save.mock.calls.at(-1)?.[0] as {
+      answerOrigin?: string;
+    };
+    expect(saved.answerOrigin).toBe('ai_draft');
+  });
+
+  it('A1: 기존 manual 답변 위에 재생성 → 최초 출처(manual) 불변', async () => {
+    // 저장 대상 cl 은 sourceRefsService.assertOwnsCoverletter 반환 객체
+    sourceRefs.assertOwnsCoverletter.mockResolvedValue(
+      makeCl({ answerOrigin: 'manual' }),
+    );
+    llm.call.mockResolvedValue({
+      status: 'ok',
+      text: '재생성 답변',
+      json: undefined,
+      promptTokens: 500,
+      completionTokens: 300,
+      costUsd: 0.01,
+      latencyMs: 1000,
+      callLogId: 'log-regen',
+      outputRedacted: false,
+    });
+    await service.generate(USER_ID, CL_ID, {});
+    const saved = clRepo.save.mock.calls.at(-1)?.[0] as {
+      answerOrigin?: string;
+    };
+    expect(saved.answerOrigin).toBe('manual');
+  });
+
   it('정상: draft 만 (recommend candidates 0) → answer 저장 + meta 반환', async () => {
     llm.call.mockResolvedValue({
       status: 'ok',

@@ -146,12 +146,8 @@ export class AiCoverletterDraftService {
       throw new NotFoundException('지원 카드를 찾을 수 없습니다.');
     }
 
-    // PR_B1c — 회사조사 완료 가드 (자소서 생성 안 한 application 의 draft 차단)
-    if (clWithApp.application.coverletterGenerationStatus !== 'completed') {
-      throw new BadRequestException(
-        '먼저 자소서 생성을 진행해 주세요 (회사 정보 조사가 필요해요).',
-      );
-    }
+    // A1 — 회사조사 완료 가드 제거 (3경로 개편). draft 컨텍스트는 원래
+    // source_refs·myinfo 기반이라 조사와 무관 — 조사는 chat 단계에서만 활용됨.
 
     // 2. selected refs IDOR batch
     const selectedIds = input.selectedSourceRefIds ?? [];
@@ -332,6 +328,8 @@ export class AiCoverletterDraftService {
 
     // 11. answer 저장 + AI 추천 ref bulk insert (selected 는 이미 있음, AI 추천만 새로 저장)
     cl.answer = draftResult.text;
+    // A1 — 최초 출처만 기록 (기존 답변을 덮는 재생성이면 원 출처 유지)
+    if (!cl.answerOrigin) cl.answerOrigin = 'ai_draft';
     await this.clRepo.save(cl);
 
     const createdAiRefs = await this.sourceRefsService.bulkCreate(

@@ -32,6 +32,13 @@ export class ApplicationCoverletter {
   @Column({ type: 'text', nullable: true })
   answer: string | null;
 
+  /**
+   * A1 — 답변 최초 출처 (manual/imported/ai_draft). 이후 편집에도 불변.
+   * 도입 전 데이터는 NULL (출처 불명).
+   */
+  @Column({ name: 'answer_origin', type: 'varchar', nullable: true })
+  answerOrigin: 'manual' | 'imported' | 'ai_draft' | null;
+
   // 사용자가 공고 보고 입력하는 글자수 제한 (없으면 무제한)
   @Column({ name: 'char_limit', type: 'int', nullable: true })
   charLimit: number | null;

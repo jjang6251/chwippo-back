@@ -37,6 +37,15 @@ export class CreateApplicationCoverletterDto {
   @Min(0)
   @Max(20000)
   charLimit?: number;
+
+  /**
+   * A1 — 답변 출처 (통계·activation 해석용 — 과금 무관이라 클라이언트 신고 허용).
+   * 직접 타이핑=manual(default) · 가져오기 모달=imported · chat 제안 적용=ai_draft.
+   * 답변 첫 저장 시 1회만 반영, 이후 불변 (서버 강제).
+   */
+  @IsOptional()
+  @IsIn(['manual', 'imported', 'ai_draft'])
+  answerOrigin?: 'manual' | 'imported' | 'ai_draft';
 }
 
 export class UpdateApplicationCoverletterDto {
@@ -60,4 +69,8 @@ export class UpdateApplicationCoverletterDto {
   @Min(0)
   @Max(20000)
   charLimit?: number | null;
+  /** A1 — create 와 동일 규칙 (첫 답변 저장 시에만 반영, 이후 불변) */
+  @IsOptional()
+  @IsIn(['manual', 'imported', 'ai_draft'])
+  answerOrigin?: 'manual' | 'imported' | 'ai_draft';
 }
