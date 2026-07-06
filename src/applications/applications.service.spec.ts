@@ -473,6 +473,75 @@ describe('ApplicationsService', () => {
       dataSource.transaction.mockImplementation(async (cb: any) => cb(em));
     });
 
+    /**
+     * A9 — failedTakeaway 시나리오:
+     * 1. 입력 → trim 저장 + failedTakeawayAt 세팅
+     * 2. 수정 → 값·시각 갱신
+     * 3. 빈 문자열 → null 삭제 + 시각 null
+     * 4. 미전송(undefined) → 기존 값 불변
+     * 5. FAILED → IN_PROGRESS 롤백 전이 허용 (결과 되돌리기)
+     */
+    it('A9-1) failedTakeaway 입력 → trim 저장 + at 세팅', async () => {
+      const app = makeApp({ status: 'FAILED' });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        failedTakeaway: '  코테는 통과했다  ',
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.failedTakeaway).toBe('코테는 통과했다');
+      expect(saved.failedTakeawayAt).toBeInstanceOf(Date);
+    });
+
+    it('A9-2) 빈 문자열 → null 삭제 + at null', async () => {
+      const app = makeApp({
+        status: 'FAILED',
+        failedTakeaway: '기존 회고',
+        failedTakeawayAt: new Date(),
+      });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        failedTakeaway: '   ',
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.failedTakeaway).toBeNull();
+      expect(saved.failedTakeawayAt).toBeNull();
+    });
+
+    it('A9-3) 미전송 → 기존 회고 불변', async () => {
+      const at = new Date('2026-07-01T00:00:00Z');
+      const app = makeApp({
+        status: 'FAILED',
+        failedTakeaway: '기존 회고',
+        failedTakeawayAt: at,
+      });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', { memo: '메모만' });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.failedTakeaway).toBe('기존 회고');
+      expect(saved.failedTakeawayAt).toBe(at);
+    });
+
+    it('A9-4) FAILED → IN_PROGRESS 롤백 전이 허용', async () => {
+      const app = makeApp({ status: 'FAILED' });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue({
+        ...app,
+        status: 'IN_PROGRESS',
+      });
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        status: 'IN_PROGRESS',
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.status).toBe('IN_PROGRESS');
+    });
+
     it('PLANNED→IN_PROGRESS + 기존 스텝 없음 → createDefaultSteps 호출', async () => {
       const app = makeApp({ status: 'PLANNED' });
       appRepo.findOne

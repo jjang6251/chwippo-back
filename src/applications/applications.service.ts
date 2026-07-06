@@ -177,6 +177,14 @@ export class ApplicationsService {
       }
     }
 
+    // A9 — 탈락 회고: trim 후 빈 문자열 = 삭제(null). 입력·수정 시 시각 갱신 (성장 페이지 정렬)
+    if (dto.failedTakeaway !== undefined) {
+      const trimmed = dto.failedTakeaway.trim();
+      app.failedTakeaway = trimmed || null;
+      app.failedTakeawayAt = trimmed ? new Date() : null;
+      delete dtoWithoutDeadline.failedTakeaway;
+    }
+
     Object.assign(app, dtoWithoutDeadline);
     // needsDetail은 (status, jobTitle)에서 파생 — 명시적으로 보내지 않으면 재계산
     if (dto.needsDetail === undefined) {
