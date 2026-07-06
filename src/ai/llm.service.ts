@@ -349,6 +349,11 @@ export class LlmService {
           cfg.model,
           result.promptTokens,
           result.completionTokens,
+          {
+            cacheCreationTokens: result.cacheCreationTokens,
+            cacheReadTokens: result.cacheReadTokens,
+            webSearchCount: result.webSearchCount,
+          },
         );
         const latencyMs = Date.now() - startedAt;
 
@@ -373,6 +378,11 @@ export class LlmService {
                     cfg.model,
                     failedUsage.promptTokens,
                     failedUsage.completionTokens,
+                    {
+                      cacheCreationTokens: failedUsage.cacheCreationTokens,
+                      cacheReadTokens: failedUsage.cacheReadTokens,
+                      webSearchCount: failedUsage.webSearchCount,
+                    },
                   ),
                 )
               : '0',
@@ -593,6 +603,11 @@ export class LlmService {
                   cfg.model,
                   parseUsage.promptTokens,
                   parseUsage.completionTokens,
+                  {
+                    cacheCreationTokens: parseUsage.cacheCreationTokens,
+                    cacheReadTokens: parseUsage.cacheReadTokens,
+                    webSearchCount: parseUsage.webSearchCount,
+                  },
                 ),
               )
             : '0',
@@ -739,6 +754,11 @@ export class LlmService {
             cfg.model,
             event.response.promptTokens,
             event.response.completionTokens,
+            {
+              cacheCreationTokens: event.response.cacheCreationTokens,
+              cacheReadTokens: event.response.cacheReadTokens,
+              webSearchCount: event.response.webSearchCount,
+            },
           );
           const latencyMs = Date.now() - startedAt;
 
@@ -812,6 +832,11 @@ export class LlmService {
                 cfg.model,
                 streamParseUsage.promptTokens,
                 streamParseUsage.completionTokens,
+                {
+                  cacheCreationTokens: streamParseUsage.cacheCreationTokens,
+                  cacheReadTokens: streamParseUsage.cacheReadTokens,
+                  webSearchCount: streamParseUsage.webSearchCount,
+                },
               ),
             )
           : '0',
