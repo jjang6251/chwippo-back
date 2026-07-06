@@ -230,6 +230,17 @@ describe('CoverletterChatService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
+    it('A1) 조사 미완(idle) 상태에서도 chat 정상 진행 — 가드 제거 행위 anchor', async () => {
+      // 기존 assertGenerationCompleted 는 completed 외 전부 차단했음.
+      // 3경로 개편 후: 조사 상태와 무관하게 chat 가능 (조사 없으면 회사 섹션만 빠짐).
+      appRepo.findOne.mockResolvedValueOnce(
+        makeApp({ coverletterGenerationStatus: 'idle' }),
+      );
+      const r = await service.chat(USER_ID, APP_ID, { userMessage: '안녕' });
+      expect(r.assistantMessage.role).toBe('assistant');
+      expect(llm.call).toHaveBeenCalledTimes(1);
+    });
+
     it('9) 정상 — user/assistant 양쪽 save + LLM 1회 호출', async () => {
       const r = await service.chat(USER_ID, APP_ID, { userMessage: '안녕' });
       expect(llm.call).toHaveBeenCalledTimes(1);

@@ -11,9 +11,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * (activation ahaAi "AI 초안 후 본인 편집" 해석과 정합).
  * 기존 row 는 NULL 유지 (도입 전 데이터 — 출처 불명으로 정직하게 둠).
  */
-export class AddCoverletterAnswerOrigin1780660000000
-  implements MigrationInterface
-{
+export class AddCoverletterAnswerOrigin1780660000000 implements MigrationInterface {
   name = 'AddCoverletterAnswerOrigin1780660000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
