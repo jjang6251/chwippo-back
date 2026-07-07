@@ -150,7 +150,7 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
     defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 4_000,
-    maxOutputTokens: 2_500, // 8 항목 JSON 응답 충분
+    maxOutputTokens: 3_500, // v2 12 항목 + 항목별 길이 가이드 (차별점·동향 서술형) — 2,500 은 8 항목 시절 기준이라 잘림 위험
     temperature: 0.2, // 사실 기반 정보 — 낮게
   },
   // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn + structured output)

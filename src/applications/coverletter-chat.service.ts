@@ -922,6 +922,7 @@ export class CoverletterChatService {
       const r = args.research.research;
       const summary: string[] = [];
       if (r.businessSummary) summary.push(`사업: ${r.businessSummary}`);
+      if (r.differentiators) summary.push(`차별점: ${r.differentiators}`); // v2 — "왜 이 회사" 근거
       if (r.coreValues) summary.push(`핵심가치: ${r.coreValues}`);
       if (r.recentTrends) summary.push(`최근동향: ${r.recentTrends}`);
       if (summary.length > 0) {

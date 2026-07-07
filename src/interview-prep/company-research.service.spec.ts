@@ -940,7 +940,7 @@ describe('CompanyResearchService', () => {
   });
 
   describe('PR 보강 helper — isValidFieldName', () => {
-    it('G1) schema 의 11 항목 모두 valid', () => {
+    it('G1) schema 의 12 항목 모두 valid', () => {
       const valid = [
         'businessSummary',
         'coreValues',
@@ -948,6 +948,7 @@ describe('CompanyResearchService', () => {
         'recentTrends',
         'financials',
         'competitors',
+        'differentiators', // v2
         'jobInsights',
         'interviewKeywords',
         'companyProfile',
