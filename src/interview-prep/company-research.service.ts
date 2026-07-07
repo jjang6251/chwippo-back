@@ -57,6 +57,8 @@ export interface CompanyResearchData {
   recentTrends?: string;
   financials?: string;
   competitors?: string;
+  /** v2 (2026-07-09) — 경쟁사 대비 차별점·강점. 자소서 "왜 이 회사" 근거 */
+  differentiators?: string;
   jobInsights?: string;
   interviewKeywords?: InterviewKeyword[];
   // PR 보강 — 신규 3 항목
@@ -118,14 +120,20 @@ export interface CompanyResearchResult {
  * 4. 항목 길이 가이드는 prompt cache 활용 (Anthropic ephemeral cache_read 90% 할인)
  */
 function buildSystemPrompt(kstToday: string): string {
-  return `너는 한국 취준생을 위한 기업 면접 준비 보조다.
+  return `너는 한국 취준생을 위한 기업 면접·자소서 준비 보조다. 조사 결과는 자소서 지원동기·입사 후 포부의 근거 문장으로 직접 인용되므로, 추상적 수식어보다 구체적 사실·수치·기간을 우선하라.
 
 **오늘은 ${kstToday} KST 입니다.** "최근"·"올해" 등 시간 표현 시 반드시 기간 (예: 2025-12 ~ 2026-06) 을 명시.
 
-회사·직무 정보를 web_search 로 조사해 11 항목을 JSON 으로 반환.
+회사·직무 정보를 web_search 로 조사해 12 항목을 JSON 으로 반환.
 
-**필수 8**: businessSummary·coreValues·visionMission·recentTrends·financials·competitors·jobInsights·interviewKeywords
+**필수 9**: businessSummary·coreValues·visionMission·recentTrends·financials·competitors·differentiators·jobInsights·interviewKeywords
 **신규 3**: companyProfile·talentProfile·productsAndTech
+
+**항목별 용도 가이드 (자소서 품질 직결)**:
+- **differentiators**: 경쟁사 대비 이 회사만의 차별점·강점 2~3가지. "왜 (경쟁사가 아닌) 이 회사인가"에 답할 수 있는 사실 (기술·시장 위치·사업 모델 차이). 나열이 아니라 근거 있는 서술.
+- **recentTrends**: 지원동기·입사 후 포부에 인용 가능한 구체적 사업 행보 2~3건 + 회사가 공표한 향후 계획·신사업 방향. 각 건마다 기간 명시.
+- **competitors**: 주요 경쟁사 나열 + 시장 구도 한 줄.
+- **coreValues·talentProfile**: 회사가 공식적으로 쓰는 표현 그대로 (채용 페이지·공시 원문 우선).
 
 **interviewKeywords** = [{ keyword, category }] 배열. category 는 tech / talent / business / role / issue 중 하나.
 
@@ -137,7 +145,8 @@ function buildSystemPrompt(kstToday: string): string {
   "visionMission": "사람과 기술로 더 나은 세상을 만들겠다.",
   "recentTrends": "2024년부터 글로벌 AI 사업 확대, 카카오톡 챗봇 강화.",
   "financials": "2023 매출 7.6조, 2024 매출 8.3조 (+9%).",
-  "competitors": "네이버, 라인, 페이코 등.",
+  "competitors": "네이버, 라인, 페이코 등. 국내 메신저는 사실상 독점, 핀테크·모빌리티는 경쟁 심화.",
+  "differentiators": "국민 메신저 기반의 생활 플랫폼 확장력이 최대 차별점 — 경쟁사가 검색·커머스에서 출발한 것과 달리 관계 데이터 기반으로 금융(카카오뱅크)·모빌리티(카카오T)를 연결한다. 2024년부터는 카카오톡 안의 AI 에이전트 통합을 국내 최대 규모 이용자 접점에서 실험 중.",
   "jobInsights": "백엔드 직무는 MSA·Kafka·K8s 경험과 대규모 트래픽 처리 경험을 요구합니다.",
   "interviewKeywords": [
     { "keyword": "MSA 설계 경험", "category": "tech" },
@@ -179,6 +188,7 @@ const RESEARCH_JSON_SCHEMA = {
       recentTrends: { type: 'string' },
       financials: { type: 'string' },
       competitors: { type: 'string' },
+      differentiators: { type: 'string' },
       jobInsights: { type: 'string' },
       interviewKeywords: {
         type: 'array',
@@ -249,6 +259,7 @@ const RESEARCH_JSON_SCHEMA = {
       'recentTrends',
       'financials',
       'competitors',
+      'differentiators',
       'jobInsights',
       'interviewKeywords',
       'companyProfile',
@@ -487,6 +498,7 @@ export class CompanyResearchService {
       'recentTrends',
       'financials',
       'competitors',
+      'differentiators',
       'jobInsights',
       'interviewKeywords',
       'companyProfile',

@@ -610,6 +610,75 @@ describe('buildCoverletterContext', () => {
     });
   });
 
+  // ── companyResearch 주입 (A1 + v2 2026-07-09) ──
+  // 시나리오: 없음→섹션 미생성 / v1 구 캐시(신규 필드 없음)→하위호환 / v2 전체→신규 라벨 / 문항 분류별 재료
+  describe('companyResearch — 회사 조사 주입', () => {
+    const base = {
+      application: DEFAULT_APP,
+      question: '지원동기',
+      category: '지원동기',
+      charLimit: 500,
+      selectedLogs: [],
+      selectedReflections: [],
+      aiRecommendedLogs: [],
+      myinfo: EMPTY_MYINFO,
+    };
+
+    it('companyResearch 없음 → "# 회사 조사" 섹션 미생성', () => {
+      const r = buildCoverletterContext(base);
+      expect(r.userPrompt).not.toContain('# 회사 조사');
+    });
+
+    it('v1 구 캐시 (신규 필드 undefined) → 기존 3종만, 안 깨짐', () => {
+      const r = buildCoverletterContext({
+        ...base,
+        companyResearch: {
+          businessSummary: '메신저 기반 플랫폼 사업',
+          talentProfile: ['도전', '성장'],
+          recentTrends: '2026년 AI 에이전트 확대',
+        },
+      });
+      expect(r.userPrompt).toContain('# 회사 조사');
+      expect(r.userPrompt).toContain('사업 요약: 메신저 기반');
+      expect(r.userPrompt).toContain('인재상: 도전 · 성장');
+      expect(r.userPrompt).toContain('최근 동향: 2026년');
+      expect(r.userPrompt).not.toContain('차별점');
+      expect(r.userPrompt).not.toContain('핵심 가치');
+      expect(r.userPrompt).not.toContain('직무 인사이트');
+    });
+
+    it('v2 전체 → 차별점·핵심 가치·비전·직무 인사이트 라벨 포함', () => {
+      const r = buildCoverletterContext({
+        ...base,
+        companyResearch: {
+          businessSummary: '사업',
+          differentiators: '경쟁사와 달리 관계 데이터 기반 확장',
+          coreValues: '도전과 신뢰',
+          visionMission: '더 나은 세상',
+          recentTrends: '트렌드',
+          jobInsights: '백엔드는 MSA 경험 요구',
+          talentProfile: ['도전'],
+          interviewKeywords: [{ keyword: 'MSA' }],
+        },
+      });
+      expect(r.userPrompt).toContain('차별점 (왜 이 회사): 경쟁사와 달리');
+      expect(r.userPrompt).toContain('핵심 가치: 도전과 신뢰');
+      expect(r.userPrompt).toContain('비전: 더 나은 세상');
+      expect(r.userPrompt).toContain('직무 인사이트: 백엔드는 MSA');
+      expect(r.userPrompt).toContain('핵심 키워드: MSA');
+    });
+
+    it('항목별 clip 상한 — 긴 differentiators 400자 절단', () => {
+      const long = '가'.repeat(1000);
+      const r = buildCoverletterContext({
+        ...base,
+        companyResearch: { differentiators: long },
+      });
+      const line = r.userPrompt.split('\n').find((l) => l.includes('차별점'))!;
+      expect(line.length).toBeLessThanOrEqual(420); // 라벨 + 400자
+    });
+  });
+
   it('estimatedInputTokens 가 항상 MAX_INPUT_TOKENS 이하', () => {
     const huge = 'Z'.repeat(5000);
     const selectedLogs = Array.from({ length: 20 }, (_, i) => ({
