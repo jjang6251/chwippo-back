@@ -95,8 +95,14 @@ export class CoverletterDocController {
     res.flushHeaders();
 
     try {
-      for await (const event of this.chat.chatStream(user.id, appId, dto)) {
-        if (res.writableEnded) break;
+      const stream = this.chat.chatStream(user.id, appId, dto);
+      for await (const event of stream) {
+        if (res.writableEnded) {
+          // cost hardening 🟡6 — 클라이언트가 끊겨도 generator 를 완주(drain)시킴.
+          // break 로 버리면 LlmService 의 'done' 처리(코인 차감 + audit)가 실행되지
+          // 않아 provider 과금은 됐는데 기록·차감이 증발한다. 응답 write 만 생략.
+          continue;
+        }
         res.write(`event: ${event.type}\n`);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       }

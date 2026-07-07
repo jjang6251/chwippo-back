@@ -17,6 +17,7 @@ import { ActivityReflection } from '../activity/entities/activity-reflection.ent
 import { Activity } from '../activity/entities/activity.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { buildCoverletterContext } from './coverletter-context-builder';
+import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { CoverletterSourceRef } from './coverletter-source-ref.entity';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
 
@@ -116,6 +117,9 @@ export class AiCoverletterDraftService {
     private readonly activityRepo: Repository<Activity>,
     private readonly sourceRefsService: CoverletterSourceRefsService,
     private readonly llm: LlmService,
+    // A1 — 회사조사 캐시 조회 전용 (chat 과 동일 패턴, forwardRef 순환 회피)
+    @Inject(forwardRef(() => CompanyResearchService))
+    private readonly companyResearch: CompanyResearchService,
     private readonly quotaCheck: QuotaCheckService,
     @Inject(forwardRef(() => MyinfoService))
     private readonly myinfo: MyinfoService,
@@ -146,12 +150,8 @@ export class AiCoverletterDraftService {
       throw new NotFoundException('지원 카드를 찾을 수 없습니다.');
     }
 
-    // PR_B1c — 회사조사 완료 가드 (자소서 생성 안 한 application 의 draft 차단)
-    if (clWithApp.application.coverletterGenerationStatus !== 'completed') {
-      throw new BadRequestException(
-        '먼저 자소서 생성을 진행해 주세요 (회사 정보 조사가 필요해요).',
-      );
-    }
+    // A1 — 회사조사 완료 가드 제거 (3경로 개편). draft 컨텍스트는 원래
+    // source_refs·myinfo 기반이라 조사와 무관 — 조사는 chat 단계에서만 활용됨.
 
     // 2. selected refs IDOR batch
     const selectedIds = input.selectedSourceRefIds ?? [];
@@ -294,6 +294,16 @@ export class AiCoverletterDraftService {
     }
 
     // 9. 컨텍스트 빌드
+    // A1 (CEO 지시) — 회사조사 캐시가 있으면 초안에도 주입 (조회 전용, 코인 0.
+    //   getCachedForApplication 은 fetch 를 트리거하지 않음 — M3 재발 방지 확인됨)
+    const cachedResearch = await this.companyResearch
+      .getCachedForApplication(userId, clWithApp.application.id)
+      .catch(() => null);
+    const researchForContext =
+      cachedResearch?.status === 'ok'
+        ? (cachedResearch.research ?? null)
+        : null;
+
     const ctx = buildCoverletterContext({
       application: {
         companyName: clWithApp.application.companyName,
@@ -306,6 +316,7 @@ export class AiCoverletterDraftService {
       selectedReflections: selReflections,
       aiRecommendedLogs: recommendedLogObjs,
       activitySummaries,
+      companyResearch: researchForContext,
       myinfo: myinfoDump,
     });
 
@@ -332,6 +343,8 @@ export class AiCoverletterDraftService {
 
     // 11. answer 저장 + AI 추천 ref bulk insert (selected 는 이미 있음, AI 추천만 새로 저장)
     cl.answer = draftResult.text;
+    // A1 — 최초 출처만 기록 (기존 답변을 덮는 재생성이면 원 출처 유지)
+    if (!cl.answerOrigin) cl.answerOrigin = 'ai_draft';
     await this.clRepo.save(cl);
 
     const createdAiRefs = await this.sourceRefsService.bulkCreate(

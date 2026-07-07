@@ -32,6 +32,12 @@ export class CalendarController {
     return this.calendarService.getMonthEvents(user.id, year, month);
   }
 
+  /** A3 — 오늘 할 일 자동 합류: D-3 이내 스텝의 미완 체크리스트 (read-through) */
+  @Get('urgent-checklist')
+  async getUrgentChecklist(@CurrentUser() user: AuthUser) {
+    return this.calendarService.getUrgentChecklist(user.id);
+  }
+
   @Get('daily-notes')
   async getDailyNotes(
     @CurrentUser() user: AuthUser,

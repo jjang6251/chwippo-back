@@ -1,5 +1,6 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { billableCallWhere } from './billable-call-filter';
 import { Between, In, Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { AbuserBanService } from './abuser-ban.service';
@@ -9,6 +10,7 @@ import {
 } from './entities/feature-quota-config.entity';
 import { LlmCallLog, type LlmFeature } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
+import { QuotaNotifyService } from './quota-notify.service';
 
 /**
  * F6 PR 2 Phase 1 — 모든 LLM caller 가 호출하는 단일 quota 진입점.
@@ -57,6 +59,22 @@ const FALLBACK_CONFIG = {
   enabled: true,
 } as const;
 
+/**
+ * cost hardening B-4 — override 적용 규칙.
+ * - auto ban: 항상 하향(min) — override 가 tier 한도보다 크면 제재가 완화되는 버그 방지
+ * - manual_admin·fair_use: admin 의도 그대로 (상향 지원 — 베타 테스터·이벤트 등.
+ *   기존 min 로직으로는 한도 상향이 불가능했음)
+ */
+export function resolveEffectiveDayLimit(
+  baseLimit: number,
+  override: Pick<UserAiQuota, 'dailyCapOverride' | 'reason'> | null,
+): number {
+  if (override?.dailyCapOverride == null) return baseLimit;
+  return override.reason === 'auto_ban_3_consecutive_days'
+    ? Math.min(baseLimit, override.dailyCapOverride)
+    : override.dailyCapOverride;
+}
+
 @Injectable()
 export class QuotaCheckService {
   private readonly logger = new Logger(QuotaCheckService.name);
@@ -72,6 +90,7 @@ export class QuotaCheckService {
     private readonly userQuotaRepo: Repository<UserAiQuota>,
     @Inject(forwardRef(() => AbuserBanService))
     private readonly abuserBan: AbuserBanService,
+    private readonly quotaNotify: QuotaNotifyService,
   ) {}
 
   /**
@@ -129,23 +148,27 @@ export class QuotaCheckService {
 
     // ── 4. user_ai_quotas (PR 1, abuser ban) override 적용 ──
     const override = await this.abuserBan.getActiveOverride(userId);
-    const effectiveDayLimit =
-      override?.dailyCapOverride != null
-        ? Math.min(effective.dayLimit, override.dailyCapOverride)
-        : effective.dayLimit;
+    const effectiveDayLimit = resolveEffectiveDayLimit(
+      effective.dayLimit,
+      override,
+    );
 
     // ── 5. day 카운트 ── (5.6.9: reset_at 적용)
     const now = new Date();
     const since24h = await this.resolveSince24h(userId);
-    const baseWhere = {
-      userId,
-      feature,
-      status: In(['ok', 'retry_parsing']),
-    };
+    // cost hardening 🟡1 — 토큰 소모된 실패도 한도 집계 (billableCallWhere)
     const dayCount = await this.logRepo.count({
-      where: { ...baseWhere, createdAt: Between(since24h, now) },
+      where: billableCallWhere({
+        userId,
+        feature,
+        createdAt: Between(since24h, now),
+      }),
     });
     if (dayCount >= effectiveDayLimit) {
+      // cost hardening ④ — 초과 통지 (KST 일 1회 dedup·fire-and-forget — 차단 응답을 안 늦춤)
+      void this.quotaNotify
+        .notifyQuotaExceeded(userId, feature, 'day')
+        .catch(() => {});
       return {
         blocked: true,
         code: 'DAY_LIMIT',
@@ -157,9 +180,16 @@ export class QuotaCheckService {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const monthCount = await this.logRepo.count({
-      where: { ...baseWhere, createdAt: Between(monthStart, monthEnd) },
+      where: billableCallWhere({
+        userId,
+        feature,
+        createdAt: Between(monthStart, monthEnd),
+      }),
     });
     if (monthCount >= effective.monthLimit) {
+      void this.quotaNotify
+        .notifyQuotaExceeded(userId, feature, 'month')
+        .catch(() => {});
       return {
         blocked: true,
         code: 'MONTH_LIMIT',
@@ -172,6 +202,7 @@ export class QuotaCheckService {
       const cooldownStart = new Date(
         now.getTime() - effective.cooldownSeconds * 1000,
       );
+      // cooldown 은 의도적으로 ok·retry_parsing 만 — 실패 직후 즉시 재시도 허용 (UX)
       const recent = await this.logRepo.findOne({
         where: {
           userId,
@@ -233,27 +264,31 @@ export class QuotaCheckService {
 
     const results = await Promise.all(
       configs.map(async (c) => {
-        const baseWhere = {
-          userId,
-          feature: c.feature,
-          status: In(['ok', 'retry_parsing']),
-        };
+        // 표시(dayUsed·monthUsed)는 강제 필터와 일치해야 함 (billableCallWhere)
         const [dayUsed, monthUsed, recent] = await Promise.all([
           this.logRepo.count({
-            where: { ...baseWhere, createdAt: Between(since24h, now) },
+            where: billableCallWhere({
+              userId,
+              feature: c.feature,
+              createdAt: Between(since24h, now),
+            }),
           }),
           this.logRepo.count({
-            where: { ...baseWhere, createdAt: Between(monthStart, monthEnd) },
+            where: billableCallWhere({
+              userId,
+              feature: c.feature,
+              createdAt: Between(monthStart, monthEnd),
+            }),
           }),
           this.logRepo.findOne({
-            where: baseWhere,
+            where: billableCallWhere({ userId, feature: c.feature }),
             order: { createdAt: 'DESC' },
           }),
         ]);
-        const effectiveDayLimit =
-          override?.dailyCapOverride != null
-            ? Math.min(c.dayLimit, override.dailyCapOverride)
-            : c.dayLimit;
+        const effectiveDayLimit = resolveEffectiveDayLimit(
+          c.dayLimit,
+          override,
+        );
         const nextAvailableAt =
           recent && c.cooldownSeconds > 0
             ? new Date(recent.createdAt.getTime() + c.cooldownSeconds * 1000)

@@ -25,6 +25,9 @@ import { AdminFeatureQuotasController } from './admin-feature-quotas.controller'
 import { AdminFeatureQuotasService } from './admin-feature-quotas.service';
 import { MyAiQuotasController } from './my-ai-quotas.controller';
 import { AbuserBanService } from './abuser-ban.service';
+import { QuotaNotifyService } from './quota-notify.service';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { AdminUserQuotaOverrideController } from './admin-user-quota-override.controller';
 import { CostGuardService } from './cost-guard.service';
 import { AlertThresholds } from '../admin/entities/alert-thresholds.entity';
 import { AdminQuotaResetController } from './admin-quota-reset.controller';
@@ -36,6 +39,8 @@ import { AnthropicProvider } from './providers/anthropic.provider';
 
 @Module({
   imports: [
+    // cost hardening ④ — AdminNotifyService(인앱+push) 재사용
+    NotificationsModule,
     // User: LlmService 가 consent gate + 본인 이름 블랙리스트 조회
     // UserAiQuota: PR 1 AbuserBanService 가 daily_cap_override UPSERT
     // FeatureQuotaConfig: PR 2 QuotaCheckService 가 feature 별·tier 별 한도 조회 (admin 동적 조절)
@@ -62,6 +67,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     AdminAiUsageController,
     AdminFeatureQuotasController,
     AdminQuotaResetController,
+    AdminUserQuotaOverrideController, // cost hardening B-4 — 유저 개별 한도
     MyAiQuotasController,
     MyCoinController, // PR_B1
   ],
@@ -75,6 +81,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     AdminAiUsageService,
     AdminFeatureQuotasService,
     AbuserBanService,
+    QuotaNotifyService, // cost hardening ④ — 한도 변경·초과·리셋 사용자 통지
     AdminQuotaResetService,
     QuotaCheckService,
     CostGuardService, // AI cost guard — per-user/per-feature daily USD cap

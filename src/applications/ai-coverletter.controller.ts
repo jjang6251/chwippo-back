@@ -1,6 +1,7 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AiCoverletterDraftService } from './ai-coverletter-draft.service';
+import { AiCoverletterFeedbackService } from './ai-coverletter-feedback.service';
 import { GenerateAiDraftDto } from './dto/ai-draft.dto';
 
 interface AuthUser {
@@ -15,7 +16,10 @@ interface AuthUser {
  */
 @Controller('coverletters/:clId')
 export class AiCoverletterController {
-  constructor(private readonly service: AiCoverletterDraftService) {}
+  constructor(
+    private readonly service: AiCoverletterDraftService,
+    private readonly feedbackService: AiCoverletterFeedbackService,
+  ) {}
 
   @Post('ai-draft')
   generate(
@@ -24,5 +28,14 @@ export class AiCoverletterController {
     @Body() dto: GenerateAiDraftDto,
   ) {
     return this.service.generate(user.id, clId, dto);
+  }
+
+  /** A1 Phase 2 — AI 제출 전 점검 (짚어주기). body 없음 — 대상은 저장된 답변 */
+  @Post('ai-feedback')
+  review(
+    @CurrentUser() user: AuthUser,
+    @Param('clId', ParseUUIDPipe) clId: string,
+  ) {
+    return this.feedbackService.review(user.id, clId);
   }
 }

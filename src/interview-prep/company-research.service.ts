@@ -839,71 +839,89 @@ export class CompanyResearchService {
       };
     }
 
-    // PR 보강 — 응답 후처리: hallucination 가드 (본문 [N] ↔ sources[].id 일치 검증)
-    const rawResearch =
-      (result.json as CompanyResearchData & {
+    // cost hardening 🟡4 — LLM ok 시점에 50코인이 이미 차감됨.
+    // 후처리·캐시 저장 실패는 사용자 귀책이 아니므로 best-effort 환불 후 rethrow
+    // (없으면 사용자가 재시도할 때마다 50코인 이중 차감).
+    try {
+      // PR 보강 — 응답 후처리: hallucination 가드 (본문 [N] ↔ sources[].id 일치 검증)
+      const rawResearch =
+        (result.json as CompanyResearchData & {
+          sources?: ResearchSource[];
+          inferredFields?: string[];
+        }) ?? {};
+      const validatedSources = this.validateSources(
+        rawResearch.sources ?? [],
+        allowedDomains,
+      );
+      const sanitizedResearch = this.stripOrphanFootnotes(
+        rawResearch,
+        validatedSources.map((s) => s.id),
+      );
+      const inferredFields = (rawResearch.inferredFields ?? []).filter((f) =>
+        this.isValidFieldName(f),
+      );
+      // PR 보강 — interviewKeywords 후처리 (LLM 이 string 만 반환 시 category 자동 추론)
+      const enrichedKeywords = this.enrichInterviewKeywords(
+        sanitizedResearch.interviewKeywords,
+      );
+      // PR 보강 — aiResearch JSONB 안에 ResearchSource[] 객체 + inferredFields 인라인 저장
+      //   (entity.sources string[] 컬럼은 legacy 호환 — url 만 backfill)
+      const aiResearch: CompanyResearchData & {
         sources?: ResearchSource[];
         inferredFields?: string[];
-      }) ?? {};
-    const validatedSources = this.validateSources(
-      rawResearch.sources ?? [],
-      allowedDomains,
-    );
-    const sanitizedResearch = this.stripOrphanFootnotes(
-      rawResearch,
-      validatedSources.map((s) => s.id),
-    );
-    const inferredFields = (rawResearch.inferredFields ?? []).filter((f) =>
-      this.isValidFieldName(f),
-    );
-    // PR 보강 — interviewKeywords 후처리 (LLM 이 string 만 반환 시 category 자동 추론)
-    const enrichedKeywords = this.enrichInterviewKeywords(
-      sanitizedResearch.interviewKeywords,
-    );
-    // PR 보강 — aiResearch JSONB 안에 ResearchSource[] 객체 + inferredFields 인라인 저장
-    //   (entity.sources string[] 컬럼은 legacy 호환 — url 만 backfill)
-    const aiResearch: CompanyResearchData & {
-      sources?: ResearchSource[];
-      inferredFields?: string[];
-    } = {
-      ...sanitizedResearch,
-      interviewKeywords: enrichedKeywords,
-      sources: validatedSources,
-      inferredFields,
-    };
-    const legacySourceUrls = validatedSources.map((s) => s.url);
+      } = {
+        ...sanitizedResearch,
+        interviewKeywords: enrichedKeywords,
+        sources: validatedSources,
+        inferredFields,
+      };
+      const legacySourceUrls = validatedSources.map((s) => s.url);
 
-    // 4. cache upsert
-    const isEmpty =
-      !aiResearch.businessSummary?.trim() &&
-      !aiResearch.recentTrends?.trim() &&
-      (!aiResearch.interviewKeywords ||
-        aiResearch.interviewKeywords.length === 0);
-    const ttl = isEmpty ? MISS_CACHE_TTL_MS : CACHE_TTL_MS;
-    const expiresAt = new Date(Date.now() + ttl);
+      // 4. cache upsert
+      const isEmpty =
+        !aiResearch.businessSummary?.trim() &&
+        !aiResearch.recentTrends?.trim() &&
+        (!aiResearch.interviewKeywords ||
+          aiResearch.interviewKeywords.length === 0);
+      const ttl = isEmpty ? MISS_CACHE_TTL_MS : CACHE_TTL_MS;
+      const expiresAt = new Date(Date.now() + ttl);
 
-    const row =
-      cached ??
-      this.cacheRepo.create({
-        companyName: this.normalize(companyName),
-        jobCategory,
-        hitCount: 0,
-        optOut: false,
-      });
-    row.aiResearch = aiResearch as Record<string, unknown>;
-    row.sources = legacySourceUrls;
-    row.expiresAt = expiresAt;
-    row.hitCount = (row.hitCount ?? 0) + 1;
-    const saved = await this.cacheRepo.save(row);
+      const row =
+        cached ??
+        this.cacheRepo.create({
+          companyName: this.normalize(companyName),
+          jobCategory,
+          hitCount: 0,
+          optOut: false,
+        });
+      row.aiResearch = aiResearch as Record<string, unknown>;
+      row.sources = legacySourceUrls;
+      row.expiresAt = expiresAt;
+      row.hitCount = (row.hitCount ?? 0) + 1;
+      const saved = await this.cacheRepo.save(row);
 
-    return {
-      status: 'ok',
-      research: aiResearch,
-      sources: validatedSources,
-      inferredFields,
-      isCached: false,
-      cachedAt: saved.updatedAt,
-    };
+      return {
+        status: 'ok',
+        research: aiResearch,
+        sources: validatedSources,
+        inferredFields,
+        isCached: false,
+        cachedAt: saved.updatedAt,
+      };
+    } catch (err) {
+      const refundResult = await this.coinService
+        .refund(userId, 'company_research', '회사조사 후처리 실패 자동 환불')
+        .catch((refundErr: unknown) => {
+          this.logger.error(
+            `후처리 실패 환불도 실패 (userId=${userId}): ${(refundErr as Error).message}`,
+          );
+          return { refunded: 0 };
+        });
+      this.logger.warn(
+        `회사조사 후처리 실패 → ${refundResult.refunded} 코인 환불 (userId=${userId})`,
+      );
+      throw err;
+    }
   }
 
   /** 사용자 자유 메모 update — session 단위 */

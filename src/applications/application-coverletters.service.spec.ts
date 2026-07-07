@@ -292,4 +292,90 @@ describe('ApplicationCoverlettersService', () => {
       expect(result[1].id).toBe('cl-b');
     });
   });
+  // ── A1 — answer_origin 규칙 (최초 출처 1회 기록·불변) ──
+  describe('answerOrigin (A1)', () => {
+    function setupCreate() {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      const qb = {
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({ max: 0 }),
+      };
+      clRepo.createQueryBuilder.mockReturnValue(
+        qb as unknown as SelectQueryBuilder<ApplicationCoverletter>,
+      );
+      clRepo.create.mockImplementation((x) => x as ApplicationCoverletter);
+      clRepo.save.mockImplementation(async (x) => x as ApplicationCoverletter);
+    }
+
+    it('create: 답변 포함 + origin 미지정 → manual (직접 입력 default)', async () => {
+      setupCreate();
+      await service.create(USER_ID, APP_ID, {
+        question: 'Q',
+        answer: '직접 쓴 답변',
+      });
+      expect(clRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ answerOrigin: 'manual' }),
+      );
+    });
+
+    it('create: 답변 없이 생성 → origin null (아직 출처 없음)', async () => {
+      setupCreate();
+      await service.create(USER_ID, APP_ID, { question: 'Q' });
+      expect(clRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ answerOrigin: null }),
+      );
+    });
+
+    it('create: imported 지정 → 그대로 기록 (가져오기 모달 경유)', async () => {
+      setupCreate();
+      await service.create(USER_ID, APP_ID, {
+        question: 'Q',
+        answer: '재활용 답변',
+        answerOrigin: 'imported',
+      });
+      expect(clRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ answerOrigin: 'imported' }),
+      );
+    });
+
+    it('update: 빈 문항에 첫 답변 저장 → origin 기록 (미지정 = manual)', async () => {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      const item = makeCoverletter();
+      item.answer = null;
+      item.answerOrigin = null;
+      clRepo.findOne.mockResolvedValue(item);
+      clRepo.save.mockImplementation(async (x) => x as ApplicationCoverletter);
+
+      await service.update(USER_ID, APP_ID, CL_ID, { answer: '첫 답변' });
+      expect(item.answerOrigin).toBe('manual');
+    });
+
+    it('update: 기존 답변 편집 → origin 불변 (최초 출처 유지)', async () => {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      const item = makeCoverletter();
+      item.answer = 'AI 초안이었던 답변';
+      item.answerOrigin = 'ai_draft';
+      clRepo.findOne.mockResolvedValue(item);
+      clRepo.save.mockImplementation(async (x) => x as ApplicationCoverletter);
+
+      await service.update(USER_ID, APP_ID, CL_ID, {
+        answer: '사용자가 다듬은 답변',
+        answerOrigin: 'manual', // 클라이언트가 보내도 무시돼야 함
+      });
+      expect(item.answerOrigin).toBe('ai_draft');
+    });
+
+    it('update: 답변을 지웠다 다시 쓴 경우 → 최초 origin 유지 (재기록 안 함)', async () => {
+      appRepo.findOne.mockResolvedValue(makeApp());
+      const item = makeCoverletter();
+      item.answer = null; // 지워진 상태
+      item.answerOrigin = 'imported'; // 하지만 최초 출처는 기록돼 있음
+      clRepo.findOne.mockResolvedValue(item);
+      clRepo.save.mockImplementation(async (x) => x as ApplicationCoverletter);
+
+      await service.update(USER_ID, APP_ID, CL_ID, { answer: '다시 쓴 답변' });
+      expect(item.answerOrigin).toBe('imported');
+    });
+  });
 });

@@ -9,6 +9,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { CoinService } from '../ai/coin.service';
+import { LlmService } from '../ai/llm.service';
 import { CompaniesService } from '../companies/companies.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
@@ -95,6 +96,7 @@ describe('ApplicationsService', () => {
   };
 
   const mockDiscord = { notify: jest.fn().mockResolvedValue('sent') };
+  let mockLlmService: { auditCacheHitCharge: jest.Mock };
   let mockAppRepo: jest.Mocked<Repository<Application>>;
 
   beforeEach(async () => {
@@ -107,6 +109,10 @@ describe('ApplicationsService', () => {
     };
 
     // PR_B1c — CoinService + CompanyResearchService mock
+    // cost hardening 🟡7 — cache-hit audit mock
+    mockLlmService = {
+      auditCacheHitCharge: jest.fn().mockResolvedValue(undefined),
+    };
     const mockCoinService = {
       canCharge: jest.fn().mockResolvedValue({ ok: true }),
       charge: jest.fn().mockResolvedValue({
@@ -142,6 +148,7 @@ describe('ApplicationsService', () => {
         // checklistRepo는 module.get로 따로 받지 않고 위 inline mock 그대로 사용
         { provide: DataSource, useValue: mockDataSource },
         { provide: CoinService, useValue: mockCoinService },
+        { provide: LlmService, useValue: mockLlmService },
         { provide: CompanyResearchService, useValue: mockCompanyResearch },
         // W2 — CompaniesService.getDomainByName (응답 inject). spec 은 undefined 반환 mock
         {
@@ -464,6 +471,75 @@ describe('ApplicationsService', () => {
           .mockImplementation((_entity: unknown, data: unknown) => data),
       };
       dataSource.transaction.mockImplementation(async (cb: any) => cb(em));
+    });
+
+    /**
+     * A9 — failedTakeaway 시나리오:
+     * 1. 입력 → trim 저장 + failedTakeawayAt 세팅
+     * 2. 수정 → 값·시각 갱신
+     * 3. 빈 문자열 → null 삭제 + 시각 null
+     * 4. 미전송(undefined) → 기존 값 불변
+     * 5. FAILED → IN_PROGRESS 롤백 전이 허용 (결과 되돌리기)
+     */
+    it('A9-1) failedTakeaway 입력 → trim 저장 + at 세팅', async () => {
+      const app = makeApp({ status: 'FAILED' });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        failedTakeaway: '  코테는 통과했다  ',
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.failedTakeaway).toBe('코테는 통과했다');
+      expect(saved.failedTakeawayAt).toBeInstanceOf(Date);
+    });
+
+    it('A9-2) 빈 문자열 → null 삭제 + at null', async () => {
+      const app = makeApp({
+        status: 'FAILED',
+        failedTakeaway: '기존 회고',
+        failedTakeawayAt: new Date(),
+      });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        failedTakeaway: '   ',
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.failedTakeaway).toBeNull();
+      expect(saved.failedTakeawayAt).toBeNull();
+    });
+
+    it('A9-3) 미전송 → 기존 회고 불변', async () => {
+      const at = new Date('2026-07-01T00:00:00Z');
+      const app = makeApp({
+        status: 'FAILED',
+        failedTakeaway: '기존 회고',
+        failedTakeawayAt: at,
+      });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', { memo: '메모만' });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.failedTakeaway).toBe('기존 회고');
+      expect(saved.failedTakeawayAt).toBe(at);
+    });
+
+    it('A9-4) FAILED → IN_PROGRESS 롤백 전이 허용', async () => {
+      const app = makeApp({ status: 'FAILED' });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue({
+        ...app,
+        status: 'IN_PROGRESS',
+      });
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        status: 'IN_PROGRESS',
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.status).toBe('IN_PROGRESS');
     });
 
     it('PLANNED→IN_PROGRESS + 기존 스텝 없음 → createDefaultSteps 호출', async () => {
@@ -976,6 +1052,26 @@ describe('ApplicationsService', () => {
         'company_research',
         { inputTokens: 0, outputTokens: 0 },
       );
+      // cost hardening 🟡7 — 무흔적 과금 방지: cache-hit 도 audit row
+      expect(mockLlmService.auditCacheHitCharge).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-uuid-1',
+          feature: 'company_research',
+          resourceType: 'application',
+          resourceId: 'app-uuid-1',
+        }),
+      );
+    });
+
+    it('B2-b) cache miss — auditCacheHitCharge 미호출 (LlmService 가 자체 audit)', async () => {
+      mockAtomicUpdate(1);
+      researchSvc.fetchForApplication.mockResolvedValueOnce({
+        status: 'ok',
+        isCached: false,
+      });
+
+      await service.generateCoverletter('user-uuid-1', 'app-uuid-1');
+      expect(mockLlmService.auditCacheHitCharge).not.toHaveBeenCalled();
     });
 
     it("B3) race — UPDATE affected=0 + 현재 status='in_progress' → already_in_progress", async () => {

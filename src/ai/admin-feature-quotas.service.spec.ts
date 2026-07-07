@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { QuotaNotifyService } from './quota-notify.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -48,6 +49,18 @@ describe('AdminFeatureQuotasService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        {
+          provide: QuotaNotifyService,
+          useValue: {
+            notifyOverrideSet: jest.fn().mockResolvedValue(undefined),
+            notifyOverrideCleared: jest.fn().mockResolvedValue(undefined),
+            notifyAutoBan: jest.fn().mockResolvedValue(undefined),
+            notifyUserReset: jest.fn().mockResolvedValue(undefined),
+            notifyAllReset: jest.fn().mockResolvedValue(undefined),
+            notifyMatrixChanged: jest.fn().mockResolvedValue(undefined),
+            notifyQuotaExceeded: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         AdminFeatureQuotasService,
         {
           provide: getRepositoryToken(FeatureQuotaConfig),

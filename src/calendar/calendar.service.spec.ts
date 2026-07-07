@@ -4,6 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { CalendarService } from './calendar.service';
+import { startOfTodayKst } from '../common/datetime';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
@@ -23,6 +24,8 @@ describe('CalendarService', () => {
       innerJoin: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue(rawResult),
     } as unknown as SelectQueryBuilder<any>;
     return qb;
@@ -508,6 +511,74 @@ describe('CalendarService', () => {
         service.carryOverDailyNote('user-1', 'note-uuid-1'),
       ).rejects.toThrow(NotFoundException);
       expect(noteRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * A3 — 오늘 할 일 자동 합류 (urgent checklist) 시나리오:
+   * 1. 정상 — raw row → camelCase 매핑
+   * 2. 격리·상태 필터 — join 조건에 user_id · FAILED/PASSED 제외 · is_done=FALSE
+   * 3. 날짜 경계 — [오늘 KST 00:00, +4일) = 오늘 포함 D-3 까지
+   * 4. 해당 없음 → 빈 배열
+   */
+  describe('getUrgentChecklist', () => {
+    const RAW = [
+      {
+        item_id: 'c-1',
+        content: '포트폴리오 출력',
+        step_id: 's-1',
+        step_name: '면접',
+        application_id: 'app-1',
+        company_name: '카카오',
+        date: '2026-07-09',
+      },
+    ];
+
+    it('1) 정상 — raw row 를 camelCase 로 매핑', async () => {
+      stepRepo.createQueryBuilder.mockReturnValue(makeQb(RAW) as any);
+      const r = await service.getUrgentChecklist('user-1');
+      expect(r).toEqual([
+        {
+          itemId: 'c-1',
+          content: '포트폴리오 출력',
+          stepId: 's-1',
+          stepName: '면접',
+          applicationId: 'app-1',
+          companyName: '카카오',
+          date: '2026-07-09',
+        },
+      ]);
+    });
+
+    it('2) join 조건 — 본인 카드 · FAILED/PASSED 제외 · 미완 항목만', async () => {
+      const qb = makeQb([]);
+      stepRepo.createQueryBuilder.mockReturnValue(qb as any);
+      await service.getUrgentChecklist('user-1');
+      const joins = (qb.innerJoin as jest.Mock).mock.calls;
+      const appJoin = joins.find((c) => c[0] === 'applications');
+      expect(appJoin[2]).toContain('a.user_id = :userId');
+      expect(appJoin[2]).toContain("NOT IN ('FAILED', 'PASSED')");
+      expect(appJoin[3]).toEqual({ userId: 'user-1' });
+      const checklistJoin = joins.find((c) => c[0] === 'step_checklist_items');
+      expect(checklistJoin[2]).toContain('c.is_done = FALSE');
+    });
+
+    it('3) 날짜 경계 — [오늘 KST 00:00, +4일) = 오늘 포함 D-3 까지', async () => {
+      const qb = makeQb([]);
+      stepRepo.createQueryBuilder.mockReturnValue(qb as any);
+      await service.getUrgentChecklist('user-1');
+      const wheres = (qb.andWhere as jest.Mock).mock.calls;
+      const startCall = wheres.find((c) => String(c[0]).includes('>= :start'));
+      const endCall = wheres.find((c) => String(c[0]).includes('< :end'));
+      const start = startCall[1].start as Date;
+      const end = endCall[1].end as Date;
+      expect(start.getTime()).toBe(startOfTodayKst().getTime());
+      expect(end.getTime() - start.getTime()).toBe(4 * 86_400_000);
+    });
+
+    it('4) 해당 없음 → 빈 배열', async () => {
+      stepRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      await expect(service.getUrgentChecklist('user-1')).resolves.toEqual([]);
     });
   });
 });

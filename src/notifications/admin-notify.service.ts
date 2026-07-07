@@ -52,6 +52,17 @@ export class AdminNotifyService {
     });
   }
 
+  /**
+   * cost hardening ④ — 범용 즉시 통지 (인앱 + push).
+   * QuotaNotifyService 등 다른 모듈의 사용자 통지 진입점.
+   */
+  async notifyUser(
+    userId: string,
+    content: { title: string; body: string; deepLink: string },
+  ): Promise<void> {
+    return this.notifyImmediate(userId, content);
+  }
+
   private async notifyImmediate(
     userId: string,
     content: { title: string; body: string; deepLink: string },

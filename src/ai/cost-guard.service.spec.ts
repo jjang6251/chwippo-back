@@ -254,9 +254,9 @@ describe('CostGuardService', () => {
 
       await service.check(USER_ID, 'note_summary');
 
-      // status='ok' 필터 명시
+      // cost hardening 🔴1 연동 — ok 뿐 아니라 토큰 소모된 실패 비용도 캡 합산
       expect(qb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining("status = 'ok'"),
+        expect.stringContaining("(l.status = 'ok' OR l.cost_usd > 0)"),
       );
       // group by feature
       expect(qb.groupBy).toHaveBeenCalledWith('l.feature');

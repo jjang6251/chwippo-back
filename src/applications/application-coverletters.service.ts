@@ -53,6 +53,8 @@ export class ApplicationCoverlettersService {
       question: dto.question,
       category: dto.category ?? null,
       answer: dto.answer ?? null,
+      // A1 — 답변과 함께 생성되면 출처 기록 (미지정 = 직접 입력)
+      answerOrigin: dto.answer ? (dto.answerOrigin ?? 'manual') : null,
       charLimit: dto.charLimit ?? null,
       orderIndex,
     });
@@ -72,7 +74,13 @@ export class ApplicationCoverlettersService {
     if (!item) throw new NotFoundException('자소서 문항을 찾을 수 없습니다.');
     if (dto.question !== undefined) item.question = dto.question;
     if (dto.category !== undefined) item.category = dto.category || null;
-    if (dto.answer !== undefined) item.answer = dto.answer || null;
+    if (dto.answer !== undefined) {
+      // A1 — 출처는 "답변이 처음 채워질 때" 1회만 기록, 이후 편집엔 불변
+      if (!item.answer && dto.answer && !item.answerOrigin) {
+        item.answerOrigin = dto.answerOrigin ?? 'manual';
+      }
+      item.answer = dto.answer || null;
+    }
     if (dto.charLimit !== undefined) item.charLimit = dto.charLimit ?? null;
     return this.clRepo.save(item);
   }

@@ -31,6 +31,10 @@ import { InterviewPrepSession } from './entities/interview-prep-session.entity';
 describe('CompanyResearchService', () => {
   let service: CompanyResearchService;
   let cacheRepo: jest.Mocked<Repository<CompanyResearchCache>>;
+  let coinServiceMock: {
+    getBalanceWithLazyReset: jest.Mock;
+    refund: jest.Mock;
+  };
   let sessionRepo: jest.Mocked<Repository<InterviewPrepSession>>;
   let appRepo: jest.Mocked<Repository<Application>>;
   let llm: jest.Mocked<LlmService>;
@@ -144,11 +148,13 @@ describe('CompanyResearchService', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    const coinService = {
+    const coinService = (coinServiceMock = {
       getBalanceWithLazyReset: jest
         .fn()
         .mockResolvedValue({ balance: 100, tier: 'free' }),
-    };
+      // cost hardening 🟡4 — 후처리 실패 환불
+      refund: jest.fn().mockResolvedValue({ refunded: 50 }),
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -956,6 +962,73 @@ describe('CompanyResearchService', () => {
       expect(service['isValidFieldName']('sources')).toBe(false);
       expect(service['isValidFieldName']('inferredFields')).toBe(false);
       expect(service['isValidFieldName']('__proto__')).toBe(false);
+    });
+  });
+  // ── cost hardening 🟡4 — 후처리 실패 refund 커버리지 ──
+  describe('후처리 실패 환불 (🟡4)', () => {
+    it('LLM ok(50코인 차감됨) 후 cache 저장 실패 → refund 호출 + 원 에러 rethrow (이중 차감 방지)', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(null); // miss
+      llm.call.mockResolvedValue({
+        status: 'ok',
+        json: {
+          businessSummary: '요약',
+          recentTrends: '트렌드',
+          interviewKeywords: [],
+        },
+        text: '',
+        promptTokens: 10,
+        completionTokens: 10,
+        costUsd: 0.01,
+        latencyMs: 100,
+        callLogId: 'log-1',
+        outputRedacted: false,
+      } as never);
+      cacheRepo.save.mockRejectedValueOnce(new Error('DB down'));
+
+      await expect(
+        service.fetchForSession(USER_ID, SESSION_ID),
+      ).rejects.toThrow('DB down');
+
+      expect(coinServiceMock.refund).toHaveBeenCalledWith(
+        USER_ID,
+        'company_research',
+        expect.stringContaining('후처리 실패'),
+      );
+    });
+
+    it('환불 자체도 실패 → 원 에러가 유지되어 rethrow (환불 에러로 가려지지 않음)', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(null);
+      llm.call.mockResolvedValue({
+        status: 'ok',
+        json: { businessSummary: '요약', interviewKeywords: [] },
+        text: '',
+        promptTokens: 10,
+        completionTokens: 10,
+        costUsd: 0.01,
+        latencyMs: 100,
+        callLogId: 'log-1',
+        outputRedacted: false,
+      } as never);
+      cacheRepo.save.mockRejectedValueOnce(new Error('DB down'));
+      coinServiceMock.refund.mockRejectedValueOnce(new Error('refund fail'));
+
+      await expect(
+        service.fetchForSession(USER_ID, SESSION_ID),
+      ).rejects.toThrow('DB down');
+    });
+
+    it('LLM 자체 실패 (차감 없음) → refund 미호출 (불필요 환불 방지)', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(null);
+      llm.call.mockResolvedValue({
+        status: 'error',
+        text: null,
+        errorMessage: 'provider down',
+        callLogId: 'log-1',
+      } as never);
+
+      const r = await service.fetchForSession(USER_ID, SESSION_ID);
+      expect(r.status).not.toBe('ok');
+      expect(coinServiceMock.refund).not.toHaveBeenCalled();
     });
   });
 });
