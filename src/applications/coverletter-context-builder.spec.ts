@@ -33,6 +33,7 @@ function makeLog(
     userId: 'u-1',
     content: '기본 로그 내용',
     occurredAt: '2026-05-01',
+    relatedStepId: null,
     cat: null,
     comps: [],
     cl: [],

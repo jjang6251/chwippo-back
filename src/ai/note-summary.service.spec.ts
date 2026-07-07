@@ -40,6 +40,7 @@ describe('NoteSummaryService', () => {
     userId: 'user-1',
     content: '제목',
     occurredAt: '2026-05-10',
+    relatedStepId: null,
     cat: null,
     comps: [],
     cl: [],

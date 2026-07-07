@@ -164,6 +164,7 @@ export class InsightsService {
          FROM activity_logs
          WHERE user_id = $1
            AND archived_at IS NULL
+           AND (cat IS NULL OR cat <> 'rest') -- activity-redesign: 쉬어가기는 집계 제외
            AND occurred_at >= CURRENT_DATE - $2::int
          GROUP BY occurred_at
          ORDER BY occurred_at ASC`,
@@ -182,6 +183,7 @@ export class InsightsService {
          FROM activity_logs
          WHERE user_id = $1
            AND archived_at IS NULL
+           AND (cat IS NULL OR cat <> 'rest') -- activity-redesign: 쉬어가기는 집계 제외
            AND occurred_at >= date_trunc('month', CURRENT_DATE) - INTERVAL '1 month' * ($2::int - 1)
          GROUP BY month
          ORDER BY month ASC`,

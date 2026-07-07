@@ -22,5 +22,7 @@ import { CompaniesModule } from '../companies/companies.module';
   ],
   providers: [DashboardService, StreakService, GrowthService],
   controllers: [DashboardController],
+  // activity-redesign — 활동 로그·회고 쓰기 경로가 streak 캐시 무효화 호출
+  exports: [StreakService],
 })
 export class DashboardModule {}

@@ -9,12 +9,14 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { NoteSummaryService } from '../ai/note-summary.service';
 import { ActivityLogService } from './activity-log.service';
 import { CreateActivityLogDto } from './dto/create-activity-log.dto';
+import { QuickCreateActivityLogDto } from './dto/quick-create-activity-log.dto';
 import { UpdateActivityLogDto } from './dto/update-activity-log.dto';
 import { SummarizeNoteDto } from './dto/summarize-note.dto';
 
@@ -40,6 +42,24 @@ export class ActivityLogController {
     @Body() dto: CreateActivityLogDto,
   ) {
     return this.service.create(user.id, activityId, dto);
+  }
+
+  /** activity-redesign — 퀵캡처 (활동 미지정 → 기본함 · isRest 멱등) */
+  @Post('activity-logs')
+  quickCreate(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: QuickCreateActivityLogDto,
+  ) {
+    return this.service.quickCreate(user.id, dto);
+  }
+
+  /** activity-redesign — 유저 전체 날짜 타임라인 (keyset cursor) */
+  @Get('activity-logs')
+  timeline(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.service.timeline(user.id, cursor);
   }
 
   @Patch('activity-logs/:logId')

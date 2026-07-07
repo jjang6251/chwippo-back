@@ -2,9 +2,11 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
+import { StreakService } from '../dashboard/streak.service';
 import { DataSource, Repository } from 'typeorm';
 import { Activity } from './entities/activity.entity';
 import { ActivityLog } from './entities/activity-log.entity';
+import { ApplicationStep } from '../applications/application-step.entity';
 import { ActivityLogService } from './activity-log.service';
 import * as autoTagger from './auto-tagger';
 
@@ -13,6 +15,7 @@ describe('ActivityLogService', () => {
   let activityRepo: jest.Mocked<Repository<Activity>>;
   let logRepo: jest.Mocked<Repository<ActivityLog>>;
   let dataSource: jest.Mocked<DataSource>;
+  let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
   let autoTagSpy: jest.SpyInstance;
 
   const makeActivity = (overrides: Partial<Activity> = {}): Activity => ({
@@ -23,6 +26,7 @@ describe('ActivityLogService', () => {
     org: null,
     role: null,
     resultUrl: null,
+    isInbox: false,
     outcome: null,
     startedAt: null,
     endedAt: null,
@@ -43,6 +47,7 @@ describe('ActivityLogService', () => {
     userId: 'user-1',
     content: '제목',
     occurredAt: '2026-05-10',
+    relatedStepId: null,
     cat: null,
     comps: [],
     cl: [],
@@ -65,6 +70,7 @@ describe('ActivityLogService', () => {
     const mockActivityRepo = mock<Repository<Activity>>();
     const mockLogRepo = mock<Repository<ActivityLog>>();
     const mockDataSource = mock<DataSource>();
+    const mockStepRepo = mock<Repository<ApplicationStep>>();
     mockDataSource.query.mockImplementation(async (sql: string) => {
       if (sql.includes('information_schema')) return [{ exists: false }];
       return [];
@@ -75,7 +81,15 @@ describe('ActivityLogService', () => {
         ActivityLogService,
         { provide: getRepositoryToken(Activity), useValue: mockActivityRepo },
         { provide: getRepositoryToken(ActivityLog), useValue: mockLogRepo },
+        {
+          provide: getRepositoryToken(ApplicationStep),
+          useValue: mockStepRepo,
+        },
         { provide: DataSource, useValue: mockDataSource },
+        {
+          provide: StreakService,
+          useValue: { invalidateCache: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -83,6 +97,7 @@ describe('ActivityLogService', () => {
     activityRepo = module.get(getRepositoryToken(Activity));
     logRepo = module.get(getRepositoryToken(ActivityLog));
     dataSource = module.get(DataSource);
+    stepRepo = module.get(getRepositoryToken(ApplicationStep));
   });
 
   afterEach(() => {
@@ -475,6 +490,239 @@ describe('ActivityLogService', () => {
         occurredAt: '2099-01-01',
       });
       expect(result.occurredAt).toBe('2099-01-01');
+    });
+  });
+
+  /**
+   * activity-redesign P1 시나리오:
+   * quickCreate — 1) 미분류 → inbox get-or-create 2) inbox 재사용 3) 동시 생성 경합 수렴
+   *   4) activityId 지정 5) 타 유저 활동 404 6) archived 활동 400 7) 빈 content 400
+   *   8) relatedStepId 본인 스텝 통과 / 타인·없음 404 9) isRest 멱등 (같은 날 1개)
+   *   10) rest 는 autoTag 미호출 + 기본 문구
+   * timeline — 11) 매핑·정렬 파라미터 12) 잘못된 cursor 400
+   * update — 13) activityId 이동 (본인) 14) 타 유저 활동 404 15) archived 대상 400
+   */
+  describe('quickCreate (activity-redesign)', () => {
+    beforeEach(() => {
+      logRepo.create.mockImplementation((d) => d as ActivityLog);
+      logRepo.save.mockImplementation(async (d) => d as ActivityLog);
+      autoTagSpy.mockReturnValue({
+        cat: 'learning',
+        comps: [],
+        cl: ['job_competency'],
+        quant: null,
+        keywords: [],
+      });
+    });
+
+    it('1) 미분류 → 기본함 생성 후 로그 귀속', async () => {
+      activityRepo.findOne.mockResolvedValue(null); // inbox 없음
+      activityRepo.create.mockImplementation((d) => d as Activity);
+      activityRepo.save.mockResolvedValue(
+        makeActivity({ id: 'inbox-1', isInbox: true, name: '기본함' }),
+      );
+
+      const log = await service.quickCreate('user-1', { content: '한 줄' });
+
+      expect(activityRepo.save).toHaveBeenCalled();
+      expect(log.activityId).toBe('inbox-1');
+      expect(log.content).toBe('한 줄');
+    });
+
+    it('2) 기본함 이미 있으면 재사용 (생성 안 함)', async () => {
+      activityRepo.findOne.mockResolvedValue(
+        makeActivity({ id: 'inbox-1', isInbox: true }),
+      );
+      await service.quickCreate('user-1', { content: '한 줄' });
+      expect(activityRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('3) 동시 생성 경합 — unique 충돌 시 재조회로 수렴', async () => {
+      activityRepo.findOne
+        .mockResolvedValueOnce(null) // 최초 조회 없음
+        .mockResolvedValueOnce(makeActivity({ id: 'inbox-1', isInbox: true })); // 충돌 후 재조회
+      activityRepo.create.mockImplementation((d) => d as Activity);
+      activityRepo.save.mockRejectedValue(
+        Object.assign(new Error('duplicate key'), { code: '23505' }),
+      );
+
+      const log = await service.quickCreate('user-1', { content: '한 줄' });
+      expect(log.activityId).toBe('inbox-1');
+    });
+
+    it('4) activityId 지정 시 해당 활동으로', async () => {
+      activityRepo.findOne.mockResolvedValue(makeActivity({ id: 'act-9' }));
+      const log = await service.quickCreate('user-1', {
+        content: '지정',
+        activityId: 'act-9',
+      });
+      expect(log.activityId).toBe('act-9');
+    });
+
+    it('5) 타 유저 활동 → NotFound', async () => {
+      activityRepo.findOne.mockResolvedValue(null);
+      activityRepo.create.mockImplementation((d) => d as Activity);
+      activityRepo.save.mockResolvedValue(makeActivity({ isInbox: true }));
+      await expect(
+        service.quickCreate('user-1', { content: 'x', activityId: 'other' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('6) archived 활동 지정 → BadRequest', async () => {
+      activityRepo.findOne.mockResolvedValue(
+        makeActivity({ archivedAt: new Date() }),
+      );
+      await expect(
+        service.quickCreate('user-1', { content: 'x', activityId: 'act-1' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('7) 빈 content (rest 아님) → BadRequest', async () => {
+      await expect(
+        service.quickCreate('user-1', { content: '   ' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('8) relatedStepId — 타인·없는 스텝 → NotFound', async () => {
+      const qb = {
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(null),
+      };
+      stepRepo.createQueryBuilder.mockReturnValue(qb as never);
+      await expect(
+        service.quickCreate('user-1', {
+          content: 'x',
+          relatedStepId: '11111111-1111-1111-1111-111111111111',
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('9) isRest 멱등 — 같은 KST 날짜 기존 rest 반환', async () => {
+      const existing = makeLog({ id: 'rest-1', cat: 'rest' });
+      logRepo.findOne.mockResolvedValue(existing);
+      const r = await service.quickCreate('user-1', { isRest: true });
+      expect(r.id).toBe('rest-1');
+      expect(logRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('10) rest 신규 — autoTag 미호출 + 기본 문구 + cat=rest', async () => {
+      logRepo.findOne.mockResolvedValue(null);
+      activityRepo.findOne.mockResolvedValue(
+        makeActivity({ id: 'inbox-1', isInbox: true }),
+      );
+      autoTagSpy.mockClear();
+      const r = await service.quickCreate('user-1', { isRest: true });
+      expect(r.cat).toBe('rest');
+      expect(r.content).toBe('쉬어가는 날');
+      expect(autoTagSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('timeline (activity-redesign)', () => {
+    function makeTimelineQb(rows: unknown[]) {
+      return {
+        innerJoin: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue(rows),
+      };
+    }
+
+    it('11) 행 매핑 + limit+1 초과 시 nextCursor', async () => {
+      const row = (i: number) => ({
+        id: `l-${i}`,
+        content: `기록 ${i}`,
+        occurred_at: '2026-07-07',
+        cat: i === 0 ? 'develop' : null,
+        cl: [],
+        comps: i === 0 ? ['technical'] : [],
+        mood: null,
+        quant: null,
+        keywords: i === 0 ? ['리팩터링'] : [],
+        note: i === 0 ? { doc: true } : null,
+        created_at: new Date(`2026-07-07T00:${String(i).padStart(2, '0')}:00Z`),
+        activity_id: 'act-1',
+        activity_name: '기본함',
+        activity_is_inbox: true,
+        step_name: i === 0 ? '1차 면접' : null,
+        company_name: i === 0 ? '카카오' : null,
+      });
+      const rows = Array.from({ length: 31 }, (_, i) => row(i));
+      const qb = makeTimelineQb(rows);
+      logRepo.createQueryBuilder.mockReturnValue(qb as never);
+
+      const r = await service.timeline('user-1');
+      expect(r.items).toHaveLength(30);
+      expect(r.items[0]).toMatchObject({
+        id: 'l-0',
+        hasNote: true,
+        activityIsInbox: true,
+        stepName: '1차 면접',
+        companyName: '카카오',
+        cat: 'develop',
+        comps: ['technical'],
+        mood: null,
+        quant: null,
+        keywords: ['리팩터링'],
+      });
+      expect(r.nextCursor).toContain('2026-07-07|');
+      // 본인 필터 확인
+      expect(qb.where).toHaveBeenCalledWith('log.user_id = :userId', {
+        userId: 'user-1',
+      });
+    });
+
+    it("12-1) cursor 날짜 파트가 날짜 아님 ('abc|ISO') → BadRequest (500 아님)", async () => {
+      const qb = makeTimelineQb([]);
+      logRepo.createQueryBuilder.mockReturnValue(qb as never);
+      await expect(
+        service.timeline('user-1', 'abc|2026-07-08T00:00:00Z'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('12) 잘못된 cursor → BadRequest', async () => {
+      const qb = makeTimelineQb([]);
+      logRepo.createQueryBuilder.mockReturnValue(qb as never);
+      await expect(service.timeline('user-1', 'not-a-cursor')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('update — activityId 이동 (activity-redesign)', () => {
+    it('13) 본인 활동으로 이동', async () => {
+      logRepo.findOne.mockResolvedValue(makeLog({ activityId: 'inbox-1' }));
+      activityRepo.findOne.mockResolvedValue(makeActivity({ id: 'act-2' }));
+      logRepo.save.mockImplementation(async (d) => d as ActivityLog);
+
+      const r = await service.update('user-1', 'log-1', {
+        activityId: 'act-2',
+      });
+      expect(r.activityId).toBe('act-2');
+    });
+
+    it('14) 타 유저 활동으로 이동 → NotFound', async () => {
+      logRepo.findOne.mockResolvedValue(makeLog());
+      activityRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.update('user-1', 'log-1', { activityId: 'other' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('15) archived 활동으로 이동 → BadRequest', async () => {
+      logRepo.findOne.mockResolvedValue(makeLog());
+      activityRepo.findOne.mockResolvedValue(
+        makeActivity({ id: 'act-2', archivedAt: new Date() }),
+      );
+      await expect(
+        service.update('user-1', 'log-1', { activityId: 'act-2' }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

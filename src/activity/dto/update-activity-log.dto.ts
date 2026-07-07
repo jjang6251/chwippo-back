@@ -1,4 +1,5 @@
 import {
+  IsUUID,
   ArrayMaxSize,
   IsArray,
   IsDateString,
@@ -18,6 +19,11 @@ import {
 import { QuantShapeValidator } from './quant-shape.validator';
 
 export class UpdateActivityLogDto {
+  /** activity-redesign — 로그의 활동 이동 (기본함 → 활동). 본인 활동만 */
+  @IsOptional()
+  @IsUUID()
+  activityId?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(200)
