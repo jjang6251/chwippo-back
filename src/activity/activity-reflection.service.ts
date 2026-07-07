@@ -6,6 +6,7 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { getKstWeekMonday, toKstDateString } from '../common/datetime';
+import { StreakService } from '../dashboard/streak.service';
 import { Activity } from './entities/activity.entity';
 import { ActivityReflection } from './entities/activity-reflection.entity';
 import {
@@ -30,6 +31,7 @@ export class ActivityReflectionService {
     private readonly refRepo: Repository<ActivityReflection>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly streakService: StreakService,
   ) {}
 
   async findAllForActivity(userId: string, activityId: string) {
@@ -55,7 +57,9 @@ export class ActivityReflectionService {
       challenges: dto.challenges ?? [],
       nextActions: dto.nextActions ?? [],
     });
-    return this.refRepo.save(ref);
+    const saved = await this.refRepo.save(ref);
+    this.streakService.invalidateCache(userId); // streak 소스 (activity_reflections)
+    return saved;
   }
 
   async update(
@@ -86,6 +90,7 @@ export class ActivityReflectionService {
       );
     }
     await this.refRepo.remove(ref);
+    this.streakService.invalidateCache(userId);
   }
 
   /** F6 source_refs 카운트 (reflection 기준). 테이블 없으면 0 */

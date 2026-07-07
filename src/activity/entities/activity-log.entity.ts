@@ -14,6 +14,10 @@ import { Activity } from './activity.entity';
  * 행동 분류 12종 — mock CAT_KO 와 1:1.
  */
 export type LogCategory =
+  // 취준 실전 3종 (auto-tagger v2 — 2026-07-08)
+  | 'coding_test'
+  | 'interview'
+  | 'apply'
   | 'develop'
   | 'meeting'
   | 'presentation'
@@ -25,7 +29,9 @@ export type LogCategory =
   | 'customer'
   | 'analysis'
   | 'creative'
-  | 'other';
+  | 'other'
+  // activity-redesign — 쉬어가기 (streak 유지 · Aha Habit/인사이트 집계 제외)
+  | 'rest';
 
 /** 발휘 역량 10종 — mock COMP_KO */
 export type LogComp =
@@ -83,6 +89,10 @@ export class ActivityLog {
 
   @Column({ name: 'occurred_at', type: 'date' })
   occurredAt: string;
+
+  /** activity-redesign — 일정 질문 답변 로그가 가리키는 전형 스텝 (스텝 삭제 시 SET NULL) */
+  @Column({ name: 'related_step_id', type: 'uuid', nullable: true })
+  relatedStepId: string | null;
 
   @Column({ type: 'varchar', length: 30, nullable: true })
   cat: LogCategory | null;

@@ -13,6 +13,10 @@ import { QuantShapeValidator } from './quant-shape.validator';
 
 /** 행동 분류 12종 — entity LogCategory 와 동일 */
 export const LOG_CATEGORIES = [
+  // 취준 실전 3종 (auto-tagger v2)
+  'coding_test',
+  'interview',
+  'apply',
   'develop',
   'meeting',
   'presentation',

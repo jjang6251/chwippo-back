@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 import { mock } from 'jest-mock-extended';
+import { StreakService } from '../dashboard/streak.service';
 import { Repository } from 'typeorm';
 import { Activity } from './entities/activity.entity';
 import { ActivityReflection } from './entities/activity-reflection.entity';
@@ -24,6 +25,7 @@ describe('ActivityReflectionService', () => {
     org: null,
     role: null,
     resultUrl: null,
+    isInbox: false,
     outcome: null,
     startedAt: null,
     endedAt: null,
@@ -72,6 +74,10 @@ describe('ActivityReflectionService', () => {
           useValue: mockRefRepo,
         },
         { provide: getDataSourceToken(), useValue: mockDataSource },
+        {
+          provide: StreakService,
+          useValue: { invalidateCache: jest.fn() },
+        },
       ],
     }).compile();
     service = module.get<ActivityReflectionService>(ActivityReflectionService);
