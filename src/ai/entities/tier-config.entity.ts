@@ -41,6 +41,7 @@ export class TierConfig {
   @Column({ name: 'default_cooldown_seconds', type: 'int', default: 3 })
   defaultCooldownSeconds: number;
 
+  /** ⚰️ 퇴역 (2026-07-09) — 유저 트리거 조사 제거. 컬럼은 보존, 코드 참조·admin 편집 없음 */
   @Column({ name: 'company_research_daily_cap', type: 'int' })
   companyResearchDailyCap: number;
 

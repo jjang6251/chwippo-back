@@ -34,12 +34,6 @@ export class UpdateTierConfigDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(1000)
-  companyResearchDailyCap?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
   @Max(10080) // 7 days in minutes
   noteSummaryCooldownMinutes?: number;
 

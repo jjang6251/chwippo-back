@@ -96,9 +96,6 @@ export class TierConfigAdminService {
         ...(dto.defaultCooldownSeconds !== undefined && {
           defaultCooldownSeconds: dto.defaultCooldownSeconds,
         }),
-        ...(dto.companyResearchDailyCap !== undefined && {
-          companyResearchDailyCap: dto.companyResearchDailyCap,
-        }),
         ...(dto.noteSummaryCooldownMinutes !== undefined && {
           noteSummaryCooldownMinutes: dto.noteSummaryCooldownMinutes,
         }),
@@ -138,7 +135,6 @@ export class TierConfigAdminService {
             monthlyCoinLimit: Number(before.monthlyCoinLimit),
             inputTokenCapPerCall: before.inputTokenCapPerCall,
             defaultCooldownSeconds: before.defaultCooldownSeconds,
-            companyResearchDailyCap: before.companyResearchDailyCap,
             noteSummaryCooldownMinutes: before.noteSummaryCooldownMinutes,
             priceKrw: before.priceKrw,
             active: before.active,
@@ -147,7 +143,6 @@ export class TierConfigAdminService {
             monthlyCoinLimit: Number(after.monthlyCoinLimit),
             inputTokenCapPerCall: after.inputTokenCapPerCall,
             defaultCooldownSeconds: after.defaultCooldownSeconds,
-            companyResearchDailyCap: after.companyResearchDailyCap,
             noteSummaryCooldownMinutes: after.noteSummaryCooldownMinutes,
             priceKrw: after.priceKrw,
             active: after.active,

@@ -48,11 +48,6 @@ export interface LlmCallInput {
   preBlockedReason?: string;
   /** PR 0 — structured JSON output 필요 시 schema 전달. callJson 경로 활성화 */
   jsonSchema?: LlmProviderJsonRequest['jsonSchema'];
-  /**
-   * Phase 4 단계 B — web_search tool 활성화 (Anthropic 만 지원, jsonSchema 와 함께 사용).
-   * 화이트리스트 도메인 + max_uses 강제로 비용·법적 risk 제어.
-   */
-  webSearch?: LlmProviderJsonRequest['webSearch'];
 }
 
 export interface LlmCallOk {
@@ -340,7 +335,6 @@ export class LlmService {
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
             jsonSchema: input.jsonSchema,
-            webSearch: input.webSearch,
           });
         } else {
           result = await provider.complete({
@@ -523,7 +517,6 @@ export class LlmService {
                   maxTokens: cfg.maxOutputTokens,
                   temperature: cfg.temperature,
                   jsonSchema: input.jsonSchema,
-                  // webSearch 은 anthropic 전용 — fallback (보통 openai) 으로 가면 제외
                 });
               } else {
                 fbResult = await fbProvider.complete({

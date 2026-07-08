@@ -126,15 +126,6 @@ export class InterviewPrepSessionsController {
     return this.research.getCachedForSession(user.id, id);
   }
 
-  /** Phase 4 단계 B — 회사 조사 트리거 (cache miss/expired 시 LLM web_search) */
-  @Post(':id/research')
-  triggerResearch(
-    @CurrentUser() user: { id: string },
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
-    return this.research.fetchForSession(user.id, id);
-  }
-
   /** Phase 4 단계 B — 사용자 자유 메모 update (AI 정보와 분리) */
   @Patch(':id/user-notes')
   updateUserNotes(

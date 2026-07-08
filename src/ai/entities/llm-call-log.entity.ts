@@ -24,8 +24,8 @@ export type LlmFeature =
   | 'coverletter_recommend'
   | 'interview_prep_session'
   | 'interview_prep_followup'
-  // PR 2 Phase 4 단계 B — 회사·직무 조사 (Anthropic Claude haiku + web_search tool)
-  | 'company_research'
+  // 'company_research' 는 2026-07-09 퇴역 — 유저 트리거 조사 제거 (pre-seed 공급 전환).
+  //   과거 llm_call_logs 행에는 문자열로 남아 있음 (audit 보존).
   // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn, structured output, suggestedUpdates 적용)
   | 'coverletter_chat';
 

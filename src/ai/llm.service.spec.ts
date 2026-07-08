@@ -899,10 +899,10 @@ describe('LlmService', () => {
     it('5) mock 분기 + jsonSchema 있음 → mock 응답에 json 필드 (callJson 흐름)', async () => {
       process.env.NODE_ENV = 'development';
       openai.isAvailable = false;
-      anthropic.isAvailable = false; // company_research = anthropic provider
+      anthropic.isAvailable = false; // coverletter_chat = anthropic provider
       const r = await service.call({
         userId: 'u-1',
-        feature: 'company_research',
+        feature: 'coverletter_chat',
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: {
@@ -916,7 +916,7 @@ describe('LlmService', () => {
       });
       expect(r.status).toBe('ok');
       if (r.status !== 'ok') throw new Error('expected ok');
-      // mock-llm-responses 가 company_research feature 일 때 json 객체 반환
+      // mock-llm-responses 가 jsonSchema 요청일 때 json 객체 반환
       expect(r.json).toBeDefined();
     });
 

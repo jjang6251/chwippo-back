@@ -8,7 +8,6 @@ const FEATURE_LABEL: Partial<Record<LlmFeature, string>> = {
   coverletter_chat: 'AI 자소서 대화',
   interview_prep_session: 'AI 면접 준비',
   interview_prep_followup: 'AI 꼬리질문',
-  company_research: '회사 조사',
   note_summary: 'AI 노트 요약',
 };
 
