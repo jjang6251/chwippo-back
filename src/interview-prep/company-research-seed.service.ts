@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { CompanyResearchCache } from './entities/company-research-cache.entity';
 
@@ -26,7 +26,7 @@ export interface ResearchSeedEntry {
   /** 동일 회사 복수 표기 — 같은 내용을 각 이름 키로 복제 저장 */
   aliases?: string[];
   research: Record<string, unknown>;
-  sources?: Array<{ url?: string }> | string[];
+  sources?: Array<string | { url?: string }>;
 }
 
 export interface ResearchSeedDoc {
@@ -131,8 +131,10 @@ export class CompanyResearchSeedService implements OnApplicationBootstrap {
       const sources = this.normalizeSources(entry.sources);
       for (const name of [entry.companyName, ...(entry.aliases ?? [])]) {
         const key = this.normalize(name);
+        // ⚠️ TypeORM findOne 은 where 의 null 값을 조용히 무시 — 반드시 IsNull() 사용.
+        // (null 로 쓰면 직군 맞춤 행이 generic 행으로 오인돼 seed 가 스킵되는 버그)
         const existing = await this.cacheRepo.findOne({
-          where: { companyName: key, jobCategory: null as unknown as string },
+          where: { companyName: key, jobCategory: IsNull() },
         });
         if (existing?.optOut) {
           result.skippedOptOut += 1;
@@ -183,6 +185,6 @@ export class CompanyResearchSeedService implements OnApplicationBootstrap {
     if (!sources) return [];
     return sources
       .map((s) => (typeof s === 'string' ? s : (s.url ?? '')))
-      .filter(Boolean);
+      .filter((u): u is string => u.length > 0);
   }
 }

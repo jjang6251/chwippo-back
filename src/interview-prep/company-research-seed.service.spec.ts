@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { FindOperator, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import {
   CompanyResearchSeedService,
@@ -97,7 +97,7 @@ describe('CompanyResearchSeedService', () => {
     expect(ttlMs).toBeLessThan(181 * 24 * 60 * 60 * 1000);
   });
 
-  it('4) 유저 조사 행 (seedVersion NULL) → skip', async () => {
+  it('4) 유저 조사 행 (seedVersion NULL) → skip + 조회는 IsNull 연산자 사용', async () => {
     const service = await build('backup-bucket');
     repo.findOne.mockResolvedValue({
       id: 'row-user',
@@ -107,6 +107,12 @@ describe('CompanyResearchSeedService', () => {
     const r = await service.applySeed(makeDoc());
     expect(r.skippedUser).toBe(1);
     expect(repo.save).not.toHaveBeenCalled();
+    // 회귀 방지 — TypeORM 은 where 의 raw null 을 조용히 무시 (직군 행 오인 버그).
+    // jobCategory 조건이 반드시 FindOperator(IsNull) 여야 한다.
+    const where = repo.findOne.mock.calls[0][0].where as {
+      jobCategory: unknown;
+    };
+    expect(where.jobCategory).toBeInstanceOf(FindOperator);
   });
 
   it('5) opt-out 행 → skip (부활 금지)', async () => {
