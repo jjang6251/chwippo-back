@@ -484,6 +484,36 @@ describe('LlmService', () => {
       if (r.status !== 'ok') throw new Error('expected ok');
       expect(r.outputRedacted).toBe(false);
     });
+
+    it('구조화 json 응답에 PII(전화번호) 포함 → 반환 json 마스킹 + outputRedacted=true', async () => {
+      anthropic.callJson.mockResolvedValue({
+        text: '',
+        json: { reply: '담당자 010-9999-8888 로 연락하세요', score: 7 },
+        promptTokens: 50,
+        completionTokens: 20,
+        finishReason: 'tool_use',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_feedback',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: {
+          name: 'fb',
+          schema: { type: 'object', properties: { score: { type: 'number' } } },
+        },
+      });
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.json).toEqual({
+        reply: expect.stringContaining('[REDACTED_PHONE]'),
+        score: 7,
+      });
+      expect(JSON.stringify(r.json)).not.toContain('010-9999-8888');
+      expect(r.outputRedacted).toBe(true);
+      expect(logRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ outputRedacted: true }),
+      );
+    });
   });
 
   // ── 프롬프트 캐시 세그먼트 (2026-07-09) ──
@@ -1233,6 +1263,47 @@ describe('LlmService', () => {
           'coverletter_chat',
         );
         expect(events.at(-1)?.type).toBe('done');
+      });
+
+      it('done json 에 PII(이메일) 포함 → done json 마스킹 + outputRedacted=true', async () => {
+        anthropic.callJsonStream = jest
+          .fn()
+          .mockImplementation(async function* () {
+            yield {
+              type: 'done',
+              json: { reply: '메일 fake@x.com 로 문의하세요' },
+              response: {
+                text: 'raw',
+                promptTokens: 30,
+                completionTokens: 10,
+                finishReason: 'tool_use',
+              },
+            };
+          });
+
+        const events = (await collect(
+          service.callStream({
+            userId: 'u-1',
+            feature: 'coverletter_chat',
+            systemPrompt: 's',
+            userPrompt: 'u',
+            jsonSchema: schema,
+          }),
+        )) as Array<{
+          type: string;
+          json?: { reply: string };
+          outputRedacted?: boolean;
+        }>;
+
+        const done = events.at(-1)!;
+        expect(done.type).toBe('done');
+        expect(done.json?.reply).toContain('[REDACTED_EMAIL]');
+        expect(done.json?.reply).not.toContain('fake@x.com');
+        expect(done.outputRedacted).toBe(true);
+        const okRow = logRepo.save.mock.calls
+          .map((c) => c[0] as Partial<LlmCallLog>)
+          .find((row) => row.status === 'ok');
+        expect(okRow?.outputRedacted).toBe(true);
       });
     });
   });
