@@ -1,4 +1,4 @@
-import { scrubOutputPii, scrubPii } from './pii-scrubber';
+import { scrubJsonOutputPii, scrubOutputPii, scrubPii } from './pii-scrubber';
 
 describe('pii-scrubber', () => {
   describe('정규식 패턴 12종', () => {
@@ -173,6 +173,59 @@ describe('pii-scrubber', () => {
       const r = scrubOutputPii('일반 요약 텍스트 입니다');
       expect(r.text).toBe('일반 요약 텍스트 입니다');
       expect(r.hasPii).toBe(false);
+    });
+  });
+
+  describe('scrubJsonOutputPii — 구조화 json 채널', () => {
+    it('중첩 객체·배열 안의 문자열도 모두 스크럽 (재귀)', () => {
+      const input = {
+        reply: '담당자 010-9999-8888 로 연락하세요',
+        suggestedUpdates: [
+          { field: 'intro', target: '메일 fake@x.com 참고', note: '수정' },
+          { field: 'body', target: '일반 텍스트' },
+        ],
+        meta: { author: { contact: 'github.com/hallucinated' } },
+      };
+      const r = scrubJsonOutputPii(input);
+      expect(r.hasPii).toBe(true);
+      expect(r.value.reply).toContain('[REDACTED_PHONE]');
+      expect(r.value.reply).not.toContain('010-9999-8888');
+      expect(r.value.suggestedUpdates[0].target).toContain('[REDACTED_EMAIL]');
+      expect(r.value.suggestedUpdates[1].target).toBe('일반 텍스트');
+      expect(r.value.meta.author.contact).toContain(
+        'github.com/[REDACTED_USER]',
+      );
+    });
+
+    it('PII 없으면 hasPii=false + 원본 불변 (deep copy 는 하되 값 동일)', () => {
+      const input = {
+        reply: '자소서 잘 쓰고 있어요',
+        items: ['첫째', '둘째'],
+        score: 7,
+      };
+      const snapshot = JSON.parse(JSON.stringify(input));
+      const r = scrubJsonOutputPii(input);
+      expect(r.hasPii).toBe(false);
+      expect(r.value).toEqual(input);
+      // 원본 변형 금지
+      expect(input).toEqual(snapshot);
+    });
+
+    it('비문자열 타입(number·boolean·null·undefined) 보존', () => {
+      const input = {
+        n: 42,
+        b: true,
+        nil: null,
+        undef: undefined,
+        arr: [1, false, null],
+      };
+      const r = scrubJsonOutputPii(input);
+      expect(r.hasPii).toBe(false);
+      expect(r.value.n).toBe(42);
+      expect(r.value.b).toBe(true);
+      expect(r.value.nil).toBeNull();
+      expect(r.value.undef).toBeUndefined();
+      expect(r.value.arr).toEqual([1, false, null]);
     });
   });
 });

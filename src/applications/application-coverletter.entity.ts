@@ -9,6 +9,14 @@ import {
 } from 'typeorm';
 import { Application } from './application.entity';
 
+/** 심층 점검(coverletter_feedback) 마지막 결과 — 프론트 계약: camelCase */
+export interface CoverletterLastFeedback {
+  strengths: string[];
+  issues: Array<{ kind: string; quote: string; advice: string }>;
+  suggestions: Array<{ target: string; improved: string }>;
+  summary: string;
+}
+
 // 회사별 자소서 문항-답변 (재활용·AI 컨텍스트용)
 @Entity('application_coverletters')
 export class ApplicationCoverletter {
@@ -45,6 +53,13 @@ export class ApplicationCoverletter {
 
   @Column({ name: 'order_index', default: 0 })
   orderIndex: number;
+
+  // 심층 점검 결과 영속화 — 모달 닫힘·새로고침 유실 방지 (마지막 status='ok' 결과 1개)
+  @Column({ name: 'last_feedback', type: 'jsonb', nullable: true })
+  lastFeedback: CoverletterLastFeedback | null;
+
+  @Column({ name: 'last_feedback_at', type: 'timestamptz', nullable: true })
+  lastFeedbackAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

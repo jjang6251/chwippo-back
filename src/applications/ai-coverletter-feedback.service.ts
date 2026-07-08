@@ -12,6 +12,7 @@ import { LlmService } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
+import { ApplicationCoverletter } from './application-coverletter.entity';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
 
 /**
@@ -21,7 +22,8 @@ import { CoverletterSourceRefsService } from './coverletter-source-refs.service'
  * - **짚어주기, 통째 재작성 금지** — 사용자 자소서로 남게
  * - AI 티 나는 문장 감지 포함 (기업 14곳 중 10곳 AI 판별 도입 — 최대 불안)
  * - 로컬 검사(맞춤법·공백, 무료)와 2층 구조 — 이 서비스는 AI 층만
- * - 결과는 저장하지 않음 (세션성 — 반환만. audit 은 llm_call_logs)
+ * - status='ok' 결과는 문항 row 에 영속화 (모달 닫힘·새로고침 유실 방지).
+ *   저장 실패해도 응답은 정상 반환 (결과 유실보다 저장 실패가 낫다). audit 은 llm_call_logs
  */
 
 export interface FeedbackIssue {
@@ -122,7 +124,7 @@ const SYSTEM_PROMPT = `너는 한국 취준생의 자소서를 제출 직전에 
 
 [점검 관점 — kind 별]
 - ai_tone: AI 가 쓴 티가 나는 상투 표현 (예: "끊임없는 열정", 과도한 병렬 구조, 구체성 없는 미사여구, 반복 어미). 기업들이 AI 판별기를 쓰는 시대 — 본인 사례의 구체 동사·수치로 바꾸도록 조언
-- structure: 두괄식 아님 / 소제목 부재 / STAR 흐름 붕괴
+- structure: 두괄식 아님 / 소제목 부재·형식([대괄호] 요약 헤드라인이 표준 — 내용이 예상 안 되거나 뻔한 관용구면 지적) / STAR 흐름 붕괴
 - question_mismatch: 문항이 묻는 것과 답이 어긋남
 - company_mismatch: 회사·직무와 무관한 착지 (회사 조사 자료가 있으면 그 기준으로 판단하고, 인재상·핵심가치가 제공되면 그 키워드와의 정합도 함께 본다)
 - over_limit: 글자수 초과 시 쳐낼 문장 지목
@@ -146,6 +148,8 @@ export class AiCoverletterFeedbackService {
     private readonly companyResearch: CompanyResearchService,
     @InjectRepository(Application)
     private readonly appRepo: Repository<Application>,
+    @InjectRepository(ApplicationCoverletter)
+    private readonly clRepo: Repository<ApplicationCoverletter>,
   ) {}
 
   async review(
@@ -237,7 +241,7 @@ export class AiCoverletterFeedbackService {
         ? `(글자수 제한: ${cl.charLimit}자 · 현재 ${answer.length}자)`
         : `(현재 ${answer.length}자)`,
       overBy > 0
-        ? `⚠️ 현재 답변이 제한을 ${overBy}자 초과했다. over_limit issue 로 쳐낼 문장을 반드시 지목하고, 가능하면 suggestions 에 해당 문장의 압축본(대체 문장만)을 1개 포함하라.`
+        ? `⚠️ 현재 답변이 제한을 ${overBy}자 초과했다. over_limit issue 로 쳐낼 문장을 반드시 지목하고, suggestions 에 해당 문장의 압축본(대체 문장만)을 반드시 1개 이상 포함하라 (사용자에게 '심층 점검이 다듬어준다'고 안내된 상태다).`
         : null,
       shortfallPct !== null
         ? `분량이 제한의 ${shortfallPct}% 에 그친다. 어떤 경험·수치를 보강하면 좋을지 structure 나 vague 의 advice 로 구체적으로 제안하라.`
@@ -274,9 +278,27 @@ export class AiCoverletterFeedbackService {
       };
     }
 
+    const feedback = result.json as CoverletterFeedbackResult['feedback'];
+
+    // 결과 영속화 — 모달 닫힘·새로고침 유실 방지. 저장 실패해도 응답은 정상 반환
+    // (결과 유실보다 저장 실패가 낫다). blocked/error 는 위에서 return 되므로 여기 도달 X
+    // → 기존 last_feedback 은 status='ok' 일 때만 갱신되어 보존된다.
+    if (feedback) {
+      try {
+        await this.clRepo.update(cl.id, {
+          lastFeedback: feedback,
+          lastFeedbackAt: new Date(),
+        });
+      } catch (err: unknown) {
+        this.logger.warn(
+          `점검 결과 저장 실패 (cl=${cl.id}): ${(err as Error).message}`,
+        );
+      }
+    }
+
     return {
       status: 'ok',
-      feedback: result.json as CoverletterFeedbackResult['feedback'],
+      feedback,
       meta: { callLogId: result.callLogId ?? null },
     };
   }

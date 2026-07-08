@@ -31,6 +31,7 @@ describe('AiCoverletterFeedbackService', () => {
   let abuserBan: jest.Mocked<AbuserBanService>;
   let research: { getCachedForApplication: jest.Mock };
   let appRepo: { findOne: jest.Mock };
+  let clRepo: { update: jest.Mock };
 
   const USER_ID = 'user-1';
   const CL_ID = 'cl-1';
@@ -87,6 +88,7 @@ describe('AiCoverletterFeedbackService', () => {
         .fn()
         .mockResolvedValue({ id: 'app-1', companyName: '카카오' }),
     };
+    clRepo = { update: jest.fn().mockResolvedValue({ affected: 1 }) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -97,6 +99,10 @@ describe('AiCoverletterFeedbackService', () => {
         { provide: AbuserBanService, useValue: abuserBan },
         { provide: CompanyResearchService, useValue: research },
         { provide: getRepositoryToken(Application), useValue: appRepo },
+        {
+          provide: getRepositoryToken(ApplicationCoverletter),
+          useValue: clRepo,
+        },
       ],
     }).compile();
     service = module.get(AiCoverletterFeedbackService);
@@ -270,5 +276,53 @@ describe('AiCoverletterFeedbackService', () => {
     const r = await service.review(USER_ID, CL_ID);
     expect(r.status).toBe('error');
     expect(r.reason).toBe('provider down');
+  });
+
+  it('성공 시 결과 영속화 — clRepo.update(feedback + lastFeedbackAt) 호출', async () => {
+    const r = await service.review(USER_ID, CL_ID);
+
+    expect(r.status).toBe('ok');
+    expect(clRepo.update).toHaveBeenCalledTimes(1);
+    const [id, patch] = clRepo.update.mock.calls[0];
+    expect(id).toBe(CL_ID);
+    expect(patch.lastFeedback).toEqual(OK_FEEDBACK);
+    expect(patch.lastFeedbackAt).toBeInstanceOf(Date);
+  });
+
+  it('저장 update reject 돼도 status ok + feedback 정상 반환 (유실 방지)', async () => {
+    clRepo.update.mockRejectedValue(new Error('db down'));
+
+    const r = await service.review(USER_ID, CL_ID);
+
+    expect(r.status).toBe('ok');
+    expect(r.feedback).toEqual(OK_FEEDBACK);
+    expect(clRepo.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('quota blocked 시 결과 저장 안 함 (기존 기록 보존)', async () => {
+    quotaCheck.checkAndPrepare.mockResolvedValue({
+      blocked: true,
+      code: 'MONTH_LIMIT',
+      reason: '이번 달 한도 소진',
+    } as never);
+
+    const r = await service.review(USER_ID, CL_ID);
+
+    expect(r.status).toBe('blocked');
+    expect(clRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('llm error 시 결과 저장 안 함 (기존 기록 보존)', async () => {
+    llm.call.mockResolvedValue({
+      status: 'error',
+      text: null,
+      errorMessage: 'provider down',
+      callLogId: 'log-e',
+    } as never);
+
+    const r = await service.review(USER_ID, CL_ID);
+
+    expect(r.status).toBe('error');
+    expect(clRepo.update).not.toHaveBeenCalled();
   });
 });

@@ -165,3 +165,50 @@ export function scrubOutputPii(text: string): PiiScrubResult {
   // 사용자 이름 블랙리스트는 응답 쪽엔 불필요 (입력에서 이미 제거됨)
   return scrubPii(text);
 }
+
+/** plain object (JSON 파싱 결과) 판별 — Date·Map 등 비-plain 객체 제외 */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value) as unknown;
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * 구조화 출력(json)의 모든 문자열 필드에 scrubOutputPii 적용 — text 채널과 동일 방어.
+ *
+ * json 이 DB 에 저장되는 경로(chat suggestedUpdates·심층 점검 lastFeedback 등)가
+ * text 채널의 역방향 스크럽을 우회하던 갭을 단일 진입점(LlmService)에서 닫는다.
+ *
+ * - 재귀: string → scrubOutputPii / array·plain object → 순회 / number·boolean·null·undefined → 그대로.
+ * - 원본 변형 금지 — 항상 새 객체·배열 반환.
+ * - Date 등 비-plain 객체는 그대로 통과 (json 파싱 결과라 실제론 없음).
+ *
+ * 주의: suggestions.target 이 사용자 원문 인용이라, 원문에 실제 PII 가 있으면 스크럽으로
+ * 치환되어 프론트의 원문 매칭이 실패할 수 있음 — 의도된 트레이드오프 (프론트 notFound 처리 존재),
+ * hallucination PII 저장 차단이 우선.
+ */
+export function scrubJsonOutputPii<T>(value: T): { value: T; hasPii: boolean } {
+  let hasPii = false;
+
+  const walk = (node: unknown): unknown => {
+    if (typeof node === 'string') {
+      const r = scrubOutputPii(node);
+      if (r.hasPii) hasPii = true;
+      return r.text;
+    }
+    if (Array.isArray(node)) {
+      return node.map(walk);
+    }
+    if (isPlainObject(node)) {
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(node)) {
+        out[key] = walk(node[key]);
+      }
+      return out;
+    }
+    // number · boolean · null · undefined · 비-plain 객체(Date 등) → 그대로
+    return node;
+  };
+
+  return { value: walk(value) as T, hasPii };
+}

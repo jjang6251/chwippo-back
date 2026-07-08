@@ -15,7 +15,7 @@ import { CostGuardService } from './cost-guard.service';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
 import { getFallbackConfig, getModelConfig } from './model-config';
-import { scrubOutputPii, scrubPii } from './pii-scrubber';
+import { scrubJsonOutputPii, scrubOutputPii, scrubPii } from './pii-scrubber';
 import {
   LlmJsonParseError,
   LlmProvider,
@@ -348,8 +348,16 @@ export class LlmService {
         }
 
         // ── 7. 응답 PII 역방향 스크럼 (hallucination 차단) ──
+        // text 채널 + 구조화 json 채널 모두 스크럽. json 은 DB 저장 경로
+        // (chat suggestedUpdates·심층 점검 lastFeedback 등)가 있어 동일 방어 필요.
         const outputScrub = scrubOutputPii(result.text);
+        const jsonScrub =
+          result.json !== undefined
+            ? scrubJsonOutputPii(result.json)
+            : { value: undefined, hasPii: false };
         const finalText = outputScrub.text;
+        const finalJson = jsonScrub.value;
+        const outputRedacted = outputScrub.hasPii || jsonScrub.hasPii;
 
         // ── 8. audit + return ──
         const costUsd = calcCostUsd(
@@ -429,14 +437,14 @@ export class LlmService {
           costBreakdown: chargeResult.breakdown,
           costUsd: costUsd.toString(),
           latencyMs,
-          outputRedacted: outputScrub.hasPii,
+          outputRedacted,
           attempts,
         });
 
         return {
           status: 'ok',
           text: finalText,
-          json: result.json,
+          json: finalJson,
           promptTokens: result.promptTokens,
           completionTokens: result.completionTokens,
           cacheCreationTokens: result.cacheCreationTokens,
@@ -446,7 +454,7 @@ export class LlmService {
           costUsd,
           latencyMs,
           callLogId: log.id,
-          outputRedacted: outputScrub.hasPii,
+          outputRedacted,
         };
       } catch (err) {
         if (err instanceof LlmJsonParseError && attempts < 2) {
@@ -529,6 +537,11 @@ export class LlmService {
                 });
               }
               const fbScrub = scrubOutputPii(fbResult.text);
+              const fbJsonScrub =
+                fbResult.json !== undefined
+                  ? scrubJsonOutputPii(fbResult.json)
+                  : { value: undefined, hasPii: false };
+              const fbOutputRedacted = fbScrub.hasPii || fbJsonScrub.hasPii;
               const fbCost = calcCostUsd(
                 fallbackCfg.model,
                 fbResult.promptTokens,
@@ -561,7 +574,7 @@ export class LlmService {
                 completionTokens: fbResult.completionTokens,
                 costUsd: fbCost.toString(),
                 latencyMs: fbLatency,
-                outputRedacted: fbScrub.hasPii,
+                outputRedacted: fbOutputRedacted,
                 attempts: attempts + 1,
                 coinCost: fbChargeResult.coinCost.toString(),
                 costBreakdown: fbChargeResult.breakdown,
@@ -569,14 +582,14 @@ export class LlmService {
               return {
                 status: 'ok',
                 text: fbScrub.text,
-                json: fbResult.json,
+                json: fbJsonScrub.value,
                 promptTokens: fbResult.promptTokens,
                 completionTokens: fbResult.completionTokens,
                 coinCost: fbChargeResult.coinCost,
                 costUsd: fbCost,
                 latencyMs: fbLatency,
                 callLogId: fbLog.id,
-                outputRedacted: fbScrub.hasPii,
+                outputRedacted: fbOutputRedacted,
                 wasFallback: true,
               };
             } catch (fbErr) {
@@ -763,10 +776,15 @@ export class LlmService {
         jsonSchema: input.jsonSchema,
       })) {
         if (event.type === 'partial') {
+          // partial 은 스크럽하지 않음 — 일시 표시용이고 chunk 경계에서 PII 패턴이
+          // 쪼개져 실효 없음. 저장·반환은 done json 경유로만 스크럽된다.
           yield { type: 'partial', json: event.json };
         } else {
           // done — final json + audit + PR_B1 coin charge
+          // text 채널 + 구조화 json 채널 모두 스크럽 (json 이 DB 저장 경로라 동일 방어).
           const outputScrub = scrubOutputPii(event.response.text);
+          const jsonScrub = scrubJsonOutputPii(event.json);
+          const outputRedacted = outputScrub.hasPii || jsonScrub.hasPii;
           const costUsd = calcCostUsd(
             cfg.model,
             event.response.promptTokens,
@@ -809,19 +827,19 @@ export class LlmService {
             costBreakdown: chargeResult.breakdown,
             costUsd: costUsd.toString(),
             latencyMs,
-            outputRedacted: outputScrub.hasPii,
+            outputRedacted,
             attempts: 1,
           });
           yield {
             type: 'done',
-            json: event.json,
+            json: jsonScrub.value,
             text: outputScrub.text,
             promptTokens: event.response.promptTokens,
             completionTokens: event.response.completionTokens,
             costUsd,
             latencyMs,
             callLogId: log.id,
-            outputRedacted: outputScrub.hasPii,
+            outputRedacted,
           };
         }
       }
