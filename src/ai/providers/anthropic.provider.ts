@@ -114,9 +114,8 @@ export class AnthropicProvider implements LlmProvider {
     // 단일 tool 정의 + tool_choice 로 강제 호출 → tool.input 이 JSON schema 매칭 보장
     const toolName = req.jsonSchema.name;
 
-    // Phase 4 단계 B — web_search tool 활성화 (옵션)
-    // Anthropic web_search_20250305: allowed_domains 화이트리스트 + max_uses 비용 통제
-    // schema tool 과 함께 등록 — Claude 가 검색 후 결과를 structured output 으로 반환
+    // web_search tool 은 2026-07-09 완전 철거 (CEO 결정 — 회사 조사 = pre-seed 공급으로 전환).
+    // structured output schema tool 단일 구성.
     type AnthropicTool = NonNullable<
       Parameters<Anthropic['messages']['create']>[0]['tools']
     >[number];
@@ -127,14 +126,6 @@ export class AnthropicProvider implements LlmProvider {
         input_schema: req.jsonSchema.schema as Anthropic.Tool.InputSchema,
       },
     ];
-    if (req.webSearch) {
-      tools.push({
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: req.webSearch.maxUses,
-        allowed_domains: [...req.webSearch.allowedDomains],
-      } as unknown as AnthropicTool);
-    }
 
     const message = await this.client!.messages.create({
       model: req.model,
@@ -145,10 +136,7 @@ export class AnthropicProvider implements LlmProvider {
       max_tokens: req.maxTokens,
       temperature: req.temperature,
       tools,
-      // web_search 있으면 tool_choice 강제 안 함 (Claude 가 자율적으로 web_search → schema)
-      tool_choice: req.webSearch
-        ? { type: 'auto' }
-        : { type: 'tool', name: toolName },
+      tool_choice: { type: 'tool', name: toolName },
     });
 
     // tool_use 블록 추출 — structured output schema tool 만 (web_search 결과 X)

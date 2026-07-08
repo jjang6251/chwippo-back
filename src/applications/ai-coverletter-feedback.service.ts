@@ -112,17 +112,19 @@ const SYSTEM_PROMPT = `너는 한국 취준생의 자소서를 제출 직전에 
 - 답변을 **통째로 다시 쓰지 마라.** 잘한 점을 먼저 인정하고, 고칠 곳을 문장 단위로 짚는다.
 - 각 지적(issues)마다 답변 원문에서 해당 문장을 quote 로 정확히 인용 (프론트가 하이라이트).
 - 예시 문장(suggestions)은 최대 2개 — 사용자가 참고할 방향 제시용.
+- strengths 는 1~3개. issues 는 가장 심각한 것부터 최대 6개 — 사소한 지적을 나열해 채우지 마라. summary 는 2~3문장.
 
 [suggestions 형식 — 절대 준수. 사용자가 버튼 한 번으로 target→improved 자동 치환한다]
 - target: 답변 원문에서 **글자 그대로 복사한 연속 문자열** (조금이라도 바꾸면 치환 실패).
 - improved: target 자리에 **그대로 들어갈 대체 문장만.** 설명·지시·평가("~하면 더 간결합니다", "이 문장을 삭제하고" 등)를 improved 에 절대 섞지 마라 — 섞이면 그 말이 자소서 본문에 박힌다.
 - 문장 삭제·구조 변경을 권하고 싶으면 suggestions 가 아니라 issues 의 advice 로 써라.
+- issues 의 quote 도 target 과 같은 규칙 — 답변 원문에서 글자 그대로 복사한 연속 문자열이어야 한다 (한 글자라도 다르면 프론트 하이라이트가 실패한다). 원문에 없는 문장을 quote 로 만들어내지 마라.
 
 [점검 관점 — kind 별]
 - ai_tone: AI 가 쓴 티가 나는 상투 표현 (예: "끊임없는 열정", 과도한 병렬 구조, 구체성 없는 미사여구, 반복 어미). 기업들이 AI 판별기를 쓰는 시대 — 본인 사례의 구체 동사·수치로 바꾸도록 조언
 - structure: 두괄식 아님 / 소제목 부재 / STAR 흐름 붕괴
 - question_mismatch: 문항이 묻는 것과 답이 어긋남
-- company_mismatch: 회사·직무와 무관한 착지 (회사 조사 자료가 있으면 그 기준으로)
+- company_mismatch: 회사·직무와 무관한 착지 (회사 조사 자료가 있으면 그 기준으로 판단하고, 인재상·핵심가치가 제공되면 그 키워드와의 정합도 함께 본다)
 - over_limit: 글자수 초과 시 쳐낼 문장 지목
 - vague: 추상적 주장 — 수치·장면 요구
 
@@ -212,6 +214,23 @@ export class AiCoverletterFeedbackService {
       cl.charLimit && answer.length > cl.charLimit
         ? answer.length - cl.charLimit
         : 0;
+    // 분량 미달 — 초과(overBy)와 배타. 제한의 60% 미만이면 보강 방향을 요청
+    const shortfallPct =
+      cl.charLimit && answer.length < cl.charLimit * 0.6
+        ? Math.round((answer.length / cl.charLimit) * 100)
+        : null;
+    // 회사 조사 — 인재상(문자열 배열)·핵심가치(문자열)만 타입 가드로 추출
+    const talentText =
+      research && Array.isArray(research.talentProfile)
+        ? research.talentProfile
+            .filter((v): v is string => typeof v === 'string')
+            .join(' · ')
+            .slice(0, 300)
+        : '';
+    const coreValuesText =
+      research && typeof research.coreValues === 'string'
+        ? research.coreValues.slice(0, 300)
+        : '';
     const parts: string[] = [
       `# 자소서 문항\n${cl.question ?? ''}`,
       cl.charLimit
@@ -220,10 +239,17 @@ export class AiCoverletterFeedbackService {
       overBy > 0
         ? `⚠️ 현재 답변이 제한을 ${overBy}자 초과했다. over_limit issue 로 쳐낼 문장을 반드시 지목하고, 가능하면 suggestions 에 해당 문장의 압축본(대체 문장만)을 1개 포함하라.`
         : null,
+      shortfallPct !== null
+        ? `분량이 제한의 ${shortfallPct}% 에 그친다. 어떤 경험·수치를 보강하면 좋을지 structure 나 vague 의 advice 로 구체적으로 제안하라.`
+        : null,
       app?.companyName ? `# 지원 회사\n${app.companyName}` : null,
       research?.businessSummary
         ? `# 회사 조사 요약 (company_mismatch 판단 근거)\n${String(research.businessSummary).slice(0, 600)}`
         : null,
+      talentText
+        ? `# 인재상 (company_mismatch·ai_tone 조언 근거)\n${talentText}`
+        : null,
+      coreValuesText ? `# 핵심 가치\n${coreValuesText}` : null,
       `# 점검할 답변\n\`\`\`\n${answer}\n\`\`\``,
     ].filter(Boolean) as string[];
 

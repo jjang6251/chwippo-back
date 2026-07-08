@@ -806,7 +806,14 @@ export class CoverletterChatService {
           yield {
             type: 'partial',
             reply: event.json.reply,
-            suggestedUpdates: event.json.suggestedUpdates,
+            // partial parse 중간엔 newAnswer 키가 아직 없는 항목이 섞임 —
+            // 무검증 전달 시 프론트 countChars(undefined) 크래시 (final save 와 동일 기준 적용)
+            suggestedUpdates: event.json.suggestedUpdates?.filter(
+              (u): u is CoverletterSuggestedUpdate =>
+                !!u &&
+                typeof u.clId === 'string' &&
+                typeof u.newAnswer === 'string',
+            ),
           };
         } else if (event.type === 'done') {
           finalJson = event.json;

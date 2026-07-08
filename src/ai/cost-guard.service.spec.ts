@@ -138,7 +138,7 @@ describe('CostGuardService', () => {
       );
       mockCostRows([
         { feature: 'note_summary', cost: '0.1' },
-        { feature: 'company_research', cost: '0.2' },
+        { feature: 'coverletter_chat', cost: '0.2' },
       ]);
 
       const r = await service.check(USER_ID, 'note_summary');
@@ -158,7 +158,7 @@ describe('CostGuardService', () => {
       );
       mockCostRows([
         { feature: 'note_summary', cost: '0.15' },
-        { feature: 'company_research', cost: '0.15' },
+        { feature: 'coverletter_chat', cost: '0.15' },
       ]);
 
       const r = await service.check(USER_ID, 'note_summary');
@@ -175,14 +175,14 @@ describe('CostGuardService', () => {
         }),
       );
       mockCostRows([
-        { feature: 'company_research', cost: '0.25' },
+        { feature: 'coverletter_chat', cost: '0.25' },
         { feature: 'note_summary', cost: '0.05' },
       ]);
 
-      const r = await service.check(USER_ID, 'company_research');
+      const r = await service.check(USER_ID, 'coverletter_chat');
       expect(r.blocked).toBe(true);
       expect((r as { reason: string }).reason).toContain('per-feature');
-      expect((r as { reason: string }).reason).toContain('company_research');
+      expect((r as { reason: string }).reason).toContain('coverletter_chat');
     });
 
     it('다른 feature 호출 시 — 그 feature 의 cost 만 (격리)', async () => {
@@ -193,7 +193,7 @@ describe('CostGuardService', () => {
         }),
       );
       mockCostRows([
-        { feature: 'company_research', cost: '0.5' }, // 다른 feature 초과
+        { feature: 'coverletter_chat', cost: '0.5' }, // 다른 feature 초과
         { feature: 'note_summary', cost: '0.05' },
       ]);
 

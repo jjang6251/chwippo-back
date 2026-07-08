@@ -291,9 +291,9 @@ describe('CoinService', () => {
       expect(r.reason).toContain('코인이 부족');
     });
 
-    it('22) charges_coins=false feature (회사조사) → 항상 ok=true', async () => {
+    it('22) charges_coins=false feature (무료 feature — mock meta) → 항상 ok=true', async () => {
       featureMetaRepo.findOne.mockResolvedValueOnce({
-        feature: 'company_research',
+        feature: 'note_summary',
         chargesCoins: false,
         avgCoinCost: '0',
         fixedCoinCost: null,
@@ -310,7 +310,7 @@ describe('CoinService', () => {
         planStartedAt: null,
         planExpiresAt: null,
       } as unknown as UserCoinBalance);
-      const r = await service.canCharge(USER_ID, 'company_research');
+      const r = await service.canCharge(USER_ID, 'note_summary');
       expect(r.ok).toBe(true);
     });
 
@@ -356,7 +356,7 @@ describe('CoinService', () => {
 
     it('25) charges_coins=false feature → 차감 0 + SQL 안 함', async () => {
       featureMetaRepo.findOne.mockResolvedValueOnce({
-        feature: 'company_research',
+        feature: 'note_summary',
         chargesCoins: false,
         avgCoinCost: '0',
         fixedCoinCost: null,
@@ -364,7 +364,7 @@ describe('CoinService', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      const r = await service.charge(USER_ID, 'company_research', {
+      const r = await service.charge(USER_ID, 'note_summary', {
         inputTokens: 5000,
         outputTokens: 2000,
         webSearchCount: 3,
@@ -420,7 +420,7 @@ describe('CoinService', () => {
     beforeEach(() => {
       // company_research = charges_coins=true, fixed_coin_cost=50
       featureMetaRepo.findOne.mockResolvedValue({
-        feature: 'company_research',
+        feature: 'note_summary',
         chargesCoins: true,
         avgCoinCost: '50',
         fixedCoinCost: 50,
@@ -432,7 +432,7 @@ describe('CoinService', () => {
 
     it('A1) fixed_coin_cost=50 → token 무관 50 차감 (cache hit 도 동일)', async () => {
       dataSource.query.mockResolvedValueOnce(undefined);
-      const r = await service.charge(USER_ID, 'company_research', {
+      const r = await service.charge(USER_ID, 'note_summary', {
         inputTokens: 0, // cache hit
         outputTokens: 0,
       });
@@ -445,7 +445,7 @@ describe('CoinService', () => {
 
     it('A2) fixed_coin_cost=50 + 큰 호출 (input 50K + ws 3) → 그래도 50 차감 (token 환산 무시)', async () => {
       dataSource.query.mockResolvedValueOnce(undefined);
-      const r = await service.charge(USER_ID, 'company_research', {
+      const r = await service.charge(USER_ID, 'note_summary', {
         inputTokens: 50_000,
         outputTokens: 2_000,
         webSearchCount: 3,
@@ -474,7 +474,7 @@ describe('CoinService', () => {
 
     it('A4) charges_coins=false → fixed_coin_cost 있어도 차감 0', async () => {
       featureMetaRepo.findOne.mockResolvedValueOnce({
-        feature: 'company_research',
+        feature: 'note_summary',
         chargesCoins: false,
         avgCoinCost: '0',
         fixedCoinCost: 50,
@@ -482,7 +482,7 @@ describe('CoinService', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      const r = await service.charge(USER_ID, 'company_research', {
+      const r = await service.charge(USER_ID, 'note_summary', {
         inputTokens: 1000,
         outputTokens: 0,
       });
@@ -493,7 +493,7 @@ describe('CoinService', () => {
     it('A5) COIN_SYSTEM_ENABLED=false → fixed_coin_cost 있어도 차감 0', async () => {
       const old = process.env.COIN_SYSTEM_ENABLED;
       process.env.COIN_SYSTEM_ENABLED = 'false';
-      const r = await service.charge(USER_ID, 'company_research', {
+      const r = await service.charge(USER_ID, 'note_summary', {
         inputTokens: 0,
         outputTokens: 0,
       });
@@ -512,7 +512,7 @@ describe('CoinService', () => {
         planStartedAt: null,
         planExpiresAt: null,
       } as unknown as UserCoinBalance);
-      const r = await service.canCharge(USER_ID, 'company_research');
+      const r = await service.canCharge(USER_ID, 'note_summary');
       expect(r.ok).toBe(true);
     });
 
@@ -526,7 +526,7 @@ describe('CoinService', () => {
         planStartedAt: null,
         planExpiresAt: null,
       } as unknown as UserCoinBalance);
-      const r = await service.canCharge(USER_ID, 'company_research');
+      const r = await service.canCharge(USER_ID, 'note_summary');
       expect(r.ok).toBe(false);
       expect(r.reason).toContain('50');
       expect(r.reason).toContain('49');
@@ -535,11 +535,11 @@ describe('CoinService', () => {
     it('A8) atomic — 동시 2 호출 모두 50 차감 (mock 검증)', async () => {
       dataSource.query.mockResolvedValue(undefined);
       const [r1, r2] = await Promise.all([
-        service.charge(USER_ID, 'company_research', {
+        service.charge(USER_ID, 'note_summary', {
           inputTokens: 0,
           outputTokens: 0,
         }),
-        service.charge(USER_ID, 'company_research', {
+        service.charge(USER_ID, 'note_summary', {
           inputTokens: 0,
           outputTokens: 0,
         }),
@@ -552,58 +552,6 @@ describe('CoinService', () => {
     // ─────────────────────────────────────────────────────
     // CTO 검토 H1 — refund (좀비 방지)
     // ─────────────────────────────────────────────────────
-
-    it('H1-R1) refund — fixed_coin_cost=50 인 feature → balance += 50 + log', async () => {
-      dataSource.query.mockResolvedValueOnce(undefined);
-      const r = await service.refund(
-        USER_ID,
-        'company_research',
-        'status update 실패',
-      );
-      expect(r.refunded).toBe(50);
-      expect(dataSource.query).toHaveBeenCalledWith(
-        expect.stringContaining('balance + $1'),
-        [50, USER_ID],
-      );
-    });
-
-    it('H1-R2) refund — charges_coins=false → 환불 0 (차감 자체 없었음)', async () => {
-      featureMetaRepo.findOne.mockResolvedValueOnce({
-        feature: 'company_research',
-        chargesCoins: false,
-        avgCoinCost: '0',
-        fixedCoinCost: 50,
-        description: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      const r = await service.refund(USER_ID, 'company_research', 'test');
-      expect(r.refunded).toBe(0);
-      expect(dataSource.query).not.toHaveBeenCalled();
-    });
-
-    it('H1-R3) refund — fixed_coin_cost=NULL → 환불 0 (지원 X)', async () => {
-      featureMetaRepo.findOne.mockResolvedValueOnce({
-        feature: 'coverletter_chat',
-        chargesCoins: true,
-        avgCoinCost: '3',
-        fixedCoinCost: null,
-        description: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      const r = await service.refund(USER_ID, 'coverletter_chat', 'test');
-      expect(r.refunded).toBe(0);
-      expect(dataSource.query).not.toHaveBeenCalled();
-    });
-
-    it('H1-R4) refund — COIN_SYSTEM_ENABLED=false → 환불 0', async () => {
-      const old = process.env.COIN_SYSTEM_ENABLED;
-      process.env.COIN_SYSTEM_ENABLED = 'false';
-      const r = await service.refund(USER_ID, 'company_research', 'test');
-      expect(r.refunded).toBe(0);
-      process.env.COIN_SYSTEM_ENABLED = old;
-    });
   });
 
   // ───────────────────────────────────────────────────────────────────

@@ -1,7 +1,5 @@
 import {
   BadRequestException,
-  forwardRef,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -9,10 +7,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
-import { CoinService } from '../ai/coin.service';
 import { LlmService } from '../ai/llm.service';
 import { CompaniesService } from '../companies/companies.service';
-import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
@@ -40,11 +36,7 @@ export class ApplicationsService {
     private readonly checklistRepo: Repository<StepChecklistItem>,
     private readonly dataSource: DataSource,
     // PR_B1c — generateCoverletter (자소서 생성 시 회사조사 + 50 코인 차감)
-    @Inject(forwardRef(() => CoinService))
-    private readonly coinService: CoinService,
     private readonly llmService: LlmService,
-    @Inject(forwardRef(() => CompanyResearchService))
-    private readonly companyResearch: CompanyResearchService,
     // W2 — domain inject (favicon 로딩)
     private readonly companiesService: CompaniesService,
     private readonly discord: DiscordNotifier,
@@ -323,189 +315,6 @@ export class ApplicationsService {
       throw new BadRequestException('진짜 카드는 일반 삭제를 사용해주세요.');
     }
     await this.appRepo.softRemove(app);
-  }
-
-  /**
-   * PR_B1c — 자소서 생성 (회사조사 자동 trigger + 50 코인 차감).
-   *
-   * **흐름**:
-   * 1. atomic UPDATE applications SET status='in_progress' WHERE id=? AND status IN ('idle','failed')
-   *    affected=0 → 이미 진행 중·완료 (race 차단)
-   * 2. canCharge (잔여 ≥ 50)
-   *    부족 시 status='idle' 롤백
-   * 3. CompanyResearchService.fetchForApplication 호출 (cache hit/miss 자동)
-   *    - cache hit → LlmService 안 거침 → 수동 charge 호출
-   *    - cache miss → LlmService 가 자동 charge (fixed_coin_cost=50 적용)
-   * 4. 성공 → status='completed'
-   * 5. 실패 → status='failed' (코인 차감 X)
-   */
-  async generateCoverletter(
-    userId: string,
-    applicationId: string,
-  ): Promise<{
-    status:
-      | 'completed'
-      | 'already_in_progress'
-      | 'already_completed'
-      | 'coin_insufficient'
-      | 'failed';
-    reason?: string;
-  }> {
-    // PR_B1c Phase C — lazy stuck timeout: in_progress 인데 30분 초과면 'failed' 처리.
-    // 사용자가 진입할 때마다 즉시 좀비 해소. cron 은 background backup.
-    await this.appRepo
-      .createQueryBuilder()
-      .update(Application)
-      .set({ coverletterGenerationStatus: 'failed' })
-      .where(
-        `id = :id AND user_id = :userId AND coverletter_generation_status = 'in_progress' AND coverletter_generation_started_at < NOW() - INTERVAL '30 minutes'`,
-        { id: applicationId, userId },
-      )
-      .execute();
-
-    // PR_B1c Phase D — outdated 재조사 허용:
-    //   atomic WHERE 의 allowed status 에 'completed' AND outdated_at not null 추가.
-    //   사용자 application 의 회사명/직무 변경 후 재조사 trigger 가능.
-    const updateResult = await this.appRepo
-      .createQueryBuilder()
-      .update(Application)
-      .set({
-        coverletterGenerationStatus: 'in_progress',
-        coverletterGenerationStartedAt: () => 'NOW()',
-      })
-      .where(
-        `id = :id AND user_id = :userId AND (coverletter_generation_status IN (:...allowed) OR (coverletter_generation_status = 'completed' AND coverletter_research_outdated_at IS NOT NULL))`,
-        { id: applicationId, userId, allowed: ['idle', 'failed'] },
-      )
-      .execute();
-
-    if (!updateResult.affected) {
-      // application 없거나 이미 진행 중·완료
-      const current = await this.appRepo.findOne({
-        where: { id: applicationId, userId },
-      });
-      if (!current) throw new NotFoundException('카드를 찾을 수 없습니다.');
-      if (current.coverletterGenerationStatus === 'in_progress') {
-        return { status: 'already_in_progress' };
-      }
-      if (current.coverletterGenerationStatus === 'completed') {
-        return { status: 'already_completed' };
-      }
-      throw new Error(
-        `unexpected status: ${current.coverletterGenerationStatus}`,
-      );
-    }
-
-    // 2. canCharge
-    const coinCheck = await this.coinService.canCharge(
-      userId,
-      'company_research',
-    );
-    if (!coinCheck.ok) {
-      // status='idle' 롤백
-      await this.appRepo.update(
-        { id: applicationId },
-        {
-          coverletterGenerationStatus: 'idle',
-          coverletterGenerationStartedAt: null,
-        },
-      );
-      return { status: 'coin_insufficient', reason: coinCheck.reason };
-    }
-
-    // 3. 회사조사 호출
-    try {
-      const result = await this.companyResearch.fetchForApplication(
-        userId,
-        applicationId,
-      );
-
-      // PR_B1c Phase B — result.status='ok' 만 정상 completed.
-      // 'blocked' (moderation) / 'opt_out' (동의 안 함) → 실패 처리 + 코인 차감 X
-      if (result.status !== 'ok') {
-        await this.appRepo.update(
-          { id: applicationId },
-          { coverletterGenerationStatus: 'failed' },
-        );
-        throw new Error(
-          result.reason ?? `회사 정보 조사 실패 (${result.status})`,
-        );
-      }
-
-      // cache hit → 수동 charge (LlmService 안 거쳤음)
-      if (result.isCached) {
-        const cacheCharge = await this.coinService.charge(
-          userId,
-          'company_research',
-          {
-            inputTokens: 0,
-            outputTokens: 0,
-          },
-        );
-        // cost hardening 🟡7 — 무흔적 과금 방지: cache-hit 도 audit row
-        await this.llmService.auditCacheHitCharge({
-          userId,
-          feature: 'company_research',
-          coinCost: String(cacheCharge.coinCost),
-          resourceType: 'application',
-          resourceId: applicationId,
-        });
-      }
-      // cache miss → LlmService.call() 이 fixed_coin_cost=50 적용해 자동 charge
-
-      // 4. 성공 — outdated_at NULL reset (재조사면 outdated 해소)
-      //
-      // PR_B1c CTO 검토 H1 — 좀비 in_progress 방지:
-      //   여기서 UPDATE 실패하면 코인은 차감됐는데 status 가 'in_progress' 영구 잔류.
-      //   사용자 무한 spinner + 재시도 차단 + 30분 cron 까지 막힘. 환불 + 'failed' 마킹.
-      try {
-        await this.appRepo.update(
-          { id: applicationId },
-          {
-            coverletterGenerationStatus: 'completed',
-            coverletterResearchOutdatedAt: null,
-          },
-        );
-      } catch (completeErr) {
-        this.logger.error(
-          `[H1] status='completed' UPDATE 실패 — 좀비 방지: user=${userId} app=${applicationId} err=${(completeErr as Error).message}`,
-        );
-        // 코인 환불 (best-effort)
-        await this.coinService
-          .refund(userId, 'company_research', 'status=completed UPDATE 실패')
-          .catch((refundErr) => {
-            this.logger.error(
-              `[H1] 환불 실패: user=${userId} err=${(refundErr as Error).message}`,
-            );
-          });
-        // status='failed' 마킹 (best-effort, 실패 시 cron 이 30분 후 처리)
-        await this.appRepo
-          .update(
-            { id: applicationId },
-            { coverletterGenerationStatus: 'failed' },
-          )
-          .catch((failedErr) => {
-            this.logger.error(
-              `[H1] status='failed' UPDATE 도 실패 (cron 대기): err=${(failedErr as Error).message}`,
-            );
-          });
-        throw completeErr;
-      }
-      return { status: 'completed' };
-    } catch (err) {
-      // 5. 실패 → status='failed' (코인 차감 X — fetchForApplication 단계 실패)
-      await this.appRepo
-        .update(
-          { id: applicationId },
-          { coverletterGenerationStatus: 'failed' },
-        )
-        .catch((failedErr) => {
-          this.logger.error(
-            `[generateCoverletter] catch 의 status='failed' UPDATE 실패: ${(failedErr as Error).message}`,
-          );
-        });
-      throw err;
-    }
   }
 
   private async createDefaultSteps(

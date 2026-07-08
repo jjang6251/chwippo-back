@@ -312,6 +312,43 @@ describe('CoverletterChatService', () => {
       expect(arg.userPrompt).not.toContain('# 자소서 문항');
     });
 
+    it('스트림 partial — newAnswer 미완성 항목은 프론트로 흘리지 않음 (2026-07-08 크래시 회귀 방지)', async () => {
+      llm.callStream.mockImplementation(async function* () {
+        // partial parse 중간 상태: 첫 항목은 완성, 둘째는 newAnswer 키가 아직 없음
+        yield {
+          type: 'partial' as const,
+          json: {
+            reply: '작성 중...',
+            suggestedUpdates: [
+              { clId: 'cl-1', newAnswer: '완성된 답변' },
+              { clId: 'cl-2' },
+            ],
+          },
+        };
+        yield {
+          type: 'done' as const,
+          json: { reply: 'ok' },
+        } as never;
+      });
+      const partials: Array<{
+        suggestedUpdates?: Array<{ clId: string; newAnswer: string }>;
+      }> = [];
+      for await (const ev of service.chatStream(USER_ID, APP_ID, {
+        userMessage: '전체 답변 생성',
+      })) {
+        if ((ev as { type: string }).type === 'partial') {
+          partials.push(ev as (typeof partials)[number]);
+        }
+      }
+      expect(partials).toHaveLength(1);
+      expect(partials[0].suggestedUpdates).toEqual([
+        { clId: 'cl-1', newAnswer: '완성된 답변' },
+      ]);
+      partials[0].suggestedUpdates?.forEach((u) =>
+        expect(typeof u.newAnswer).toBe('string'),
+      );
+    });
+
     it('11) quota blocked → LLM provider 미호출 + assistant 차단 메시지', async () => {
       quotaCheck.checkAndPrepare.mockResolvedValueOnce({
         blocked: true,

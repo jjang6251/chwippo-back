@@ -202,6 +202,63 @@ describe('AiCoverletterFeedbackService', () => {
     expect(call.userPrompt).not.toContain('초과했다');
   });
 
+  it('회사조사 talentProfile·coreValues 있으면 인재상·핵심 가치 블록 포함', async () => {
+    research.getCachedForApplication.mockResolvedValue({
+      status: 'ok',
+      research: {
+        businessSummary: '커머스',
+        talentProfile: ['도전정신', '협업'],
+        coreValues: '고객 최우선주의',
+      },
+    });
+
+    await service.review(USER_ID, CL_ID);
+
+    const call = llm.call.mock.calls[0][0];
+    expect(call.userPrompt).toContain('# 인재상');
+    expect(call.userPrompt).toContain('도전정신');
+    expect(call.userPrompt).toContain('협업');
+    expect(call.userPrompt).toContain('# 핵심 가치');
+    expect(call.userPrompt).toContain('고객 최우선주의');
+  });
+
+  it('talentProfile 이 문자열 배열이 아니면(객체 배열) 인재상 블록 미포함 (에러 없이)', async () => {
+    research.getCachedForApplication.mockResolvedValue({
+      status: 'ok',
+      research: {
+        businessSummary: '커머스',
+        talentProfile: [{ label: '도전' }],
+      },
+    });
+
+    const r = await service.review(USER_ID, CL_ID);
+
+    expect(r.status).toBe('ok');
+    const call = llm.call.mock.calls[0][0];
+    expect(call.userPrompt).not.toContain('# 인재상');
+    expect(call.userPrompt).not.toContain('# 핵심 가치');
+  });
+
+  it('분량 미달(제한 60% 미만) → 보강 힌트 주입', async () => {
+    // charLimit 500 · 답변 200자 (40%) → 60% 미만
+    sourceRefs.assertOwnsCoverletter.mockResolvedValue(
+      makeCl({ answer: '가'.repeat(200), charLimit: 500 }),
+    );
+    await service.review(USER_ID, CL_ID);
+    const call = llm.call.mock.calls[0][0];
+    expect(call.userPrompt).toContain('분량이 제한의 40%');
+  });
+
+  it('분량 60% 이상 → 보강 힌트 미주입', async () => {
+    // charLimit 500 · 답변 450자 (90%) → 60% 이상, 초과도 아님
+    sourceRefs.assertOwnsCoverletter.mockResolvedValue(
+      makeCl({ answer: '가'.repeat(450), charLimit: 500 }),
+    );
+    await service.review(USER_ID, CL_ID);
+    const call = llm.call.mock.calls[0][0];
+    expect(call.userPrompt).not.toContain('분량이 제한의');
+  });
+
   it('llm error → status error + reason (throw 안 함)', async () => {
     llm.call.mockResolvedValue({
       status: 'error',
