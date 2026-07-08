@@ -32,6 +32,8 @@ export interface LlmCallInput {
   /** @deprecated PR 0 — getModelConfig(feature) 로 자동 결정. 무시됨 */
   modelTier?: LlmModelTier;
   systemPrompt: string;
+  /** 프롬프트 캐시 세그먼트 — 턴 간 불변 블록 (조사·문항 등). PII 스크럽·토큰 캡·해시 모두 포함됨 */
+  cachedContext?: string;
   userPrompt: string;
   /** @deprecated PR 0 — getModelConfig.maxOutputTokens 로 박제. 무시됨 */
   maxTokens?: number;
@@ -283,12 +285,18 @@ export class LlmService {
     const blacklistedNames = await this.getUserNameBlacklist(input.userId);
     const scrubbedSystem = scrubPii(input.systemPrompt, { blacklistedNames });
     const scrubbedUser = scrubPii(input.userPrompt, { blacklistedNames });
+    const scrubbedCached = input.cachedContext
+      ? scrubPii(input.cachedContext, { blacklistedNames })
+      : null;
     const systemPrompt = scrubbedSystem.text;
     const userPrompt = scrubbedUser.text;
+    const cachedContext = scrubbedCached?.text;
 
-    // ── 5. input token cap ──
+    // ── 5. input token cap (캐시 세그먼트 포함 — 캐시돼도 첫 호출은 정가) ──
     const inputTokensEst =
-      estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+      estimateTokens(systemPrompt) +
+      estimateTokens(userPrompt) +
+      (cachedContext ? estimateTokens(cachedContext) : 0);
     if (inputTokensEst > cfg.maxInputTokens) {
       const errMsg = `입력 토큰 ${inputTokensEst} 초과 (한도 ${cfg.maxInputTokens})`;
       return this.saveBlocked(
@@ -302,7 +310,10 @@ export class LlmService {
     }
 
     // ── 6. provider 호출 (jsonSchema 있으면 callJson, 없으면 complete) ──
-    const promptHash = this.hashPrompt(systemPrompt, userPrompt);
+    const promptHash = this.hashPrompt(
+      systemPrompt + (cachedContext ?? ''),
+      userPrompt,
+    );
     const promptExcerpt = userPrompt.slice(0, 200);
 
     let attempts = 0;
@@ -324,6 +335,7 @@ export class LlmService {
           result = await provider.callJson({
             model: cfg.model,
             systemPrompt,
+            cachedContext,
             userPrompt,
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
@@ -334,6 +346,7 @@ export class LlmService {
           result = await provider.complete({
             model: cfg.model,
             systemPrompt,
+            cachedContext,
             userPrompt,
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
@@ -505,6 +518,7 @@ export class LlmService {
                 fbResult = await fbProvider.callJson({
                   model: fallbackCfg.model,
                   systemPrompt,
+                  cachedContext,
                   userPrompt,
                   maxTokens: cfg.maxOutputTokens,
                   temperature: cfg.temperature,
@@ -515,6 +529,7 @@ export class LlmService {
                 fbResult = await fbProvider.complete({
                   model: fallbackCfg.model,
                   systemPrompt,
+                  cachedContext,
                   userPrompt,
                   maxTokens: cfg.maxOutputTokens,
                   temperature: cfg.temperature,
@@ -721,9 +736,14 @@ export class LlmService {
     const userPrompt = scrubPii(input.userPrompt, {
       blacklistedNames: nicknames,
     }).text;
+    const cachedContext = input.cachedContext
+      ? scrubPii(input.cachedContext, { blacklistedNames: nicknames }).text
+      : undefined;
 
-    // 4. input cap
-    const inputTokens = estimateTokens(systemPrompt + '\n' + userPrompt);
+    // 4. input cap (캐시 세그먼트 포함)
+    const inputTokens = estimateTokens(
+      systemPrompt + '\n' + (cachedContext ?? '') + '\n' + userPrompt,
+    );
     if (inputTokens > cfg.maxInputTokens) {
       yield {
         type: 'error',
@@ -732,7 +752,10 @@ export class LlmService {
       return;
     }
 
-    const promptHash = this.hashPrompt(systemPrompt, userPrompt);
+    const promptHash = this.hashPrompt(
+      systemPrompt + (cachedContext ?? ''),
+      userPrompt,
+    );
     const promptExcerpt = userPrompt.slice(0, 200);
 
     // 5. streaming
@@ -740,6 +763,7 @@ export class LlmService {
       for await (const event of this.anthropic.callJsonStream<T>({
         model: cfg.model,
         systemPrompt,
+        cachedContext,
         userPrompt,
         maxTokens: cfg.maxOutputTokens,
         temperature: cfg.temperature,

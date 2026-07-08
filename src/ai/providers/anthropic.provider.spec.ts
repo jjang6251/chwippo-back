@@ -111,6 +111,47 @@ describe('AnthropicProvider', () => {
       });
     });
 
+    it('cachedContext 있으면 user 2블록 (캐시+변동) — system 은 지침만 (사용자 입력 system 승격 금지)', async () => {
+      mockCreate.mockResolvedValueOnce({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: 'end_turn',
+      });
+      const p = makeProvider('sk');
+      await p.complete({
+        model: 'claude-sonnet-4-6',
+        systemPrompt: 'sys',
+        cachedContext: '고정 컨텍스트 (조사·문항)',
+        userPrompt: 'user',
+        maxTokens: 500,
+        temperature: 0.5,
+      });
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: [
+            {
+              type: 'text',
+              text: 'sys',
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: '고정 컨텍스트 (조사·문항)',
+                  cache_control: { type: 'ephemeral' },
+                },
+                { type: 'text', text: 'user' },
+              ],
+            },
+          ],
+        }),
+      );
+    });
+
     it('stop_reason 매핑 (end_turn → stop / max_tokens → length / tool_use → tool_use / stop_sequence → stop / 그 외 → other)', async () => {
       const cases: Array<[string, string]> = [
         ['end_turn', 'stop'],

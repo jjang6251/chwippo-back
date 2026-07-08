@@ -384,7 +384,7 @@ export class CoverletterChatService {
     const cached = await this.research
       .getCachedForApplication(userId, applicationId)
       .catch(() => null);
-    const userPrompt = this.buildUserPrompt({
+    const { cachedContext, userPrompt } = this.buildPromptParts({
       app,
       cls,
       research: cached,
@@ -458,6 +458,7 @@ export class CoverletterChatService {
       userId,
       feature: 'coverletter_chat',
       systemPrompt: SYSTEM_PROMPT,
+      cachedContext,
       userPrompt,
       jsonSchema: CHAT_JSON_SCHEMA,
       resourceType: 'coverletter_chat',
@@ -722,7 +723,7 @@ export class CoverletterChatService {
     const cached = await this.research
       .getCachedForApplication(userId, applicationId)
       .catch(() => null);
-    const userPrompt = this.buildUserPrompt({
+    const { cachedContext, userPrompt } = this.buildPromptParts({
       app,
       cls,
       research: cached,
@@ -795,6 +796,7 @@ export class CoverletterChatService {
         userId,
         feature: 'coverletter_chat',
         systemPrompt: SYSTEM_PROMPT,
+        cachedContext,
         userPrompt,
         jsonSchema: CHAT_JSON_SCHEMA,
         resourceType: 'coverletter_chat',
@@ -887,8 +889,13 @@ export class CoverletterChatService {
     }
   }
 
-  /** 컨텍스트 prompt 빌드 */
-  private buildUserPrompt(args: {
+  /**
+   * 컨텍스트 prompt 빌드 — 캐시 최적화 (2026-07-09).
+   * cachedContext = 턴 간 불변 블록 (회사·직무 + 조사 + 문항·답변) → Anthropic system 캐시 세그먼트 (90% 할인)
+   * userPrompt   = 변동 블록 (선택 자료 + 대화 이력 + 새 메시지)
+   * 문항·답변은 유저가 저장하면 캐시가 깨지지만(재작성 +25% 1회), 이어지는 대화 1턴만 있어도 이득.
+   */
+  private buildPromptParts(args: {
     app: Application;
     cls: ApplicationCoverletter[];
     research: Awaited<
@@ -905,11 +912,11 @@ export class CoverletterChatService {
       content: string | null;
     }>;
     userMessage: string;
-  }): string {
-    const parts: string[] = [];
-    parts.push(`# 회사·직무\n${args.app.companyName}`);
+  }): { cachedContext: string; userPrompt: string } {
+    const fixed: string[] = [];
+    fixed.push(`# 회사·직무\n${args.app.companyName}`);
     if (args.app.jobCategory || args.app.jobTitle) {
-      parts.push(
+      fixed.push(
         `직무: ${[args.app.jobCategory, args.app.jobTitle].filter(Boolean).join(' · ')}`,
       );
     }
@@ -926,18 +933,19 @@ export class CoverletterChatService {
       if (r.coreValues) summary.push(`핵심가치: ${r.coreValues}`);
       if (r.recentTrends) summary.push(`최근동향: ${r.recentTrends}`);
       if (summary.length > 0) {
-        parts.push(`\n# 회사 조사\n${summary.join('\n')}`);
+        fixed.push(`\n# 회사 조사\n${summary.join('\n')}`);
       }
     }
 
-    parts.push(`\n# 자소서 문항 (N=${args.cls.length})`);
+    fixed.push(`\n# 자소서 문항 (N=${args.cls.length})`);
     args.cls.forEach((cl, idx) => {
       // 사용자는 "1번 문항", "Q2" 식으로 지칭. AI 가 이해하도록 번호 명시.
-      parts.push(
+      fixed.push(
         `\n## Q${idx + 1} (clId: ${cl.id})\n- 분류: ${cl.category ?? '미지정'}\n- 글자수 제한: ${cl.charLimit ?? '없음'}\n- 질문: ${cl.question || '(미입력)'}\n- 현재 답변: ${cl.answer || '(없음)'}`,
       );
     });
 
+    const parts: string[] = [];
     if (args.selectedLogs.length > 0) {
       parts.push(
         `\n# 사용자가 선택한 활동 일지 (N=${args.selectedLogs.length})`,
@@ -1006,7 +1014,7 @@ export class CoverletterChatService {
     }
 
     parts.push(`\n# 사용자 새 메시지\n${args.userMessage}`);
-    return parts.join('\n');
+    return { cachedContext: fixed.join('\n'), userPrompt: parts.join('\n') };
   }
 
   /**
