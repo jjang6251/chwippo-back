@@ -534,17 +534,31 @@ export class CompanyResearchService {
   }
 
   /** cache 조회 (정규화 key + job_category COALESCE) */
+  /**
+   * pre-seed fallback (2026-07-09, CEO 결정) — 직군 맞춤 캐시가 없으면 회사 generic
+   * (job_category IS NULL) 캐시로 폴백. generic = 무료 기본 제공(pre-seed),
+   * 직군 맞춤 조사는 추후 유료 업그레이드 경로로 제공.
+   * 폴백은 exact row 가 아예 없을 때만 — exact 가 만료·optOut 이어도 exact 를 반환해
+   * 기존 재조사·opt-out 판정 로직을 그대로 태운다 (동작 예측 가능성 우선).
+   */
   private async findCacheRow(
     companyName: string,
     jobCategory: string | null,
   ): Promise<CompanyResearchCache | null> {
-    return this.cacheRepo
+    const name = this.normalize(companyName);
+    const exact = await this.cacheRepo
       .createQueryBuilder('c')
-      .where('c.company_name = :name', { name: this.normalize(companyName) })
+      .where('c.company_name = :name', { name })
       .andWhere(
         jobCategory ? 'c.job_category = :job' : 'c.job_category IS NULL',
         jobCategory ? { job: jobCategory } : {},
       )
+      .getOne();
+    if (exact || !jobCategory) return exact;
+    return this.cacheRepo
+      .createQueryBuilder('c')
+      .where('c.company_name = :name', { name })
+      .andWhere('c.job_category IS NULL')
       .getOne();
   }
 

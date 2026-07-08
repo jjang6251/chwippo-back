@@ -22,7 +22,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
-    "build:companies": "ts-node scripts/build-companies-json.ts"
+    "build:companies": "ts-node scripts/build-companies-json.ts",
+    "seed:research": "ts-node scripts/seed-research-local.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",

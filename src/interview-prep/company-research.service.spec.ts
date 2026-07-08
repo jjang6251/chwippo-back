@@ -92,6 +92,7 @@ describe('CompanyResearchService', () => {
     id: 'cache-1',
     companyName: '카카오',
     jobCategory: '백엔드',
+    seedVersion: null,
     aiResearch: { businessSummary: '메신저·결제·모빌리티' },
     sources: ['https://ko.wikipedia.org/wiki/카카오'],
     expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60일 남음
@@ -486,6 +487,78 @@ describe('CompanyResearchService', () => {
       const r = await service.getCachedForApplication(USER_ID, APP_ID);
       if (!r || r.status !== 'ok') throw new Error('expected ok');
       expect(r.isCached).toBe(true);
+    });
+
+    // ── pre-seed generic fallback (2026-07-09) ──
+    it('직군 있음 + 맞춤 캐시 miss + generic(job NULL) hit → generic 반환', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne
+        .mockResolvedValueOnce(null) // exact (네이버, 백엔드) miss
+        .mockResolvedValueOnce({
+          id: 'cache-generic',
+          aiResearch: { businessSummary: 'generic pre-seed' },
+          sources: [],
+          expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+          updatedAt: new Date(),
+          optOut: false,
+          hitCount: 0,
+        } as never); // generic (네이버, NULL) hit
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      if (!r || r.status !== 'ok') throw new Error('expected ok');
+      expect(r.research?.businessSummary).toBe('generic pre-seed');
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(2);
+    });
+
+    it('직군 있음 + 맞춤 캐시 hit → generic 조회 안 함 (getOne 1회)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce({
+        id: 'cache-exact',
+        aiResearch: { businessSummary: 'exact' },
+        sources: [],
+        expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+        updatedAt: new Date(),
+        optOut: false,
+        hitCount: 0,
+      } as never);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      if (!r || r.status !== 'ok') throw new Error('expected ok');
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('직군 없음 + miss → fallback 미발동 (getOne 1회)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: null,
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce(null);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(r).toBeNull();
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('맞춤·generic 둘 다 miss → null (getOne 2회)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(r).toBeNull();
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(2);
     });
 
     it('getCachedForApplication: opt_out → opt_out status', async () => {
