@@ -52,20 +52,54 @@ export class AnthropicProvider implements LlmProvider {
     }
   }
 
+  /**
+   * 캐시 breakpoint 2개: system 지침(코드 상수) | user 첫 콘텐츠 블록(cachedContext).
+   * ⚠️ cachedContext 는 사용자 입력(문항·답변)을 포함하므로 **절대 system 역할에 넣지 않는다**
+   * (prompt injection 방어 원칙 — system 은 코드 상수만). user 콘텐츠 블록에도 cache_control
+   * 이 동일하게 작동하므로 캐시 효과는 같고 권한 승격만 제거된다.
+   */
+  private buildSystemBlocks(req: LlmProviderRequest): Array<{
+    type: 'text';
+    text: string;
+    cache_control: { type: 'ephemeral' };
+  }> {
+    return [
+      {
+        type: 'text',
+        text: req.systemPrompt,
+        cache_control: { type: 'ephemeral' },
+      },
+    ];
+  }
+
+  /** user 메시지 콘텐츠 — cachedContext 있으면 [캐시 블록, 변동 블록] 2블록 */
+  private buildUserContent(
+    req: LlmProviderRequest,
+  ):
+    | string
+    | Array<
+        | { type: 'text'; text: string; cache_control: { type: 'ephemeral' } }
+        | { type: 'text'; text: string }
+      > {
+    if (!req.cachedContext) return req.userPrompt;
+    return [
+      {
+        type: 'text',
+        text: req.cachedContext,
+        cache_control: { type: 'ephemeral' },
+      },
+      { type: 'text', text: req.userPrompt },
+    ];
+  }
+
   async complete(req: LlmProviderRequest): Promise<LlmProviderResponse> {
     this.assertAvailable();
     const message = await this.client!.messages.create({
       model: req.model,
       // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
       //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
-      system: [
-        {
-          type: 'text',
-          text: req.systemPrompt,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: req.userPrompt }],
+      system: this.buildSystemBlocks(req),
+      messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
     });
@@ -106,14 +140,8 @@ export class AnthropicProvider implements LlmProvider {
       model: req.model,
       // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
       //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
-      system: [
-        {
-          type: 'text',
-          text: req.systemPrompt,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: req.userPrompt }],
+      system: this.buildSystemBlocks(req),
+      messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
       tools,
@@ -188,14 +216,8 @@ export class AnthropicProvider implements LlmProvider {
       model: req.model,
       // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
       //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
-      system: [
-        {
-          type: 'text',
-          text: req.systemPrompt,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: req.userPrompt }],
+      system: this.buildSystemBlocks(req),
+      messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
       tools,

@@ -269,6 +269,49 @@ describe('CoverletterChatService', () => {
       expect(llmArg.userPrompt).toContain('메시지 9');
     });
 
+    it('캐시 분리 — 문항·회사·조사는 cachedContext, 이력·새 메시지는 userPrompt (2026-07-09)', async () => {
+      await service.chat(USER_ID, APP_ID, { userMessage: '검토해줘' });
+      const llmArg = llm.call.mock.calls[0][0] as {
+        cachedContext?: string;
+        userPrompt: string;
+      };
+      // 고정 블록 → cachedContext
+      expect(llmArg.cachedContext).toBeDefined();
+      expect(llmArg.cachedContext).toContain('# 회사·직무');
+      expect(llmArg.cachedContext).toContain('# 자소서 문항');
+      // 변동 블록 → userPrompt (고정 블록 미포함)
+      expect(llmArg.userPrompt).toContain('# 사용자 새 메시지');
+      expect(llmArg.userPrompt).not.toContain('# 자소서 문항');
+      expect(llmArg.userPrompt).not.toContain('# 회사·직무');
+    });
+
+    it('캐시 분리 — 스트림 경로(chatStream)도 cachedContext 전달 (2026-07-09)', async () => {
+      llm.callStream.mockImplementation(async function* () {
+        yield {
+          type: 'done' as const,
+          response: {
+            text: '{"reply":"ok"}',
+            json: { reply: 'ok' },
+            promptTokens: 10,
+            completionTokens: 5,
+          },
+        } as never;
+      });
+      const events: unknown[] = [];
+      for await (const ev of service.chatStream(USER_ID, APP_ID, {
+        userMessage: '검토해줘',
+      })) {
+        events.push(ev);
+      }
+      expect(llm.callStream).toHaveBeenCalledTimes(1);
+      const arg = llm.callStream.mock.calls[0][0] as {
+        cachedContext?: string;
+        userPrompt: string;
+      };
+      expect(arg.cachedContext).toContain('# 자소서 문항');
+      expect(arg.userPrompt).not.toContain('# 자소서 문항');
+    });
+
     it('11) quota blocked → LLM provider 미호출 + assistant 차단 메시지', async () => {
       quotaCheck.checkAndPrepare.mockResolvedValueOnce({
         blocked: true,

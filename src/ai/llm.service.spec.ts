@@ -486,6 +486,64 @@ describe('LlmService', () => {
     });
   });
 
+  // ── 프롬프트 캐시 세그먼트 (2026-07-09) ──
+  describe('cachedContext — 캐시 세그먼트', () => {
+    it('provider 호출에 cachedContext 전달 + PII 스크럽 적용', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'ok',
+        promptTokens: 10,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        cachedContext: '고정 블록 — 연락처 010-1234-5678 포함',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+      const arg = openai.complete.mock.calls[0][0] as {
+        cachedContext?: string;
+      };
+      expect(arg.cachedContext).toBeDefined();
+      expect(arg.cachedContext).toContain('고정 블록');
+      expect(arg.cachedContext).not.toContain('010-1234-5678'); // PII 스크럽
+    });
+
+    it('cachedContext 토큰이 input cap 계산에 포함 → 초과 시 blocked_input_cap', async () => {
+      const huge = '가'.repeat(30_000); // 단독으로 8K 초과
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        cachedContext: huge,
+        userPrompt: '짧은 메시지',
+      });
+      expect(r.status).toBe('blocked_input_cap');
+      expect(openai.complete).not.toHaveBeenCalled();
+    });
+
+    it('cachedContext 미전달 → provider 인자 undefined (기존 동작 불변)', async () => {
+      openai.complete.mockResolvedValue({
+        text: 'ok',
+        promptTokens: 10,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      const arg = openai.complete.mock.calls[0][0] as {
+        cachedContext?: string;
+      };
+      expect(arg.cachedContext).toBeUndefined();
+    });
+  });
+
   // ── 5. input token cap ──
   describe('input token cap', () => {
     it('cap 초과 시 blocked_input_cap (note_summary 8K 한도) — provider 미호출', async () => {
