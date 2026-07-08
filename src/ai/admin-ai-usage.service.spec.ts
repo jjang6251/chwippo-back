@@ -127,7 +127,8 @@ describe('AdminAiUsageService', () => {
     await service.byUser({});
     // where 호출 시 :start 가 약 30일 전인지 검증
     const call = (qb.where as jest.Mock).mock.calls[0];
-    expect(call[0]).toContain('BETWEEN :start AND :end');
+    // half-open (`>= :start AND < :end`) — 이전 BETWEEN(양끝 inclusive) 이중 카운트 방지
+    expect(call[0]).toContain('l.created_at >= :start AND l.created_at < :end');
     const start = call[1].start as Date;
     const end = call[1].end as Date;
     const diffDays = Math.round(
@@ -281,6 +282,24 @@ describe('AdminAiUsageService', () => {
       const result = await service.monthEstimate();
       expect(result.cumulativeCostUsd).toBe(0);
       expect(result.estimatedMonthEndUsd).toBe(0);
+    });
+
+    // TZ 경계 회귀 — 운영(Railway=UTC)에서 월초가 KST 기준인지.
+    // 서버 로컬 new Date(year, month, 1) 이었다면 KST 월 경계 직후 UTC 로는 전월.
+    it('monthStart 는 KST 월초의 UTC 시각 (UTC 서버 회귀)', async () => {
+      jest.useFakeTimers();
+      // UTC 2026-06-30 16:00 = KST 2026-07-01 01:00 (KST 7월 진입 직후)
+      jest.setSystemTime(new Date('2026-06-30T16:00:00Z'));
+      repo.createQueryBuilder.mockReturnValueOnce(makeQb([], { cost: '10' }));
+
+      const result = await service.monthEstimate();
+
+      // KST 07-01 00:00 = UTC 06-30 15:00 (naive UTC 구현이면 06-01 이 됐을 것)
+      expect(result.monthStart).toBe('2026-06-30T15:00:00.000Z');
+      expect(result.daysInMonth).toBe(31); // 7월
+      expect(result.daysElapsed).toBe(1);
+
+      jest.useRealTimers();
     });
   });
 });

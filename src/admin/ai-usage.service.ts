@@ -2,6 +2,18 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
+import {
+  startOfTodayKst,
+  startOfKstWeek,
+  startOfMonthKst,
+  startOfNextMonthKst,
+  startOfQuarterKst,
+  startOfNextQuarterKst,
+  startOfYearKst,
+  startOfNextYearKst,
+} from '../common/datetime';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * PR_B2 Phase 2 — admin AI 사용량·비용 추적 (Q14 일/주/월/분기/년 모두).
@@ -45,50 +57,55 @@ export class AiUsageService {
   ) {}
 
   /**
-   * period 별 범위 계산. from/to 미지정 시 period 기반 default (최근 1 period).
-   * KST 기준 — `dayjs` 미사용, 단순 Date 연산.
+   * period 별 KST 캘린더 범위 계산. from/to 미지정 시 현재 KST period 의 [시작, 다음 시작).
+   *
+   * **TZ 버그 수정**: 이전 구현은 `new Date()` + `setDate/setMonth/getFullYear`
+   * (서버 로컬) 연산이라 운영(Railway=UTC)에서 경계가 KST 자정/월초와 최대 9시간
+   * 어긋났다. 이제 모든 경계를 `common/datetime` (Intl 기반 KST) 로 고정 →
+   * 서버 OS TZ 무관 정합성 보장. day/week 는 KST DST 없어 ms 산술 안전.
+   *
+   * 반환 shape 및 half-open(`>= from AND < to`) 비교 규약 유지.
    */
   computeRange(
     period: Period,
     from?: Date,
     to?: Date,
   ): { from: Date; to: Date; previousFrom: Date; previousTo: Date } {
-    const now = new Date();
-    const computedTo = to ?? now;
-    let computedFrom = from;
-
-    if (!computedFrom) {
-      const f = new Date(computedTo);
-      switch (period) {
-        case 'day':
-          f.setDate(f.getDate() - 1);
-          break;
-        case 'week':
-          f.setDate(f.getDate() - 7);
-          break;
-        case 'month':
-          f.setMonth(f.getMonth() - 1);
-          break;
-        case 'quarter':
-          f.setMonth(f.getMonth() - 3);
-          break;
-        case 'year':
-          f.setFullYear(f.getFullYear() - 1);
-          break;
-      }
-      computedFrom = f;
-    }
+    const { start, next } = this.currentKstPeriod(period);
+    const computedFrom = from ?? start;
+    const computedTo = to ?? next;
 
     if (computedFrom.getTime() > computedTo.getTime()) {
       throw new BadRequestException('from 은 to 보다 과거여야 합니다.');
     }
 
-    // 전기 동기 범위 (current 길이 만큼 past)
+    // 전기 동기 범위 (current 길이 만큼 past). computedFrom 이 KST 경계라
+    // previous 도 자동으로 KST 정합.
     const lengthMs = computedTo.getTime() - computedFrom.getTime();
     const previousTo = new Date(computedFrom.getTime());
     const previousFrom = new Date(computedFrom.getTime() - lengthMs);
 
     return { from: computedFrom, to: computedTo, previousFrom, previousTo };
+  }
+
+  /** 현재 KST 캘린더 period 의 [시작, 다음 시작). half-open 상한용. */
+  private currentKstPeriod(period: Period): { start: Date; next: Date } {
+    switch (period) {
+      case 'day': {
+        const start = startOfTodayKst();
+        return { start, next: new Date(start.getTime() + DAY_MS) };
+      }
+      case 'week': {
+        const start = startOfKstWeek();
+        return { start, next: new Date(start.getTime() + 7 * DAY_MS) };
+      }
+      case 'month':
+        return { start: startOfMonthKst(), next: startOfNextMonthKst() };
+      case 'quarter':
+        return { start: startOfQuarterKst(), next: startOfNextQuarterKst() };
+      case 'year':
+        return { start: startOfYearKst(), next: startOfNextYearKst() };
+    }
   }
 
   async getUsageMetrics(

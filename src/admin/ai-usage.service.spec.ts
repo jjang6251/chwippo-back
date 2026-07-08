@@ -76,6 +76,38 @@ describe('AiUsageService', () => {
       expect(previousLen).toBe(currentLen);
       expect(r.previousTo.getTime()).toBe(r.from.getTime());
     });
+
+    // TZ 경계 회귀 — 운영(Railway=UTC)에서 period 시작이 KST 자정/월초에 맞는지.
+    describe('KST 경계 (UTC 서버 회귀)', () => {
+      afterEach(() => jest.useRealTimers());
+
+      it('day → from 은 KST 자정의 UTC 시각 (전일 15:00Z)', () => {
+        jest.useFakeTimers();
+        // UTC 2026-07-08 16:00 = KST 2026-07-09 01:00 (KST 날짜 경계 직후)
+        jest.setSystemTime(new Date('2026-07-08T16:00:00Z'));
+
+        const r = service.computeRange('day');
+
+        // KST 07-09 00:00 = UTC 07-08 15:00
+        expect(r.from.toISOString()).toBe('2026-07-08T15:00:00.000Z');
+        expect(r.to.toISOString()).toBe('2026-07-09T15:00:00.000Z');
+        // 전기 = 전일 전체
+        expect(r.previousFrom.toISOString()).toBe('2026-07-07T15:00:00.000Z');
+        expect(r.previousTo.toISOString()).toBe('2026-07-08T15:00:00.000Z');
+      });
+
+      it('month → from 은 KST 월초의 UTC 시각 (전월말 15:00Z)', () => {
+        jest.useFakeTimers();
+        // UTC 2026-06-30 16:00 = KST 2026-07-01 01:00 (KST 월 경계 직후)
+        jest.setSystemTime(new Date('2026-06-30T16:00:00Z'));
+
+        const r = service.computeRange('month');
+
+        // KST 07-01 00:00 = UTC 06-30 15:00, 다음달 = KST 08-01 = UTC 07-31 15:00
+        expect(r.from.toISOString()).toBe('2026-06-30T15:00:00.000Z');
+        expect(r.to.toISOString()).toBe('2026-07-31T15:00:00.000Z');
+      });
+    });
   });
 
   describe('getUsageMetrics', () => {

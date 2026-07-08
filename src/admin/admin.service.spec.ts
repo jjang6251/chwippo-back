@@ -251,5 +251,27 @@ describe('AdminService', () => {
 
       expect(result.cumulative[0].count).toBe(55);
     });
+
+    // TZ 경계 회귀 — 운영(Railway=UTC)에서 기간 시작이 KST 자정에 맞는지.
+    // 서버 로컬 setHours(0,0,0,0) 구현이었다면 UTC 자정으로 9시간 어긋남.
+    it('since 는 (days-1)일 전 KST 자정의 UTC 시각 (UTC 서버 경계 회귀)', async () => {
+      jest.useFakeTimers();
+      // UTC 2026-07-08 16:00 = KST 2026-07-09 01:00 (KST 날짜 경계 직후)
+      jest.setSystemTime(new Date('2026-07-08T16:00:00Z'));
+
+      const results = makeQueryResults();
+      let callIdx = 0;
+      dataSource.query.mockImplementation(() =>
+        Promise.resolve(results[callIdx++]),
+      );
+
+      await service.getAnalytics(7);
+
+      // 오늘 KST = 07-09, 그 자정 = UTC 07-08 15:00. days-1=6일 전 = UTC 07-02 15:00
+      const sinceParam: Date = dataSource.query.mock.calls[0][1][0];
+      expect(sinceParam.toISOString()).toBe('2026-07-02T15:00:00.000Z');
+
+      jest.useRealTimers();
+    });
   });
 });
