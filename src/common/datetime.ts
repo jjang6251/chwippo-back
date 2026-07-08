@@ -158,6 +158,49 @@ export function endOfMonthKst(tz: Tz = APP_TIMEZONE): Date {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// 분기 · 연 경계 — admin AI usage 집계 (day/week/month/quarter/year) 용
+// ────────────────────────────────────────────────────────────────────────
+
+/** 이번 분기 첫 날 자정 (기본 KST) — 분기 시작 월은 1·4·7·10 */
+export function startOfQuarterKst(tz: Tz = APP_TIMEZONE): Date {
+  const ymd = todayKst(tz);
+  const [y, m] = ymd.split('-').map(Number);
+  const startMonth = Math.floor((m - 1) / 3) * 3 + 1; // 1,4,7,10
+  const offset = getTimezoneOffsetString(tz);
+  return new Date(
+    `${y}-${String(startMonth).padStart(2, '0')}-01T00:00:00${offset}`,
+  );
+}
+
+/** 다음 분기 첫 날 자정 (기본 KST) — half-open 상한용 */
+export function startOfNextQuarterKst(tz: Tz = APP_TIMEZONE): Date {
+  const ymd = todayKst(tz);
+  const [y, m] = ymd.split('-').map(Number);
+  const startMonth = Math.floor((m - 1) / 3) * 3 + 1; // 1,4,7,10
+  const nextStartMonth = startMonth + 3; // 4,7,10,13
+  const nextY = nextStartMonth > 12 ? y + 1 : y;
+  const nextM = nextStartMonth > 12 ? nextStartMonth - 12 : nextStartMonth;
+  const offset = getTimezoneOffsetString(tz);
+  return new Date(
+    `${nextY}-${String(nextM).padStart(2, '0')}-01T00:00:00${offset}`,
+  );
+}
+
+/** 올해 1월 1일 자정 (기본 KST) */
+export function startOfYearKst(tz: Tz = APP_TIMEZONE): Date {
+  const y = todayKst(tz).slice(0, 4);
+  const offset = getTimezoneOffsetString(tz);
+  return new Date(`${y}-01-01T00:00:00${offset}`);
+}
+
+/** 내년 1월 1일 자정 (기본 KST) — half-open 상한용 */
+export function startOfNextYearKst(tz: Tz = APP_TIMEZONE): Date {
+  const y = Number(todayKst(tz).slice(0, 4)) + 1;
+  const offset = getTimezoneOffsetString(tz);
+  return new Date(`${y}-01-01T00:00:00${offset}`);
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // 주 경계 — ISO 월요일 ~ 일요일
 // ────────────────────────────────────────────────────────────────────────
 

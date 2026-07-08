@@ -3,7 +3,11 @@ import { DataSource } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
-import { startOfMonthKst, startOfKstWeek } from '../common/datetime';
+import {
+  startOfMonthKst,
+  startOfKstWeek,
+  startOfTodayKst,
+} from '../common/datetime';
 
 type DayRow = { date: string; count: number };
 
@@ -59,10 +63,11 @@ export class AdminService {
       this.dataSource.query(sql, params);
     const tz = 'Asia/Seoul';
 
-    // 기간 시작 (days일 전 KST 자정)
-    const since = new Date();
-    since.setDate(since.getDate() - (days - 1));
-    since.setHours(0, 0, 0, 0);
+    // 기간 시작 (days-1 일 전 KST 자정). 서버 OS TZ (운영 Railway=UTC) 무관 정합성 보장.
+    // KST 는 DST 없어 하루=정확히 86,400,000ms → ms 산술 안전. SQL 필터·fillDates 버킷(KST)과 경계 일치.
+    const since = new Date(
+      startOfTodayKst().getTime() - (days - 1) * 24 * 60 * 60 * 1000,
+    );
 
     const [
       signupRows,
