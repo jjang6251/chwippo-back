@@ -8,6 +8,7 @@ import { InterviewPrepQuestion } from './entities/interview-prep-question.entity
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
 import { AdminCompanyResearchController } from './admin-company-research.controller';
 import { CompanyResearchService } from './company-research.service';
+import { CompanyResearchSeedService } from './company-research-seed.service';
 import { InterviewPrepAiService } from './interview-prep-ai.service';
 import { InterviewPrepQuestionsController } from './interview-prep-questions.controller';
 import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
@@ -46,6 +47,7 @@ import { InterviewPrepSessionsService } from './interview-prep-sessions.service'
     InterviewPrepQuestionsService,
     InterviewPrepAiService,
     CompanyResearchService,
+    CompanyResearchSeedService,
   ],
   exports: [
     TypeOrmModule,
