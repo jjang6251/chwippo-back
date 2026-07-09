@@ -97,25 +97,6 @@ export class ApplicationsController {
     return this.service.dismissSample(user.id, id);
   }
 
-  /**
-   * PR_B1c — 자소서 생성 (회사조사 자동 trigger + 50 코인 차감).
-   *
-   * **응답 status**:
-   * - 'completed': 정상 완료. 자소서 작성 가능
-   * - 'already_in_progress': 다른 탭/요청이 진행 중 (race 차단)
-   * - 'already_completed': 이미 회사조사 완료. 자소서 작성 가능
-   * - 'coin_insufficient': 잔여 < 50 (reason 포함)
-   *
-   * **status='failed'**: LLM 실패 → 500 에러 throw (frontend toast.error)
-   */
-  @Post(':id/generate-coverletter')
-  generateCoverletter(
-    @CurrentUser() user: AuthUser,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
-    return this.service.generateCoverletter(user.id, id);
-  }
-
   // --- Step detail ---
 
   @Patch(':id/steps/:stepId')

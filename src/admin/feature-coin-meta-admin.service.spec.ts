@@ -12,7 +12,7 @@ const CTX = { ip: '203.0.113.42', userAgent: 'UA' };
 
 function makeMeta(overrides: Partial<FeatureCoinMeta> = {}): FeatureCoinMeta {
   return {
-    feature: 'company_research',
+    feature: 'note_summary',
     chargesCoins: true,
     avgCoinCost: '50.0',
     fixedCoinCost: 50,
@@ -64,8 +64,8 @@ describe('FeatureCoinMetaAdminService', () => {
 
     it('getOne 정상', async () => {
       repo.findOne.mockResolvedValue(makeMeta());
-      const r = await service.getOne('company_research');
-      expect(r.feature).toBe('company_research');
+      const r = await service.getOne('note_summary');
+      expect(r.feature).toBe('note_summary');
     });
 
     it('getOne 미존재 → NotFoundException', async () => {
@@ -82,7 +82,7 @@ describe('FeatureCoinMetaAdminService', () => {
 
       const r = await service.updateFeatureCoinMeta(
         ADMIN,
-        'company_research',
+        'note_summary',
         { fixedCoinCost: 70 },
         CTX,
       );
@@ -92,7 +92,7 @@ describe('FeatureCoinMetaAdminService', () => {
         ADMIN,
         'update_feature_coin_meta',
         'feature_coin_meta',
-        'company_research',
+        'note_summary',
         expect.objectContaining({
           before: expect.objectContaining({ fixedCoinCost: 50 }),
           after: expect.objectContaining({ fixedCoinCost: 70 }),
@@ -125,7 +125,7 @@ describe('FeatureCoinMetaAdminService', () => {
 
       await service.updateFeatureCoinMeta(
         ADMIN,
-        'company_research',
+        'note_summary',
         { description: '회사조사 50 코인 고정' },
         CTX,
       );
@@ -143,7 +143,7 @@ describe('FeatureCoinMetaAdminService', () => {
 
       await service.updateFeatureCoinMeta(
         ADMIN,
-        'company_research',
+        'note_summary',
         { chargesCoins: false },
         CTX,
       );
@@ -168,7 +168,7 @@ describe('FeatureCoinMetaAdminService', () => {
       await expect(
         service.updateFeatureCoinMeta(
           ADMIN,
-          'company_research',
+          'note_summary',
           { chargesCoins: true },
           CTX,
         ),
@@ -186,7 +186,7 @@ describe('FeatureCoinMetaAdminService', () => {
 
       const r = await service.updateFeatureCoinMeta(
         ADMIN,
-        'company_research',
+        'note_summary',
         { chargesCoins: true, avgCoinCost: 10 },
         CTX,
       );
@@ -214,7 +214,7 @@ describe('FeatureCoinMetaAdminService', () => {
 
       await service.updateFeatureCoinMeta(
         ADMIN,
-        'company_research',
+        'note_summary',
         { fixedCoinCost: 60 },
         CTX,
       );

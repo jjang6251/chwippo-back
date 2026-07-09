@@ -59,6 +59,10 @@ export class Activity {
   @Column({ name: 'result_url', nullable: true, type: 'varchar', length: 500 })
   resultUrl: string | null;
 
+  /** activity-redesign — 유저별 숨김 "기본함" (미분류 로그 컨테이너, 유저당 1개) */
+  @Column({ name: 'is_inbox', default: false })
+  isInbox: boolean;
+
   @Column({ nullable: true, type: 'varchar', length: 200 })
   outcome: string | null;
 

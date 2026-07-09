@@ -4,7 +4,6 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository, SelectQueryBuilder } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { CoinService } from '../ai/coin.service';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { TierConfig } from '../ai/entities/tier-config.entity';
 import { LlmService } from '../ai/llm.service';
@@ -31,10 +30,6 @@ import { InterviewPrepSession } from './entities/interview-prep-session.entity';
 describe('CompanyResearchService', () => {
   let service: CompanyResearchService;
   let cacheRepo: jest.Mocked<Repository<CompanyResearchCache>>;
-  let coinServiceMock: {
-    getBalanceWithLazyReset: jest.Mock;
-    refund: jest.Mock;
-  };
   let sessionRepo: jest.Mocked<Repository<InterviewPrepSession>>;
   let appRepo: jest.Mocked<Repository<Application>>;
   let llm: jest.Mocked<LlmService>;
@@ -92,6 +87,7 @@ describe('CompanyResearchService', () => {
     id: 'cache-1',
     companyName: '카카오',
     jobCategory: '백엔드',
+    seedVersion: null,
     aiResearch: { businessSummary: '메신저·결제·모빌리티' },
     sources: ['https://ko.wikipedia.org/wiki/카카오'],
     expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60일 남음
@@ -148,14 +144,6 @@ describe('CompanyResearchService', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    const coinService = (coinServiceMock = {
-      getBalanceWithLazyReset: jest
-        .fn()
-        .mockResolvedValue({ balance: 100, tier: 'free' }),
-      // cost hardening 🟡4 — 후처리 실패 환불
-      refund: jest.fn().mockResolvedValue({ refunded: 50 }),
-    });
-
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CompanyResearchService,
@@ -173,255 +161,9 @@ describe('CompanyResearchService', () => {
         { provide: LlmService, useValue: llm },
         { provide: QuotaCheckService, useValue: quotaCheck },
         { provide: AbuserBanService, useValue: abuserBan },
-        { provide: CoinService, useValue: coinService },
       ],
     }).compile();
     service = module.get<CompanyResearchService>(CompanyResearchService);
-  });
-
-  // ── fetchForSession — cache hit/miss ──
-  describe('fetchForSession — cache 흐름', () => {
-    it('cache hit + 유효 → hit_count++ + 캐시 반환 (LLM 호출 0)', async () => {
-      const row = makeCacheRow({ hitCount: 5 });
-      cacheQb.getOne.mockResolvedValueOnce(row);
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-
-      expect(r.status).toBe('ok');
-      expect(r.isCached).toBe(true);
-      // PR 보강 — buildResultFromCache 가 interviewKeywords 후처리 (legacy string → 객체)
-      expect(r.research).toEqual({
-        businessSummary: '메신저·결제·모빌리티',
-        interviewKeywords: [],
-      });
-      expect(llm.call).not.toHaveBeenCalled();
-      // hit_count 증가
-      expect(cacheRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({ hitCount: 6 }),
-      );
-    });
-
-    it('cache miss → LLM 호출 → upsert (30일 TTL — PR 보강)', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      llm.call.mockResolvedValue({
-        status: 'ok',
-        text: '',
-        json: {
-          businessSummary: '메신저',
-          coreValues: '책임감',
-          visionMission: '연결',
-          recentTrends: 'AI 강화',
-          financials: '매출 ↑',
-          competitors: '네이버',
-          jobInsights: '백엔드 Go/Java',
-          interviewKeywords: [
-            { keyword: '협업', category: 'talent' },
-            { keyword: '책임', category: 'talent' },
-          ],
-          companyProfile: {},
-          talentProfile: [],
-          productsAndTech: {},
-          inferredFields: [],
-          // PR 보강 — sources 객체 배열 (json schema)
-          sources: [
-            {
-              id: 1,
-              title: '카카오 위키',
-              url: 'https://ko.wikipedia.org/wiki/카카오',
-              domain: 'ko.wikipedia.org',
-            },
-          ],
-        },
-        promptTokens: 500,
-        completionTokens: 300,
-        costUsd: 0.03,
-        latencyMs: 1500,
-        callLogId: 'log-1',
-        outputRedacted: false,
-      });
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-
-      expect(r.status).toBe('ok');
-      expect(r.isCached).toBe(false);
-      expect(r.research?.businessSummary).toBe('메신저');
-      // PR 보강 — sources 객체 배열, ResearchSource[] 매칭
-      const sources = r.sources ?? [];
-      expect(sources.length).toBeGreaterThan(0);
-      expect(sources[0]).toMatchObject({
-        url: 'https://ko.wikipedia.org/wiki/카카오',
-      });
-      expect(cacheRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          companyName: '카카오',
-          jobCategory: '백엔드',
-        }),
-      );
-    });
-
-    it('cache expired → LLM 호출로 갱신', async () => {
-      const expiredRow = makeCacheRow({
-        expiresAt: new Date(Date.now() - 1000), // 1초 전 만료
-      });
-      cacheQb.getOne.mockResolvedValueOnce(expiredRow);
-      llm.call.mockResolvedValue({
-        status: 'ok',
-        text: '',
-        json: {
-          businessSummary: '신규 요약',
-          coreValues: '',
-          visionMission: '',
-          recentTrends: '',
-          financials: '',
-          competitors: '',
-          jobInsights: '',
-          interviewKeywords: [],
-        },
-        promptTokens: 100,
-        completionTokens: 100,
-        costUsd: 0.01,
-        latencyMs: 500,
-        callLogId: 'log-2',
-        outputRedacted: false,
-      });
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-
-      expect(r.status).toBe('ok');
-      expect(r.research?.businessSummary).toBe('신규 요약');
-      expect(llm.call).toHaveBeenCalled();
-    });
-
-    it('opt_out=true → 빈 응답 + 안내', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(
-        makeCacheRow({ optOut: true, aiResearch: {} }),
-      );
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-
-      expect(r.status).toBe('opt_out');
-      expect(r.reason).toContain('동의가 철회');
-      expect(llm.call).not.toHaveBeenCalled();
-    });
-
-    it('LLM 빈 응답 → MISS_CACHE 60일 TTL 짧게 저장 (재시도 차단)', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      llm.call.mockResolvedValue({
-        status: 'ok',
-        text: '',
-        json: {
-          businessSummary: '',
-          coreValues: '',
-          visionMission: '',
-          recentTrends: '',
-          financials: '',
-          competitors: '',
-          jobInsights: '',
-          interviewKeywords: [],
-        },
-        promptTokens: 50,
-        completionTokens: 10,
-        costUsd: 0.001,
-        latencyMs: 100,
-        callLogId: 'log-empty',
-        outputRedacted: false,
-      });
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-      expect(r.status).toBe('ok');
-      // 빈 결과여도 cache 저장 (재시도 차단)
-      const savedCall = cacheRepo.save.mock.calls[0][0] as CompanyResearchCache;
-      const ttlMs = savedCall.expiresAt.getTime() - Date.now();
-      expect(ttlMs).toBeLessThan(90 * 24 * 60 * 60 * 1000); // MISS_CACHE < CACHE_TTL
-      expect(ttlMs).toBeGreaterThan(50 * 24 * 60 * 60 * 1000); // 약 60일
-    });
-
-    it('정규화 — 대소문자·공백 다른 입력은 같은 cache key', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      llm.call.mockResolvedValue({
-        status: 'ok',
-        text: '',
-        json: {
-          businessSummary: 'x',
-          coreValues: '',
-          visionMission: '',
-          recentTrends: '',
-          financials: '',
-          competitors: '',
-          jobInsights: '',
-          interviewKeywords: [],
-        },
-        promptTokens: 10,
-        completionTokens: 5,
-        costUsd: 0,
-        latencyMs: 50,
-        callLogId: 'c',
-        outputRedacted: false,
-      });
-      appRepo.findOne.mockResolvedValue(makeApp({ companyName: '  KAKAO  ' }));
-
-      await service.fetchForSession(USER_ID, SESSION_ID);
-      // save 시 정규화된 회사명으로 저장됨
-      const savedCall = cacheRepo.save.mock.calls[0][0] as CompanyResearchCache;
-      expect(savedCall.companyName).toBe('kakao');
-    });
-
-    it('sources 추출 — 화이트리스트 외 도메인 filter (PR 보강)', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      llm.call.mockResolvedValue({
-        status: 'ok',
-        text: '',
-        json: {
-          businessSummary: 'x',
-          coreValues: '',
-          visionMission: '',
-          recentTrends: '',
-          financials: '',
-          competitors: '',
-          jobInsights: '',
-          interviewKeywords: [],
-          companyProfile: {},
-          talentProfile: [],
-          productsAndTech: {},
-          inferredFields: [],
-          // 화이트리스트 (ko.wikipedia.org) + jobplanet (외부) + random-site 섞임
-          sources: [
-            {
-              id: 1,
-              title: '위키',
-              url: 'https://ko.wikipedia.org/wiki/x',
-              domain: 'ko.wikipedia.org',
-            },
-            {
-              id: 2,
-              title: '잡플래닛',
-              url: 'https://jobplanet.co.kr/companies/123',
-              domain: 'jobplanet.co.kr',
-            },
-            {
-              id: 3,
-              title: '랜덤',
-              url: 'https://random-site.com/page',
-              domain: 'random-site.com',
-            },
-          ],
-        },
-        promptTokens: 10,
-        completionTokens: 5,
-        costUsd: 0,
-        latencyMs: 50,
-        callLogId: 'c',
-        outputRedacted: false,
-      });
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-      // 화이트리스트 (ko.wikipedia.org) 만 통과. jobplanet, random-site 제거
-      const sources = r.sources ?? [];
-      expect(sources.length).toBe(1);
-      expect(sources[0]).toMatchObject({
-        url: 'https://ko.wikipedia.org/wiki/x',
-      });
-    });
   });
 
   // ── 권한 / 존재 ──
@@ -429,20 +171,20 @@ describe('CompanyResearchService', () => {
     it('session 다른 user → NotFound', async () => {
       sessionRepo.findOne.mockResolvedValueOnce(null);
       await expect(
-        service.fetchForSession(USER_ID, SESSION_ID),
+        service.getCachedForSession(USER_ID, SESSION_ID),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('application 없음 → NotFound', async () => {
       appRepo.findOne.mockResolvedValueOnce(null);
       await expect(
-        service.fetchForSession(USER_ID, SESSION_ID),
+        service.getCachedForSession(USER_ID, SESSION_ID),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
   // ── F1 자소서 풀페이지 — application 단위 ──
-  describe('getCachedForApplication / fetchForApplication', () => {
+  describe('getCachedForApplication', () => {
     const APP_ID = 'app-uuid-1';
 
     it('getCachedForApplication: 다른 user → NotFound (IDOR 차단)', async () => {
@@ -488,6 +230,78 @@ describe('CompanyResearchService', () => {
       expect(r.isCached).toBe(true);
     });
 
+    // ── pre-seed generic fallback (2026-07-09) ──
+    it('직군 있음 + 맞춤 캐시 miss + generic(job NULL) hit → generic 반환', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne
+        .mockResolvedValueOnce(null) // exact (네이버, 백엔드) miss
+        .mockResolvedValueOnce({
+          id: 'cache-generic',
+          aiResearch: { businessSummary: 'generic pre-seed' },
+          sources: [],
+          expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+          updatedAt: new Date(),
+          optOut: false,
+          hitCount: 0,
+        } as never); // generic (네이버, NULL) hit
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      if (!r || r.status !== 'ok') throw new Error('expected ok');
+      expect(r.research?.businessSummary).toBe('generic pre-seed');
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(2);
+    });
+
+    it('직군 있음 + 맞춤 캐시 hit → generic 조회 안 함 (getOne 1회)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce({
+        id: 'cache-exact',
+        aiResearch: { businessSummary: 'exact' },
+        sources: [],
+        expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+        updatedAt: new Date(),
+        optOut: false,
+        hitCount: 0,
+      } as never);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      if (!r || r.status !== 'ok') throw new Error('expected ok');
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('직군 없음 + miss → fallback 미발동 (getOne 1회)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: null,
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce(null);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(r).toBeNull();
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('맞춤·generic 둘 다 miss → null (getOne 2회)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+      cacheQb.getOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(r).toBeNull();
+      expect(cacheQb.getOne).toHaveBeenCalledTimes(2);
+    });
+
     it('getCachedForApplication: opt_out → opt_out status', async () => {
       appRepo.findOne.mockResolvedValueOnce({
         id: APP_ID,
@@ -517,141 +331,6 @@ describe('CompanyResearchService', () => {
       } as never);
       const r = await service.getCachedForApplication(USER_ID, APP_ID);
       expect(r).toBeNull();
-    });
-
-    it('fetchForApplication: 다른 user → NotFound', async () => {
-      appRepo.findOne.mockResolvedValueOnce(null);
-      await expect(
-        service.fetchForApplication(USER_ID, APP_ID),
-      ).rejects.toBeInstanceOf(NotFoundException);
-    });
-
-    it('fetchForApplication: cache hit → LLM 미호출 + isCached=true', async () => {
-      appRepo.findOne.mockResolvedValueOnce({
-        id: APP_ID,
-        userId: USER_ID,
-        companyName: '네이버',
-        jobCategory: '백엔드',
-      } as never);
-      cacheQb.getOne.mockResolvedValueOnce({
-        id: 'cache-1',
-        aiResearch: { businessSummary: 'cached' },
-        sources: [],
-        expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
-        updatedAt: new Date(),
-        optOut: false,
-        hitCount: 0,
-      } as never);
-      const r = await service.fetchForApplication(USER_ID, APP_ID);
-      if (r.status !== 'ok') throw new Error('expected ok');
-      expect(r.isCached).toBe(true);
-      expect(llm.call).not.toHaveBeenCalled();
-    });
-
-    it('fetchForApplication: resourceType=application_coverletter audit 명시', async () => {
-      appRepo.findOne.mockResolvedValueOnce({
-        id: APP_ID,
-        userId: USER_ID,
-        companyName: '네이버',
-        jobCategory: '백엔드',
-      } as never);
-      cacheQb.getOne.mockResolvedValueOnce(null); // cache miss
-      quotaCheck.checkAndPrepare.mockResolvedValueOnce({
-        blocked: false,
-      } as never);
-      llm.call.mockResolvedValueOnce({
-        status: 'ok',
-        text: '',
-        json: {
-          businessSummary: 'fresh',
-          recentTrends: 'r',
-          interviewKeywords: ['k'],
-        },
-        promptTokens: 100,
-        completionTokens: 50,
-        costUsd: 0.001,
-        latencyMs: 1000,
-        callLogId: 'log-1',
-        outputRedacted: false,
-      });
-      cacheRepo.create.mockReturnValueOnce({} as never);
-      cacheRepo.save.mockResolvedValueOnce({
-        updatedAt: new Date(),
-      } as never);
-      const r = await service.fetchForApplication(USER_ID, APP_ID);
-      if (r.status !== 'ok') throw new Error('expected ok');
-      expect(llm.call).toHaveBeenCalledWith(
-        expect.objectContaining({
-          resourceType: 'application_coverletter',
-          resourceId: APP_ID,
-        }),
-      );
-    });
-  });
-
-  // ── quota ──
-  describe('quota', () => {
-    it('DAY_LIMIT → blocked + abuser ban 트리거 + audit row', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      quotaCheck.checkAndPrepare.mockResolvedValueOnce({
-        blocked: true,
-        code: 'DAY_LIMIT',
-        reason: '오늘 한도 초과',
-      });
-      llm.call.mockResolvedValue({
-        status: 'blocked_quota',
-        text: null,
-        errorMessage: 'day',
-        callLogId: 'log-b',
-      });
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-      expect(r.status).toBe('blocked');
-      expect(r.reason).toContain('오늘');
-      expect(llm.call).toHaveBeenCalledWith(
-        expect.objectContaining({
-          preBlockedStatus: 'blocked_quota',
-          preBlockedReason: expect.stringContaining('DAY_LIMIT'),
-        }),
-      );
-      await new Promise((r) => setTimeout(r, 10));
-      expect(abuserBan.checkAndBan).toHaveBeenCalledWith(
-        USER_ID,
-        'company_research',
-        1,
-      );
-    });
-
-    it('FEATURE_DISABLED → blocked, abuser ban 미트리거', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      quotaCheck.checkAndPrepare.mockResolvedValueOnce({
-        blocked: true,
-        code: 'FEATURE_DISABLED',
-        reason: '관리자에 의해 일시 중단',
-      });
-      llm.call.mockResolvedValue({
-        status: 'blocked_quota',
-        text: null,
-        errorMessage: 'disabled',
-        callLogId: 'log-b',
-      });
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-      expect(r.status).toBe('blocked');
-      expect(abuserBan.checkAndBan).not.toHaveBeenCalled();
-    });
-
-    it('LLM error → blocked + 사용자 안내', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      llm.call.mockResolvedValue({
-        status: 'error',
-        text: null,
-        errorMessage: 'rate limit',
-        callLogId: 'log-e',
-      });
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-      expect(r.status).toBe('blocked');
-      expect(r.reason).toContain('잠시 후');
     });
   });
 
@@ -756,279 +435,6 @@ describe('CompanyResearchService', () => {
       // 화이트리스트 (opt_out=false) 필터 + DESC 정렬 SQL 검증
       expect(cacheQb.where).toHaveBeenCalledWith('c.opt_out = FALSE');
       expect(cacheQb.orderBy).toHaveBeenCalledWith('c.hit_count', 'DESC');
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────
-  // PR 보강 — helper 메서드 spec (Phase 1)
-  // ────────────────────────────────────────────────────────────────────
-
-  describe('PR 보강 helper — extractCompanyDomain', () => {
-    it('C1) 정상 https URL → www. 제거 + 채용 서브도메인 자동 추가', () => {
-      const r = service['extractCompanyDomain'](
-        'https://www.kakaopay.com/recruit',
-      );
-      expect(r).toEqual([
-        'kakaopay.com',
-        'careers.kakaopay.com',
-        'about.kakaopay.com',
-        'recruit.kakaopay.com',
-      ]);
-    });
-
-    it('C2) jobUrl null/undefined → 빈 배열 (정적 화이트리스트만)', () => {
-      expect(service['extractCompanyDomain'](null)).toEqual([]);
-      expect(service['extractCompanyDomain'](undefined)).toEqual([]);
-      expect(service['extractCompanyDomain']('')).toEqual([]);
-      expect(service['extractCompanyDomain']('   ')).toEqual([]);
-    });
-
-    it('C3) 잘못된 URL (파싱 실패) → 빈 배열 (정적 fallback)', () => {
-      expect(service['extractCompanyDomain']('not-a-url')).toEqual([]);
-      expect(service['extractCompanyDomain']('http://')).toEqual([]);
-    });
-
-    it('C4) javascript: / data: / file: protocol → 차단 (보안)', () => {
-      expect(service['extractCompanyDomain']('javascript:alert(1)')).toEqual(
-        [],
-      );
-      expect(service['extractCompanyDomain']('data:text/html,x')).toEqual([]);
-      expect(service['extractCompanyDomain']('file:///etc/passwd')).toEqual([]);
-    });
-  });
-
-  describe('PR 보강 helper — validateSources', () => {
-    it('E1) 화이트리스트 매칭 + id 중복 제거', () => {
-      const r = service['validateSources'](
-        [
-          {
-            id: 1,
-            title: 'a',
-            url: 'https://ko.wikipedia.org/x',
-            domain: 'ko.wikipedia.org',
-          },
-          {
-            id: 1,
-            title: 'b',
-            url: 'https://ko.wikipedia.org/y',
-            domain: 'ko.wikipedia.org',
-          },
-        ],
-        ['ko.wikipedia.org'],
-      );
-      expect(r.length).toBe(1);
-    });
-
-    it('E2) 화이트리스트 외 도메인 strip', () => {
-      const r = service['validateSources'](
-        [
-          {
-            id: 1,
-            title: '잡플',
-            url: 'https://jobplanet.co.kr/x',
-            domain: 'jobplanet.co.kr',
-          },
-        ],
-        ['ko.wikipedia.org'],
-      );
-      expect(r).toEqual([]);
-    });
-
-    it('E3) 미래 publishedAt → strip (fake)', () => {
-      const future = new Date(Date.now() + 86400000 * 365).toISOString();
-      const r = service['validateSources'](
-        [
-          {
-            id: 1,
-            title: 'a',
-            url: 'https://ko.wikipedia.org/x',
-            domain: 'ko.wikipedia.org',
-            publishedAt: future,
-          },
-        ],
-        ['ko.wikipedia.org'],
-      );
-      expect(r).toEqual([]);
-    });
-
-    it('E4) http/https 외 protocol → strip', () => {
-      const r = service['validateSources'](
-        [
-          {
-            id: 1,
-            title: 'a',
-            url: 'javascript:alert(1)',
-            domain: 'evil',
-          },
-        ],
-        ['evil'],
-      );
-      expect(r).toEqual([]);
-    });
-
-    it('E5) url 파싱 실패 → strip', () => {
-      const r = service['validateSources'](
-        [
-          {
-            id: 1,
-            title: 'a',
-            url: 'not-a-url',
-            domain: 'x',
-          },
-        ],
-        ['x'],
-      );
-      expect(r).toEqual([]);
-    });
-
-    it('E6) 필수 필드 (id/title/url/domain) 누락 → strip', () => {
-      const r = service['validateSources'](
-        [
-          { id: 1, title: '', url: 'https://x.com', domain: 'x.com' },
-          { title: 'a', url: 'https://x.com', domain: 'x.com' } as never,
-        ],
-        ['x.com'],
-      );
-      expect(r).toEqual([]);
-    });
-  });
-
-  describe('PR 보강 helper — stripOrphanFootnotes', () => {
-    it('E7) 본문 [4] 인데 validIds=[1,2,3] → [4] strip', () => {
-      const r = service['stripOrphanFootnotes'](
-        {
-          businessSummary: '회사는 X [1] 이고 추정 [4] 이다',
-          coreValues: '도전 [2] 신뢰',
-        },
-        [1, 2, 3],
-      );
-      expect(r.businessSummary).toBe('회사는 X [1] 이고 추정  이다');
-      expect(r.coreValues).toBe('도전 [2] 신뢰');
-    });
-
-    it('E8) 본문 [N] 없으면 그대로', () => {
-      const r = service['stripOrphanFootnotes'](
-        { businessSummary: '회사는 X 이다' },
-        [1, 2],
-      );
-      expect(r.businessSummary).toBe('회사는 X 이다');
-    });
-
-    it('E9) validIds=[] → 모든 [N] strip', () => {
-      const r = service['stripOrphanFootnotes'](
-        { businessSummary: '회사 [1] 이고 [2] 이다' },
-        [],
-      );
-      expect(r.businessSummary).toBe('회사  이고  이다');
-    });
-
-    it('E10) undefined/null 필드 → empty string', () => {
-      const r = service['stripOrphanFootnotes'](
-        { businessSummary: undefined },
-        [],
-      );
-      expect(r.businessSummary).toBe('');
-    });
-  });
-
-  describe('PR 보강 helper — formatKstToday', () => {
-    it('H1) YYYY-MM-DD 형식 + 10자', () => {
-      const r = service['formatKstToday']();
-      expect(r).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(r.length).toBe(10);
-    });
-  });
-
-  describe('PR 보강 helper — isValidFieldName', () => {
-    it('G1) schema 의 11 항목 모두 valid', () => {
-      const valid = [
-        'businessSummary',
-        'coreValues',
-        'visionMission',
-        'recentTrends',
-        'financials',
-        'competitors',
-        'jobInsights',
-        'interviewKeywords',
-        'companyProfile',
-        'talentProfile',
-        'productsAndTech',
-      ];
-      valid.forEach((f) => expect(service['isValidFieldName'](f)).toBe(true));
-    });
-
-    it('G2) schema 외 field name → false (sanitize)', () => {
-      expect(service['isValidFieldName']('fakeField')).toBe(false);
-      expect(service['isValidFieldName']('sources')).toBe(false);
-      expect(service['isValidFieldName']('inferredFields')).toBe(false);
-      expect(service['isValidFieldName']('__proto__')).toBe(false);
-    });
-  });
-  // ── cost hardening 🟡4 — 후처리 실패 refund 커버리지 ──
-  describe('후처리 실패 환불 (🟡4)', () => {
-    it('LLM ok(50코인 차감됨) 후 cache 저장 실패 → refund 호출 + 원 에러 rethrow (이중 차감 방지)', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null); // miss
-      llm.call.mockResolvedValue({
-        status: 'ok',
-        json: {
-          businessSummary: '요약',
-          recentTrends: '트렌드',
-          interviewKeywords: [],
-        },
-        text: '',
-        promptTokens: 10,
-        completionTokens: 10,
-        costUsd: 0.01,
-        latencyMs: 100,
-        callLogId: 'log-1',
-        outputRedacted: false,
-      } as never);
-      cacheRepo.save.mockRejectedValueOnce(new Error('DB down'));
-
-      await expect(
-        service.fetchForSession(USER_ID, SESSION_ID),
-      ).rejects.toThrow('DB down');
-
-      expect(coinServiceMock.refund).toHaveBeenCalledWith(
-        USER_ID,
-        'company_research',
-        expect.stringContaining('후처리 실패'),
-      );
-    });
-
-    it('환불 자체도 실패 → 원 에러가 유지되어 rethrow (환불 에러로 가려지지 않음)', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      llm.call.mockResolvedValue({
-        status: 'ok',
-        json: { businessSummary: '요약', interviewKeywords: [] },
-        text: '',
-        promptTokens: 10,
-        completionTokens: 10,
-        costUsd: 0.01,
-        latencyMs: 100,
-        callLogId: 'log-1',
-        outputRedacted: false,
-      } as never);
-      cacheRepo.save.mockRejectedValueOnce(new Error('DB down'));
-      coinServiceMock.refund.mockRejectedValueOnce(new Error('refund fail'));
-
-      await expect(
-        service.fetchForSession(USER_ID, SESSION_ID),
-      ).rejects.toThrow('DB down');
-    });
-
-    it('LLM 자체 실패 (차감 없음) → refund 미호출 (불필요 환불 방지)', async () => {
-      cacheQb.getOne.mockResolvedValueOnce(null);
-      llm.call.mockResolvedValue({
-        status: 'error',
-        text: null,
-        errorMessage: 'provider down',
-        callLogId: 'log-1',
-      } as never);
-
-      const r = await service.fetchForSession(USER_ID, SESSION_ID);
-      expect(r.status).not.toBe('ok');
-      expect(coinServiceMock.refund).not.toHaveBeenCalled();
     });
   });
 });

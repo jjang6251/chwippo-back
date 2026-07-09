@@ -70,6 +70,10 @@ export class CompanyResearchCache {
   @Column({ name: 'hit_count', type: 'int', default: 0 })
   hitCount: number;
 
+  /** pre-seed 버전 (예: '2026-07'). NULL = 유저 조사로 생성된 row — 부팅 seed 가 덮어쓰지 않음 */
+  @Column({ name: 'seed_version', type: 'varchar', length: 20, nullable: true })
+  seedVersion: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

@@ -143,16 +143,6 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     maxOutputTokens: 800,
     temperature: 0.5,
   },
-  // PR 2 Phase 4 단계 B — 회사 조사 (Anthropic Claude haiku + web_search tool)
-  // light haiku 가 web_search tool 지원. 한국어 자연스러움 ↑
-  company_research: {
-    provider: 'anthropic',
-    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
-    defaultModel: 'claude-haiku-4-5',
-    maxInputTokens: 4_000,
-    maxOutputTokens: 2_500, // 8 항목 JSON 응답 충분
-    temperature: 0.2, // 사실 기반 정보 — 낮게
-  },
   // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn + structured output)
   // 메시지 이력 6개 truncate, 컨텍스트 = 회사조사 + N문항 + source_refs + 메시지 이력
   coverletter_chat: {

@@ -52,20 +52,54 @@ export class AnthropicProvider implements LlmProvider {
     }
   }
 
+  /**
+   * 캐시 breakpoint 2개: system 지침(코드 상수) | user 첫 콘텐츠 블록(cachedContext).
+   * ⚠️ cachedContext 는 사용자 입력(문항·답변)을 포함하므로 **절대 system 역할에 넣지 않는다**
+   * (prompt injection 방어 원칙 — system 은 코드 상수만). user 콘텐츠 블록에도 cache_control
+   * 이 동일하게 작동하므로 캐시 효과는 같고 권한 승격만 제거된다.
+   */
+  private buildSystemBlocks(req: LlmProviderRequest): Array<{
+    type: 'text';
+    text: string;
+    cache_control: { type: 'ephemeral' };
+  }> {
+    return [
+      {
+        type: 'text',
+        text: req.systemPrompt,
+        cache_control: { type: 'ephemeral' },
+      },
+    ];
+  }
+
+  /** user 메시지 콘텐츠 — cachedContext 있으면 [캐시 블록, 변동 블록] 2블록 */
+  private buildUserContent(
+    req: LlmProviderRequest,
+  ):
+    | string
+    | Array<
+        | { type: 'text'; text: string; cache_control: { type: 'ephemeral' } }
+        | { type: 'text'; text: string }
+      > {
+    if (!req.cachedContext) return req.userPrompt;
+    return [
+      {
+        type: 'text',
+        text: req.cachedContext,
+        cache_control: { type: 'ephemeral' },
+      },
+      { type: 'text', text: req.userPrompt },
+    ];
+  }
+
   async complete(req: LlmProviderRequest): Promise<LlmProviderResponse> {
     this.assertAvailable();
     const message = await this.client!.messages.create({
       model: req.model,
       // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
       //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
-      system: [
-        {
-          type: 'text',
-          text: req.systemPrompt,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: req.userPrompt }],
+      system: this.buildSystemBlocks(req),
+      messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
     });
@@ -80,9 +114,8 @@ export class AnthropicProvider implements LlmProvider {
     // 단일 tool 정의 + tool_choice 로 강제 호출 → tool.input 이 JSON schema 매칭 보장
     const toolName = req.jsonSchema.name;
 
-    // Phase 4 단계 B — web_search tool 활성화 (옵션)
-    // Anthropic web_search_20250305: allowed_domains 화이트리스트 + max_uses 비용 통제
-    // schema tool 과 함께 등록 — Claude 가 검색 후 결과를 structured output 으로 반환
+    // web_search tool 은 2026-07-09 완전 철거 (CEO 결정 — 회사 조사 = pre-seed 공급으로 전환).
+    // structured output schema tool 단일 구성.
     type AnthropicTool = NonNullable<
       Parameters<Anthropic['messages']['create']>[0]['tools']
     >[number];
@@ -93,34 +126,17 @@ export class AnthropicProvider implements LlmProvider {
         input_schema: req.jsonSchema.schema as Anthropic.Tool.InputSchema,
       },
     ];
-    if (req.webSearch) {
-      tools.push({
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: req.webSearch.maxUses,
-        allowed_domains: [...req.webSearch.allowedDomains],
-      } as unknown as AnthropicTool);
-    }
 
     const message = await this.client!.messages.create({
       model: req.model,
       // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
       //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
-      system: [
-        {
-          type: 'text',
-          text: req.systemPrompt,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: req.userPrompt }],
+      system: this.buildSystemBlocks(req),
+      messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
       tools,
-      // web_search 있으면 tool_choice 강제 안 함 (Claude 가 자율적으로 web_search → schema)
-      tool_choice: req.webSearch
-        ? { type: 'auto' }
-        : { type: 'tool', name: toolName },
+      tool_choice: { type: 'tool', name: toolName },
     });
 
     // tool_use 블록 추출 — structured output schema tool 만 (web_search 결과 X)
@@ -188,14 +204,8 @@ export class AnthropicProvider implements LlmProvider {
       model: req.model,
       // PR 보강 — Anthropic prompt caching (system prompt cache_read 90% 할인).
       //   5분 TTL ephemeral. company_research 같은 동일 system prompt 반복 호출 시 input token ↓↓
-      system: [
-        {
-          type: 'text',
-          text: req.systemPrompt,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [{ role: 'user', content: req.userPrompt }],
+      system: this.buildSystemBlocks(req),
+      messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
       tools,

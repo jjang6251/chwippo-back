@@ -269,6 +269,86 @@ describe('CoverletterChatService', () => {
       expect(llmArg.userPrompt).toContain('메시지 9');
     });
 
+    it('캐시 분리 — 문항·회사·조사는 cachedContext, 이력·새 메시지는 userPrompt (2026-07-09)', async () => {
+      await service.chat(USER_ID, APP_ID, { userMessage: '검토해줘' });
+      const llmArg = llm.call.mock.calls[0][0] as {
+        cachedContext?: string;
+        userPrompt: string;
+      };
+      // 고정 블록 → cachedContext
+      expect(llmArg.cachedContext).toBeDefined();
+      expect(llmArg.cachedContext).toContain('# 회사·직무');
+      expect(llmArg.cachedContext).toContain('# 자소서 문항');
+      // 변동 블록 → userPrompt (고정 블록 미포함)
+      expect(llmArg.userPrompt).toContain('# 사용자 새 메시지');
+      expect(llmArg.userPrompt).not.toContain('# 자소서 문항');
+      expect(llmArg.userPrompt).not.toContain('# 회사·직무');
+    });
+
+    it('캐시 분리 — 스트림 경로(chatStream)도 cachedContext 전달 (2026-07-09)', async () => {
+      llm.callStream.mockImplementation(async function* () {
+        yield {
+          type: 'done' as const,
+          response: {
+            text: '{"reply":"ok"}',
+            json: { reply: 'ok' },
+            promptTokens: 10,
+            completionTokens: 5,
+          },
+        } as never;
+      });
+      const events: unknown[] = [];
+      for await (const ev of service.chatStream(USER_ID, APP_ID, {
+        userMessage: '검토해줘',
+      })) {
+        events.push(ev);
+      }
+      expect(llm.callStream).toHaveBeenCalledTimes(1);
+      const arg = llm.callStream.mock.calls[0][0] as {
+        cachedContext?: string;
+        userPrompt: string;
+      };
+      expect(arg.cachedContext).toContain('# 자소서 문항');
+      expect(arg.userPrompt).not.toContain('# 자소서 문항');
+    });
+
+    it('스트림 partial — newAnswer 미완성 항목은 프론트로 흘리지 않음 (2026-07-08 크래시 회귀 방지)', async () => {
+      llm.callStream.mockImplementation(async function* () {
+        // partial parse 중간 상태: 첫 항목은 완성, 둘째는 newAnswer 키가 아직 없음
+        yield {
+          type: 'partial' as const,
+          json: {
+            reply: '작성 중...',
+            suggestedUpdates: [
+              { clId: 'cl-1', newAnswer: '완성된 답변' },
+              { clId: 'cl-2' },
+            ],
+          },
+        };
+        yield {
+          type: 'done' as const,
+          json: { reply: 'ok' },
+        } as never;
+      });
+      const partials: Array<{
+        suggestedUpdates?: Array<{ clId: string; newAnswer: string }>;
+      }> = [];
+      for await (const ev of service.chatStream(USER_ID, APP_ID, {
+        userMessage: '전체 답변 생성',
+      })) {
+        if ((ev as { type: string }).type === 'partial') {
+          partials.push(ev as (typeof partials)[number]);
+        }
+      }
+      expect(partials).toHaveLength(1);
+      expect(partials[0].suggestedUpdates).toEqual([
+        { clId: 'cl-1', newAnswer: '완성된 답변' },
+      ]);
+      partials[0].suggestedUpdates?.forEach((u) =>
+        expect(typeof u.newAnswer).toBe('string'),
+      );
+    });
+
     it('11) quota blocked → LLM provider 미호출 + assistant 차단 메시지', async () => {
       quotaCheck.checkAndPrepare.mockResolvedValueOnce({
         blocked: true,

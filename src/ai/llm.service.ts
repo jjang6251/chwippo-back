@@ -15,7 +15,7 @@ import { CostGuardService } from './cost-guard.service';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
 import { getFallbackConfig, getModelConfig } from './model-config';
-import { scrubOutputPii, scrubPii } from './pii-scrubber';
+import { scrubJsonOutputPii, scrubOutputPii, scrubPii } from './pii-scrubber';
 import {
   LlmJsonParseError,
   LlmProvider,
@@ -32,6 +32,8 @@ export interface LlmCallInput {
   /** @deprecated PR 0 — getModelConfig(feature) 로 자동 결정. 무시됨 */
   modelTier?: LlmModelTier;
   systemPrompt: string;
+  /** 프롬프트 캐시 세그먼트 — 턴 간 불변 블록 (조사·문항 등). PII 스크럽·토큰 캡·해시 모두 포함됨 */
+  cachedContext?: string;
   userPrompt: string;
   /** @deprecated PR 0 — getModelConfig.maxOutputTokens 로 박제. 무시됨 */
   maxTokens?: number;
@@ -46,11 +48,6 @@ export interface LlmCallInput {
   preBlockedReason?: string;
   /** PR 0 — structured JSON output 필요 시 schema 전달. callJson 경로 활성화 */
   jsonSchema?: LlmProviderJsonRequest['jsonSchema'];
-  /**
-   * Phase 4 단계 B — web_search tool 활성화 (Anthropic 만 지원, jsonSchema 와 함께 사용).
-   * 화이트리스트 도메인 + max_uses 강제로 비용·법적 risk 제어.
-   */
-  webSearch?: LlmProviderJsonRequest['webSearch'];
 }
 
 export interface LlmCallOk {
@@ -283,12 +280,18 @@ export class LlmService {
     const blacklistedNames = await this.getUserNameBlacklist(input.userId);
     const scrubbedSystem = scrubPii(input.systemPrompt, { blacklistedNames });
     const scrubbedUser = scrubPii(input.userPrompt, { blacklistedNames });
+    const scrubbedCached = input.cachedContext
+      ? scrubPii(input.cachedContext, { blacklistedNames })
+      : null;
     const systemPrompt = scrubbedSystem.text;
     const userPrompt = scrubbedUser.text;
+    const cachedContext = scrubbedCached?.text;
 
-    // ── 5. input token cap ──
+    // ── 5. input token cap (캐시 세그먼트 포함 — 캐시돼도 첫 호출은 정가) ──
     const inputTokensEst =
-      estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+      estimateTokens(systemPrompt) +
+      estimateTokens(userPrompt) +
+      (cachedContext ? estimateTokens(cachedContext) : 0);
     if (inputTokensEst > cfg.maxInputTokens) {
       const errMsg = `입력 토큰 ${inputTokensEst} 초과 (한도 ${cfg.maxInputTokens})`;
       return this.saveBlocked(
@@ -302,7 +305,10 @@ export class LlmService {
     }
 
     // ── 6. provider 호출 (jsonSchema 있으면 callJson, 없으면 complete) ──
-    const promptHash = this.hashPrompt(systemPrompt, userPrompt);
+    const promptHash = this.hashPrompt(
+      systemPrompt + (cachedContext ?? ''),
+      userPrompt,
+    );
     const promptExcerpt = userPrompt.slice(0, 200);
 
     let attempts = 0;
@@ -324,16 +330,17 @@ export class LlmService {
           result = await provider.callJson({
             model: cfg.model,
             systemPrompt,
+            cachedContext,
             userPrompt,
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
             jsonSchema: input.jsonSchema,
-            webSearch: input.webSearch,
           });
         } else {
           result = await provider.complete({
             model: cfg.model,
             systemPrompt,
+            cachedContext,
             userPrompt,
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
@@ -341,8 +348,16 @@ export class LlmService {
         }
 
         // ── 7. 응답 PII 역방향 스크럼 (hallucination 차단) ──
+        // text 채널 + 구조화 json 채널 모두 스크럽. json 은 DB 저장 경로
+        // (chat suggestedUpdates·심층 점검 lastFeedback 등)가 있어 동일 방어 필요.
         const outputScrub = scrubOutputPii(result.text);
+        const jsonScrub =
+          result.json !== undefined
+            ? scrubJsonOutputPii(result.json)
+            : { value: undefined, hasPii: false };
         const finalText = outputScrub.text;
+        const finalJson = jsonScrub.value;
+        const outputRedacted = outputScrub.hasPii || jsonScrub.hasPii;
 
         // ── 8. audit + return ──
         const costUsd = calcCostUsd(
@@ -422,14 +437,14 @@ export class LlmService {
           costBreakdown: chargeResult.breakdown,
           costUsd: costUsd.toString(),
           latencyMs,
-          outputRedacted: outputScrub.hasPii,
+          outputRedacted,
           attempts,
         });
 
         return {
           status: 'ok',
           text: finalText,
-          json: result.json,
+          json: finalJson,
           promptTokens: result.promptTokens,
           completionTokens: result.completionTokens,
           cacheCreationTokens: result.cacheCreationTokens,
@@ -439,7 +454,7 @@ export class LlmService {
           costUsd,
           latencyMs,
           callLogId: log.id,
-          outputRedacted: outputScrub.hasPii,
+          outputRedacted,
         };
       } catch (err) {
         if (err instanceof LlmJsonParseError && attempts < 2) {
@@ -505,22 +520,28 @@ export class LlmService {
                 fbResult = await fbProvider.callJson({
                   model: fallbackCfg.model,
                   systemPrompt,
+                  cachedContext,
                   userPrompt,
                   maxTokens: cfg.maxOutputTokens,
                   temperature: cfg.temperature,
                   jsonSchema: input.jsonSchema,
-                  // webSearch 은 anthropic 전용 — fallback (보통 openai) 으로 가면 제외
                 });
               } else {
                 fbResult = await fbProvider.complete({
                   model: fallbackCfg.model,
                   systemPrompt,
+                  cachedContext,
                   userPrompt,
                   maxTokens: cfg.maxOutputTokens,
                   temperature: cfg.temperature,
                 });
               }
               const fbScrub = scrubOutputPii(fbResult.text);
+              const fbJsonScrub =
+                fbResult.json !== undefined
+                  ? scrubJsonOutputPii(fbResult.json)
+                  : { value: undefined, hasPii: false };
+              const fbOutputRedacted = fbScrub.hasPii || fbJsonScrub.hasPii;
               const fbCost = calcCostUsd(
                 fallbackCfg.model,
                 fbResult.promptTokens,
@@ -553,7 +574,7 @@ export class LlmService {
                 completionTokens: fbResult.completionTokens,
                 costUsd: fbCost.toString(),
                 latencyMs: fbLatency,
-                outputRedacted: fbScrub.hasPii,
+                outputRedacted: fbOutputRedacted,
                 attempts: attempts + 1,
                 coinCost: fbChargeResult.coinCost.toString(),
                 costBreakdown: fbChargeResult.breakdown,
@@ -561,14 +582,14 @@ export class LlmService {
               return {
                 status: 'ok',
                 text: fbScrub.text,
-                json: fbResult.json,
+                json: fbJsonScrub.value,
                 promptTokens: fbResult.promptTokens,
                 completionTokens: fbResult.completionTokens,
                 coinCost: fbChargeResult.coinCost,
                 costUsd: fbCost,
                 latencyMs: fbLatency,
                 callLogId: fbLog.id,
-                outputRedacted: fbScrub.hasPii,
+                outputRedacted: fbOutputRedacted,
                 wasFallback: true,
               };
             } catch (fbErr) {
@@ -721,9 +742,14 @@ export class LlmService {
     const userPrompt = scrubPii(input.userPrompt, {
       blacklistedNames: nicknames,
     }).text;
+    const cachedContext = input.cachedContext
+      ? scrubPii(input.cachedContext, { blacklistedNames: nicknames }).text
+      : undefined;
 
-    // 4. input cap
-    const inputTokens = estimateTokens(systemPrompt + '\n' + userPrompt);
+    // 4. input cap (캐시 세그먼트 포함)
+    const inputTokens = estimateTokens(
+      systemPrompt + '\n' + (cachedContext ?? '') + '\n' + userPrompt,
+    );
     if (inputTokens > cfg.maxInputTokens) {
       yield {
         type: 'error',
@@ -732,7 +758,10 @@ export class LlmService {
       return;
     }
 
-    const promptHash = this.hashPrompt(systemPrompt, userPrompt);
+    const promptHash = this.hashPrompt(
+      systemPrompt + (cachedContext ?? ''),
+      userPrompt,
+    );
     const promptExcerpt = userPrompt.slice(0, 200);
 
     // 5. streaming
@@ -740,16 +769,22 @@ export class LlmService {
       for await (const event of this.anthropic.callJsonStream<T>({
         model: cfg.model,
         systemPrompt,
+        cachedContext,
         userPrompt,
         maxTokens: cfg.maxOutputTokens,
         temperature: cfg.temperature,
         jsonSchema: input.jsonSchema,
       })) {
         if (event.type === 'partial') {
+          // partial 은 스크럽하지 않음 — 일시 표시용이고 chunk 경계에서 PII 패턴이
+          // 쪼개져 실효 없음. 저장·반환은 done json 경유로만 스크럽된다.
           yield { type: 'partial', json: event.json };
         } else {
           // done — final json + audit + PR_B1 coin charge
+          // text 채널 + 구조화 json 채널 모두 스크럽 (json 이 DB 저장 경로라 동일 방어).
           const outputScrub = scrubOutputPii(event.response.text);
+          const jsonScrub = scrubJsonOutputPii(event.json);
+          const outputRedacted = outputScrub.hasPii || jsonScrub.hasPii;
           const costUsd = calcCostUsd(
             cfg.model,
             event.response.promptTokens,
@@ -792,19 +827,19 @@ export class LlmService {
             costBreakdown: chargeResult.breakdown,
             costUsd: costUsd.toString(),
             latencyMs,
-            outputRedacted: outputScrub.hasPii,
+            outputRedacted,
             attempts: 1,
           });
           yield {
             type: 'done',
-            json: event.json,
+            json: jsonScrub.value,
             text: outputScrub.text,
             promptTokens: event.response.promptTokens,
             completionTokens: event.response.completionTokens,
             costUsd,
             latencyMs,
             callLogId: log.id,
-            outputRedacted: outputScrub.hasPii,
+            outputRedacted,
           };
         }
       }

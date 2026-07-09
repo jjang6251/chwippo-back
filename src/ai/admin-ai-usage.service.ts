@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, DataSource, Repository } from 'typeorm';
+import { DataSource, Raw, Repository } from 'typeorm';
 import { LlmCallLog } from './entities/llm-call-log.entity';
+import { startOfMonthKst, startOfNextMonthKst } from '../common/datetime';
 
 export interface AiUsageQuery {
   startDate?: string; // ISO date
@@ -77,12 +78,16 @@ export class AdminAiUsageService {
       : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
     return { start, end };
   }
+  // NOTE: 기간 필터는 half-open (`>= start AND < end`) 으로 통일했다 (이전엔 BETWEEN
+  // = 양끝 inclusive 라 인접 구간이 경계 timestamp 를 이중 카운트할 수 있었음).
+  // end 는 이제 exclusive 상한이므로, 마지막 날을 포함하려면 호출부에서 endDate 를
+  // "다음 기간 시작"(예: 다음날/다음달 00:00 KST) 으로 전달해야 한다.
 
   async overview(q: AiUsageQuery): Promise<AiUsageSummary> {
     const { start, end } = this.parseRange(q);
     const qb = this.repo
       .createQueryBuilder('l')
-      .where('l.created_at BETWEEN :start AND :end', { start, end });
+      .where('l.created_at >= :start AND l.created_at < :end', { start, end });
     if (q.feature) qb.andWhere('l.feature = :feature', { feature: q.feature });
 
     const total = await qb
@@ -94,7 +99,7 @@ export class AdminAiUsageService {
       .select('l.feature', 'feature')
       .addSelect('COUNT(*)', 'calls')
       .addSelect('COALESCE(SUM(l.cost_usd), 0)', 'cost')
-      .where('l.created_at BETWEEN :start AND :end', { start, end })
+      .where('l.created_at >= :start AND l.created_at < :end', { start, end })
       .groupBy('l.feature')
       .orderBy('cost', 'DESC')
       .getRawMany<{ feature: string; calls: string; cost: string }>();
@@ -103,7 +108,7 @@ export class AdminAiUsageService {
       .createQueryBuilder('l')
       .select('l.status', 'status')
       .addSelect('COUNT(*)', 'count')
-      .where('l.created_at BETWEEN :start AND :end', { start, end })
+      .where('l.created_at >= :start AND l.created_at < :end', { start, end })
       .groupBy('l.status')
       .getRawMany<{ status: string; count: string }>();
 
@@ -134,7 +139,7 @@ export class AdminAiUsageService {
         'COALESCE(SUM(l.completion_tokens), 0)',
         'totalCompletionTokens',
       )
-      .where('l.created_at BETWEEN :start AND :end', { start, end })
+      .where('l.created_at >= :start AND l.created_at < :end', { start, end })
       .groupBy('l.user_id')
       .orderBy('"totalCostUsd"', 'DESC');
 
@@ -162,7 +167,11 @@ export class AdminAiUsageService {
     return this.repo.find({
       where: {
         userId,
-        createdAt: Between(start, end),
+        // half-open [start, end) — BETWEEN(양끝 inclusive) 이중 카운트 방지
+        createdAt: Raw((alias) => `${alias} >= :start AND ${alias} < :end`, {
+          start,
+          end,
+        }),
       },
       order: { createdAt: 'DESC' },
       take: 500,
@@ -180,7 +189,7 @@ export class AdminAiUsageService {
       .addSelect('l.model', 'model')
       .addSelect('COUNT(*)', 'calls')
       .addSelect('COALESCE(SUM(l.cost_usd), 0)', 'cost')
-      .where('l.created_at BETWEEN :start AND :end', { start, end })
+      .where('l.created_at >= :start AND l.created_at < :end', { start, end })
       .andWhere("l.status IN ('ok', 'retry_parsing')")
       .groupBy('l.provider')
       .addGroupBy('l.model')
@@ -212,7 +221,7 @@ export class AdminAiUsageService {
       )
       .addSelect('COUNT(*)', 'calls')
       .addSelect('COALESCE(SUM(l.cost_usd), 0)', 'cost')
-      .where('l.created_at BETWEEN :start AND :end', { start, end })
+      .where('l.created_at >= :start AND l.created_at < :end', { start, end })
       .groupBy('hour')
       .orderBy('hour', 'ASC');
     if (q.feature) qb.andWhere('l.feature = :feature', { feature: q.feature });
@@ -237,7 +246,7 @@ export class AdminAiUsageService {
       .select('l.feature', 'feature')
       .addSelect('COUNT(*)', 'total')
       .addSelect('COUNT(*) FILTER (WHERE l.output_redacted = TRUE)', 'redacted')
-      .where('l.created_at BETWEEN :start AND :end', { start, end })
+      .where('l.created_at >= :start AND l.created_at < :end', { start, end })
       .andWhere("l.status IN ('ok', 'retry_parsing')")
       .groupBy('l.feature')
       .orderBy('redacted', 'DESC')
@@ -290,11 +299,13 @@ export class AdminAiUsageService {
     };
   }
 
-  /** 이번 달 누적 비용 + 월말 추정 (오늘까지 누적 / 경과일수 × 31일) */
+  /** 이번 달 누적 비용 + 월말 추정 (오늘까지 누적 / 경과일수 × 그달 총일수) */
   async monthEstimate(): Promise<MonthEstimateResponse> {
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    // KST 월 경계 — 서버 로컬(운영 UTC) getMonth 대신 datetime 모듈 사용.
+    // 운영에서 매월 1일 KST 00~09시 사이 UTC 로는 전월이라 월초가 어긋나던 버그 수정.
+    const monthStart = startOfMonthKst();
+    const nextMonthStart = startOfNextMonthKst();
     const daysInMonth = Math.round(
       (nextMonthStart.getTime() - monthStart.getTime()) / (24 * 60 * 60 * 1000),
     );

@@ -13,6 +13,14 @@ import type { LlmProviderName } from '../entities/llm-call-log.entity';
 export interface LlmProviderRequest {
   model: string;
   systemPrompt: string;
+  /**
+   * 프롬프트 캐시 최적화 (2026-07-09) — 턴 간 불변인 대형 컨텍스트 블록 (회사 조사·문항 등).
+   * ⚠️ 사용자 입력을 포함할 수 있으므로 **user 역할**로 전달된다 (system 승격 금지 —
+   * prompt injection 방어 원칙). Anthropic: user 첫 콘텐츠 블록 + cache_control (90% 할인).
+   * OpenAI: user 메시지 앞부분 (자동 prefix 캐싱).
+   * 변동 내용(대화 이력·새 메시지)은 절대 넣지 말 것 — 캐시 무효화로 오히려 +25% 손해.
+   */
+  cachedContext?: string;
   userPrompt: string;
   maxTokens: number; // PR 0 — 모든 호출 명시 (default 안 함 — token 폭증 방지)
   temperature: number;
@@ -24,15 +32,6 @@ export interface LlmProviderJsonRequest extends LlmProviderRequest {
   jsonSchema: {
     name: string;
     schema: Record<string, unknown>;
-  };
-  /**
-   * F6 PR 2 Phase 4 단계 B — web_search tool 활성화 (Anthropic 만 지원).
-   * `allowedDomains` 화이트리스트 외 사이트는 검색 결과에서 제외.
-   * OpenAI 는 무시 (web_search 미지원 모델 사용 시).
-   */
-  webSearch?: {
-    allowedDomains: string[];
-    maxUses: number; // 호출 1회당 web_search 최대 사용 횟수 (비용 통제)
   };
 }
 

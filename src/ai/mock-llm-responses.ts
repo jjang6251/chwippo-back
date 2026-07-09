@@ -110,34 +110,6 @@ export function buildMockLlmResponse(
         ...baseTokens,
       };
 
-    case 'company_research':
-      return {
-        text: '[MOCK]',
-        json: {
-          businessSummary:
-            '[MOCK] AI 기술 기반 SaaS 솔루션을 제공하는 IT 기업.',
-          coreValues:
-            '[MOCK] 사용자 중심 사고 · 빠른 실행 · 데이터 기반 의사결정 · 협업과 책임감.',
-          visionMission:
-            '[MOCK] 모두가 일을 사랑하게 만드는 기술. 반복 업무에서 사람을 해방시킨다.',
-          recentTrends:
-            '[MOCK] 최근 1년 AI 어시스턴트 라인업 확장, 글로벌 시장 진출 가속화. 분기 매출 30% 성장.',
-          financials:
-            '[MOCK] 2023 매출 500억, 2024 800억, 2025 1200억 (3년 CAGR ~55%). 영업이익률 18%.',
-          competitors:
-            '[MOCK] 국내: 라이벌사 A, 라이벌사 B / 글로벌: 미국 X 사. 차별점은 한국어 특화 + B2B SaaS 깊이.',
-          jobInsights:
-            '[MOCK] 백엔드: Python/Go, AWS, MSA 경험 우대. 신입은 빠른 학습·문제 해결 능력 중점 평가.',
-          interviewKeywords: [
-            '[MOCK] 협업',
-            '[MOCK] 문제 해결',
-            '[MOCK] 데이터 기반 사고',
-            '[MOCK] 사용자 가치',
-          ],
-        },
-        ...baseTokens,
-      };
-
     case 'interview_prep_followup':
       return {
         text: '[MOCK]',

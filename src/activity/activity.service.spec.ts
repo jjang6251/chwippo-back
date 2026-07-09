@@ -34,6 +34,7 @@ describe('ActivityService', () => {
     org: null,
     role: null,
     resultUrl: null,
+    isInbox: false,
     outcome: null,
     startedAt: null,
     endedAt: null,

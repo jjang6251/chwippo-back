@@ -111,6 +111,15 @@ describe('AdminFeatureQuotasService', () => {
   });
 
   describe('update', () => {
+    it('coverletter_chat 도 유효 feature — VALID_FEATURES 누락 회귀 방지 (2026-07-09 admin 조절 불가 버그)', async () => {
+      const row = makeRow({ dayLimit: 100 });
+      repo.findOne.mockResolvedValue(row);
+      const r = await service.update(ADMIN, 'coverletter_chat', 'free', {
+        dayLimit: 77,
+      });
+      expect(r.dayLimit).toBe(77);
+    });
+
     it('정상 — dayLimit 만 변경 + audit 기록', async () => {
       const row = makeRow({ dayLimit: 30 });
       repo.findOne.mockResolvedValue(row);

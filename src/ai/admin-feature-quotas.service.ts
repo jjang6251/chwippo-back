@@ -21,6 +21,7 @@ const VALID_FEATURES: LlmFeature[] = [
   'score',
   'analysis',
   'coverletter',
+  'coverletter_chat',
   'coverletter_draft_v2',
   'coverletter_feedback',
   'coverletter_recommend',

@@ -47,14 +47,6 @@ export class CoverletterDocController {
     return this.research.getCachedForApplication(user.id, appId);
   }
 
-  @Post('research')
-  fetchResearch(
-    @CurrentUser() user: AuthUser,
-    @Param('appId', ParseUUIDPipe) appId: string,
-  ) {
-    return this.research.fetchForApplication(user.id, appId);
-  }
-
   // ── Phase D: chat ──
   @Get('messages')
   listMessages(

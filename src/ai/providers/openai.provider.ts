@@ -36,7 +36,14 @@ export class OpenAIProvider implements LlmProvider {
       model: req.model,
       messages: [
         { role: 'system', content: req.systemPrompt },
-        { role: 'user', content: req.userPrompt },
+        {
+          role: 'user',
+          // cachedContext 는 user 앞부분에 — 사용자 입력을 system 권한으로 승격 금지.
+          // OpenAI 자동 prefix 캐싱(50% 할인)은 메시지 포함 앞부분 전체에 적용됨
+          content: req.cachedContext
+            ? `${req.cachedContext}\n\n${req.userPrompt}`
+            : req.userPrompt,
+        },
       ],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
@@ -52,7 +59,14 @@ export class OpenAIProvider implements LlmProvider {
       model: req.model,
       messages: [
         { role: 'system', content: req.systemPrompt },
-        { role: 'user', content: req.userPrompt },
+        {
+          role: 'user',
+          // cachedContext 는 user 앞부분에 — 사용자 입력을 system 권한으로 승격 금지.
+          // OpenAI 자동 prefix 캐싱(50% 할인)은 메시지 포함 앞부분 전체에 적용됨
+          content: req.cachedContext
+            ? `${req.cachedContext}\n\n${req.userPrompt}`
+            : req.userPrompt,
+        },
       ],
       max_tokens: req.maxTokens,
       temperature: req.temperature,
