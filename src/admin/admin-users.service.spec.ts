@@ -20,6 +20,7 @@ import { Document } from '../myinfo/entities/document.entity';
 import { Education } from '../myinfo/entities/education.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { AdminNotifyService } from '../notifications/admin-notify.service';
+import { DiscordNotifier } from '../common/discord-notifier';
 
 const ADMIN_ID = 'admin-uuid';
 const USER_ID = 'user-uuid';
@@ -111,6 +112,10 @@ const mockAuditService = {
   log: jest.fn(),
 };
 
+const mockDiscord = {
+  notify: jest.fn().mockResolvedValue('sent'),
+};
+
 const mockDataSourceManager = {
   findOne: jest.fn(),
   find: jest.fn(),
@@ -168,6 +173,7 @@ describe('AdminUsersService', () => {
             notifyUnsuspended: jest.fn().mockResolvedValue(undefined),
           },
         },
+        { provide: DiscordNotifier, useValue: mockDiscord },
       ],
     }).compile();
 

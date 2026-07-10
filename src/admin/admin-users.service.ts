@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -28,6 +29,7 @@ import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity'
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { AdminNotifyService } from '../notifications/admin-notify.service';
 import { AdminAuditLog } from './admin-audit-log.entity';
+import { DiscordNotifier } from '../common/discord-notifier';
 
 /** PR_B2 Phase 1 — Q24 사용자 통지 의 reason 한국어 라벨 매핑 */
 const GRANT_REASON_LABEL: Record<string, string> = {
@@ -56,6 +58,8 @@ function omitSensitive(user: User): Omit<User, 'refreshToken' | 'kakaoId'> {
 
 @Injectable()
 export class AdminUsersService {
+  private readonly logger = new Logger(AdminUsersService.name);
+
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Application)
@@ -78,6 +82,7 @@ export class AdminUsersService {
     private readonly auditService: AdminAuditService,
     private readonly storageUsage: StorageUsageService,
     private readonly adminNotify: AdminNotifyService,
+    private readonly discord: DiscordNotifier,
   ) {}
 
   async findAll(query: {
@@ -386,13 +391,12 @@ export class AdminUsersService {
     dto: GrantCoinDto,
     ctx?: { ip?: string | null; userAgent?: string | null },
   ): Promise<{ balance: number; granted: number }> {
-    if (adminId === targetUserId) {
-      throw new ForbiddenException(
-        '자기 자신에게는 코인을 지급할 수 없습니다.',
-      );
-    }
+    // 셀프 지급 허용 (CEO 확정 B안) — 1인 운영 도그푸딩 편의.
+    // 차단 대신 audit selfGrant 플래그 + Discord critical 즉시 알림으로 투명성 강제.
+    // 협업 admin 도입 시 재차단 여부 재결정 (revoke/suspend/role/delete 의 셀프 가드는 유지).
+    const selfGrant = adminId === targetUserId;
 
-    return await this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const user = await manager.findOne(User, { where: { id: targetUserId } });
       if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
 
@@ -448,13 +452,44 @@ export class AdminUsersService {
           memo: dto.memo,
           balanceBefore: before,
           balanceAfter: after,
+          selfGrant,
         },
         manager,
         ctx,
       );
 
-      return { balance: after, granted: dto.amount };
+      return { balance: after, granted: dto.amount, before, after };
     });
+
+    // 셀프 지급 시 Discord critical 알림 — TX 커밋 후 발송 (외부 호출은 TX 밖).
+    // best-effort: 발송 실패해도 지급 결과에 영향 없음.
+    if (selfGrant) {
+      const grantReasonLabel = GRANT_REASON_LABEL[dto.reason] ?? dto.reason;
+      try {
+        await this.discord.notify(
+          {
+            title: '🪙 admin 셀프 코인 지급',
+            fields: [
+              { name: 'adminId(=수령자)', value: adminId, inline: false },
+              { name: 'amount', value: String(dto.amount), inline: true },
+              { name: 'reason', value: grantReasonLabel, inline: true },
+              {
+                name: 'balance',
+                value: `${result.before} → ${result.after}`,
+                inline: false,
+              },
+            ],
+          },
+          'critical',
+        );
+      } catch (err) {
+        this.logger.warn(
+          `셀프 코인 지급 Discord 알림 실패 (adminId=${adminId}): ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return { balance: result.balance, granted: result.granted };
   }
 
   /** PR_B2 Phase 1 — admin 코인 환수 (Q12 별도 액션, Q26 clamp 0, balance<=0 reject). */
