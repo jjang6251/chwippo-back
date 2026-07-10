@@ -50,9 +50,18 @@ function escapeSearch(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
-function omitSensitive(user: User): Omit<User, 'refreshToken' | 'kakaoId'> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { refreshToken: _r, kakaoId: _k, ...safe } = user;
+function omitSensitive(
+  user: User,
+): Omit<User, 'refreshToken' | 'kakaoId' | 'appleSub' | 'appleEmail'> {
+  /* eslint-disable @typescript-eslint/no-unused-vars -- rest 분리로 민감 필드 제거 */
+  const {
+    refreshToken: _r,
+    kakaoId: _k,
+    appleSub: _a,
+    appleEmail: _ae,
+    ...safe
+  } = user;
+  /* eslint-enable @typescript-eslint/no-unused-vars */
   return safe;
 }
 

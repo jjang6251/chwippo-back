@@ -50,6 +50,9 @@ export class JwtRefreshStrategy extends PassportStrategy(
       nickname: user.nickname,
       email: user.email,
       role: user.role,
+      // loginProviders 파생용 (컨트롤러가 배열로 변환 · raw 값은 응답에 미노출)
+      kakaoId: user.kakaoId ?? null,
+      appleSub: user.appleSub ?? null,
       onboardedAt: user.onboardedAt ?? null,
       termsAgreedAt: user.termsAgreedAt ?? null,
       aiConsentAt: user.aiConsentAt ?? null,

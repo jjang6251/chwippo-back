@@ -452,6 +452,7 @@ describe('AuthController', () => {
           nickname: '테스트유저',
           email: 'test@test.com',
           role: 'user',
+          loginProviders: [],
           onboardedAt: null,
           termsAgreedAt: authenticatedUser.termsAgreedAt,
           aiConsentAt: null,

@@ -287,6 +287,8 @@ describe('AdminUsersService', () => {
       const item = result.data[0] as Record<string, unknown>;
       expect(item).not.toHaveProperty('refreshToken');
       expect(item).not.toHaveProperty('kakaoId');
+      expect(item).not.toHaveProperty('appleSub');
+      expect(item).not.toHaveProperty('appleEmail');
     });
   });
 
@@ -320,6 +322,8 @@ describe('AdminUsersService', () => {
       >;
       expect(result).not.toHaveProperty('refreshToken');
       expect(result).not.toHaveProperty('kakaoId');
+      expect(result).not.toHaveProperty('appleSub');
+      expect(result).not.toHaveProperty('appleEmail');
     });
 
     it('stats 필드 포함 — storage·applicationCount·myinfoCount (PU-1)', async () => {
@@ -761,6 +765,8 @@ describe('AdminUsersService', () => {
       const user = (result as Record<string, Record<string, unknown>>).user;
 
       expect(user).not.toHaveProperty('kakaoId');
+      expect(user).not.toHaveProperty('appleSub');
+      expect(user).not.toHaveProperty('appleEmail');
     });
 
     it('export 결과에 myinfo 키가 포함된다', async () => {
