@@ -22,6 +22,11 @@ import { Document } from '../myinfo/entities/document.entity';
 import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { AdminNotifyService } from '../notifications/admin-notify.service';
+import { DiscordNotifier } from '../common/discord-notifier';
+
+const mockDiscord = {
+  notify: jest.fn().mockResolvedValue('sent'),
+};
 
 /**
  * PR_B2 Phase 1.5 — admin 자산 개입 endpoint 의 spec 매트릭스 (~50 케이스).
@@ -163,6 +168,7 @@ describe('AdminUsersService — Phase 1.5 spec 매트릭스', () => {
             notifyUnsuspended: jest.fn().mockResolvedValue(undefined),
           },
         },
+        { provide: DiscordNotifier, useValue: mockDiscord },
       ],
     }).compile();
 
@@ -207,17 +213,55 @@ describe('AdminUsersService — Phase 1.5 spec 매트릭스', () => {
           memo: '문의 환불',
           balanceBefore: 100,
           balanceAfter: 150,
+          selfGrant: false,
         }),
         manager,
         CTX,
       );
+      // 타인 지급 → Discord critical 미발송
+      expect(mockDiscord.notify).not.toHaveBeenCalled();
     });
 
-    it('self-grant 차단 — ForbiddenException', async () => {
-      await expect(
-        service.grantCoin(TARGET_ID, TARGET_ID, dto, CTX),
-      ).rejects.toThrow(ForbiddenException);
-      expect(dataSource.transaction).not.toHaveBeenCalled();
+    // CEO 확정 B안 — 셀프 지급 "차단 → 허용 + 투명성 강제" (1인 운영 도그푸딩).
+    // 기존 "self-grant 차단 — ForbiddenException" 케이스를 B안 동작으로 교체.
+    it('self-grant 허용 (B안) — 성공 + audit selfGrant=true + Discord critical 발송', async () => {
+      manager.findOne
+        .mockResolvedValueOnce(makeUser({ id: ADMIN_ID }))
+        .mockResolvedValueOnce(
+          makeBalance({ userId: ADMIN_ID, balance: '0.0' }),
+        );
+
+      const r = await service.grantCoin(ADMIN_ID, ADMIN_ID, dto, CTX);
+
+      expect(r).toEqual({ balance: 50, granted: 50 });
+      expect(dataSource.transaction).toHaveBeenCalled();
+      expect(auditLog).toHaveBeenCalledWith(
+        ADMIN_ID,
+        'grant_coin',
+        'user',
+        ADMIN_ID,
+        expect.objectContaining({ selfGrant: true }),
+        manager,
+        CTX,
+      );
+      expect(mockDiscord.notify).toHaveBeenCalledTimes(1);
+      expect(mockDiscord.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '🪙 admin 셀프 코인 지급' }),
+        'critical',
+      );
+    });
+
+    it('self-grant — Discord 발송이 reject 돼도 지급 결과 정상 반환 (best-effort)', async () => {
+      manager.findOne
+        .mockResolvedValueOnce(makeUser({ id: ADMIN_ID }))
+        .mockResolvedValueOnce(
+          makeBalance({ userId: ADMIN_ID, balance: '10.0' }),
+        );
+      mockDiscord.notify.mockRejectedValueOnce(new Error('webhook down'));
+
+      const r = await service.grantCoin(ADMIN_ID, ADMIN_ID, dto, CTX);
+
+      expect(r).toEqual({ balance: 60, granted: 50 });
     });
 
     it('사용자 미존재 — NotFoundException', async () => {

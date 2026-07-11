@@ -23,6 +23,7 @@ import { Document } from '../myinfo/entities/document.entity';
 import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { AdminNotifyService } from '../notifications/admin-notify.service';
+import { DiscordNotifier } from '../common/discord-notifier';
 
 /**
  * PR_B2 Phase 3 — forceChangeTier 매트릭스.
@@ -156,6 +157,10 @@ describe('AdminUsersService.forceChangeTier', () => {
             notifySuspended: jest.fn().mockResolvedValue(undefined),
             notifyUnsuspended: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        {
+          provide: DiscordNotifier,
+          useValue: { notify: jest.fn().mockResolvedValue('sent') },
         },
       ],
     }).compile();

@@ -19,6 +19,7 @@ import { AppleAuthService } from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
 import { KakaoNativeService } from './kakao-native.service';
 import { AppleNativeLoginDto } from './dto/apple-native-login.dto';
+import { deriveLoginProviders } from './login-providers.util';
 import { AppleS2SNotificationDto } from './dto/apple-s2s-notification.dto';
 import { KakaoNativeLoginDto } from './dto/kakao-native-login.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
@@ -32,6 +33,9 @@ interface AuthenticatedUser {
   nickname: string;
   email: string | null;
   role: string;
+  /** loginProviders 파생용 내부 필드 — raw 값은 응답에 미노출 */
+  kakaoId?: string | null;
+  appleSub?: string | null;
   onboardedAt: Date | null;
   termsAgreedAt: Date | null;
   aiConsentAt: Date | null;
@@ -129,6 +133,7 @@ export class AuthController {
         nickname: user.nickname,
         email: user.email,
         role: user.role,
+        loginProviders: deriveLoginProviders(user),
         onboardedAt: user.onboardedAt,
         termsAgreedAt: user.termsAgreedAt,
         aiConsentAt: user.aiConsentAt,
@@ -177,6 +182,7 @@ export class AuthController {
         nickname: user.nickname,
         email: user.email,
         role: user.role,
+        loginProviders: deriveLoginProviders(user),
         onboardedAt: user.onboardedAt,
         termsAgreedAt: user.termsAgreedAt,
         aiConsentAt: user.aiConsentAt,
@@ -307,6 +313,10 @@ export class AuthController {
         nickname: user.nickname,
         email: user.email,
         role: user.role,
+        loginProviders: deriveLoginProviders({
+          kakaoId: user.kakaoId ?? null,
+          appleSub: user.appleSub ?? null,
+        }),
         onboardedAt: user.onboardedAt ?? null,
         termsAgreedAt: user.termsAgreedAt ?? null,
         aiConsentAt: user.aiConsentAt ?? null,
