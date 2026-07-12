@@ -798,3 +798,55 @@ describe('buildCoverletterContext — jobPosting 주입', () => {
     expect(r.userPrompt).not.toContain('# 공고 요건');
   });
 });
+
+describe('SYSTEM_PROMPT_DRAFT v3 — 특색·합격작 대조 규칙 (2026-07-13)', () => {
+  const ctx = buildCoverletterContext({
+    application: DEFAULT_APP,
+    question: '지원 동기를 쓰시오',
+    category: '지원동기',
+    charLimit: 500,
+    selectedLogs: [],
+    selectedReflections: [],
+    aiRecommendedLogs: [],
+    myinfo: EMPTY_MYINFO,
+  });
+
+  it('최우선 원칙 — 단일화 금지 블록 존재', () => {
+    expect(ctx.systemPrompt).toContain('이 사람만 쓸 수 있는 답변');
+    expect(ctx.systemPrompt).toContain('사용자마다 달라야 정상');
+  });
+
+  it('예시 앵커링 방지 — 모방 금지 단서', () => {
+    expect(ctx.systemPrompt).toContain('문형·소재 모방 금지');
+  });
+
+  it('문항 분류별 전략 블록 존재 (인재상·비직무 경험 포함)', () => {
+    expect(ctx.systemPrompt).toContain('문항 분류별 전략');
+    expect(ctx.systemPrompt).toContain('직무 무관 경험');
+    expect(ctx.systemPrompt).toContain('인재상');
+  });
+
+  it('착지 — 경험과 맞닿는 항목 선택 + 장식 인용 금지', () => {
+    expect(ctx.systemPrompt).toContain('실제 맞닿는 항목 하나만 골라');
+    expect(ctx.systemPrompt).toContain('장식으로 인용하지 마라');
+  });
+
+  it('글자수 — 충분히 채움 지시 (ADR-042 생성 관용 유지)', () => {
+    expect(ctx.systemPrompt).toContain('92% 이상 채움');
+    expect(ctx.systemPrompt).toContain('심층 점검이 줄여준다');
+  });
+
+  it('공고 요건 블록 — 경험→직무 브릿지 규칙 (요건 있을 때)', () => {
+    const block = buildJobPostingBlock({
+      responsibilities: '선박 전장설계',
+      requirements: ['전기공학 전공'],
+      preferred: [],
+      techStack: [],
+      qualifications: [],
+      keywords: [],
+      parsedAt: '2026-07-13T00:00:00.000Z',
+    });
+    expect(block).toContain('직무 연결 문장 1개');
+    expect(block).toContain('억지 연결 금지');
+  });
+});
