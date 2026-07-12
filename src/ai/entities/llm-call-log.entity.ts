@@ -27,7 +27,9 @@ export type LlmFeature =
   // 'company_research' 는 2026-07-09 퇴역 — 유저 트리거 조사 제거 (pre-seed 공급 전환).
   //   과거 llm_call_logs 행에는 문자열로 남아 있음 (audit 보존).
   // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn, structured output, suggestedUpdates 적용)
-  | 'coverletter_chat';
+  | 'coverletter_chat'
+  // 공고 요건 파싱 (jobposting-parse) — 붙여넣은 공고 텍스트를 6필드 구조화 (light·strict JSON)
+  | 'jobposting_parse';
 
 /** F6 PR 2 Phase 5.6 — 'mock' 은 NODE_ENV='development' + API key 미설정 시 LlmService 의 mock 분기 (UI 흐름 테스트 전용). production 절대 X */
 export type LlmProviderName = 'openai' | 'anthropic' | 'mock';

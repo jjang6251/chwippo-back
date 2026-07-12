@@ -2,9 +2,11 @@ import type { ActivityLog } from '../activity/entities/activity-log.entity';
 import type { ActivityReflection } from '../activity/entities/activity-reflection.entity';
 import {
   buildCoverletterContext,
+  buildJobPostingBlock,
   COVERLETTER_CONTEXT_LIMITS,
   MyinfoSafeDump,
 } from './coverletter-context-builder';
+import type { JobPosting } from './application.entity';
 
 /**
  * F6 PR 1 — coverletter-context-builder spec.
@@ -698,5 +700,101 @@ describe('buildCoverletterContext', () => {
     expect(r.meta.estimatedInputTokens).toBeLessThanOrEqual(
       COVERLETTER_CONTEXT_LIMITS.MAX_INPUT_TOKENS,
     );
+  });
+});
+
+// ── 공고 요건 블록 (jobposting-parse) — 3경로 공용 빌더 ──
+
+describe('buildJobPostingBlock', () => {
+  const makeJp = (over: Partial<JobPosting> = {}): JobPosting => ({
+    responsibilities: 'API 설계·운영',
+    requirements: ['3년 이상 경력'],
+    preferred: ['AWS 경험'],
+    techStack: ['Node.js'],
+    qualifications: ['정보처리기사'],
+    keywords: ['백엔드'],
+    parsedAt: '2026-07-12T00:00:00.000Z',
+    ...over,
+  });
+
+  it('null → 빈 문자열 (블록 미주입)', () => {
+    expect(buildJobPostingBlock(null)).toBe('');
+  });
+
+  it('6필드 전부 비어 있으면 빈 문자열', () => {
+    expect(
+      buildJobPostingBlock({
+        responsibilities: null,
+        requirements: [],
+        preferred: [],
+        techStack: [],
+        qualifications: [],
+        keywords: [],
+        parsedAt: '2026-07-12T00:00:00.000Z',
+      }),
+    ).toBe('');
+  });
+
+  it('요건 있으면 블록 생성 + 각 필드 라벨 포함', () => {
+    const b = buildJobPostingBlock(makeJp());
+    expect(b).toContain('# 공고 요건');
+    expect(b).toContain('담당업무: API 설계·운영');
+    expect(b).toContain('우대사항: AWS 경험');
+    expect(b).toContain('필수 역량: 3년 이상 경력');
+  });
+
+  it('이원 처리 문구 존재 — 우선순위 + 정량 나열 금지 + 없는 경험 금지 가드', () => {
+    const b = buildJobPostingBlock(makeJp());
+    // 공고 요건 > 회사 조사 우선순위
+    expect(b).toContain('회사 조사');
+    expect(b).toContain('우선');
+    // 정량 스펙 본문 나열 금지
+    expect(b).toContain('본문에 나열하지 마라');
+    // 없는 경험 지어내기 금지
+    expect(b).toContain('지어내지 마라');
+    // 오독 방지 문구
+    expect(b).toContain('쓰지 말라');
+  });
+});
+
+describe('buildCoverletterContext — jobPosting 주입', () => {
+  const JP: JobPosting = {
+    responsibilities: null,
+    requirements: ['Kubernetes 운영'],
+    preferred: [],
+    techStack: [],
+    qualifications: [],
+    keywords: [],
+    parsedAt: '2026-07-12T00:00:00.000Z',
+  };
+
+  it('jobPosting 있으면 userPrompt 에 공고 요건 블록 포함', () => {
+    const r = buildCoverletterContext({
+      application: DEFAULT_APP,
+      question: 'q',
+      category: null,
+      charLimit: null,
+      selectedLogs: [],
+      selectedReflections: [],
+      aiRecommendedLogs: [],
+      jobPosting: JP,
+      myinfo: EMPTY_MYINFO,
+    });
+    expect(r.userPrompt).toContain('# 공고 요건');
+    expect(r.userPrompt).toContain('Kubernetes 운영');
+  });
+
+  it('jobPosting 없으면 공고 요건 블록 미포함', () => {
+    const r = buildCoverletterContext({
+      application: DEFAULT_APP,
+      question: 'q',
+      category: null,
+      charLimit: null,
+      selectedLogs: [],
+      selectedReflections: [],
+      aiRecommendedLogs: [],
+      myinfo: EMPTY_MYINFO,
+    });
+    expect(r.userPrompt).not.toContain('# 공고 요건');
   });
 });

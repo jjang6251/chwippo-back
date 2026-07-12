@@ -199,6 +199,39 @@ describe('ApplicationsService', () => {
         ForbiddenException,
       );
     });
+
+    // jobposting-parse — 파싱 lock stale(2분) 읽기 판정
+    it("jobPostingStatus='parsing' + started_at 2분 이내 → 그대로 'parsing' 노출", async () => {
+      appRepo.findOne.mockResolvedValue(
+        makeApp({
+          jobPostingStatus: 'parsing',
+          jobPostingStartedAt: new Date(Date.now() - 10 * 1000), // 10초 전
+        }),
+      );
+      const result = await service.findOne('user-uuid-1', 'app-uuid-1');
+      expect(result.jobPostingStatus).toBe('parsing');
+    });
+
+    it("jobPostingStatus='parsing' + started_at 2분 초과(stale) → null 노출 (DB 미변경)", async () => {
+      appRepo.findOne.mockResolvedValue(
+        makeApp({
+          jobPostingStatus: 'parsing',
+          jobPostingStartedAt: new Date(Date.now() - 5 * 60 * 1000), // 5분 전
+        }),
+      );
+      const result = await service.findOne('user-uuid-1', 'app-uuid-1');
+      expect(result.jobPostingStatus).toBeNull();
+      // 응답만 보정, DB 회수 UPDATE 는 다음 parse 의 atomic 이 담당 (여기선 update 미호출)
+      expect(appRepo.update).not.toHaveBeenCalled();
+    });
+
+    it("jobPostingStatus='parsing' + started_at null(방어) → stale 간주 null", async () => {
+      appRepo.findOne.mockResolvedValue(
+        makeApp({ jobPostingStatus: 'parsing', jobPostingStartedAt: null }),
+      );
+      const result = await service.findOne('user-uuid-1', 'app-uuid-1');
+      expect(result.jobPostingStatus).toBeNull();
+    });
   });
 
   // ── create ─────────────────────────────────────────────
