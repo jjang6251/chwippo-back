@@ -15,6 +15,7 @@ import { scrubPii } from '../ai/pii-scrubber';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { Application } from './application.entity';
+import { buildJobPostingBlock } from './coverletter-context-builder';
 import {
   CoverletterChatMessage,
   type CoverletterCitations,
@@ -946,6 +947,12 @@ export class CoverletterChatService {
       if (summary.length > 0) {
         fixed.push(`\n# 회사 조사\n${summary.join('\n')}`);
       }
+    }
+
+    // 공고 요건 (jobposting-parse) — 3경로 공용 빌더. 회사 조사보다 우선 신호 + 정량 나열 금지 가드.
+    const jobPostingBlock = buildJobPostingBlock(args.app.jobPosting ?? null);
+    if (jobPostingBlock) {
+      fixed.push(`\n${jobPostingBlock}`);
     }
 
     fixed.push(`\n# 자소서 문항 (N=${args.cls.length})`);

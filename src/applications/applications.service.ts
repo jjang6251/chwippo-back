@@ -53,13 +53,23 @@ export class ApplicationsService {
     return apps.map((a) => this.withDomain(a));
   }
 
+  /**
+   * 카드 목록 응답에서 job_posting 제거 (상세 GET /:id 에서만 노출).
+   * 공고 요건 JSONB 가 목록마다 실리면 payload 과대 + 불필요 노출.
+   */
+  private stripJobPosting(app: Application): Application {
+    const clone = { ...app };
+    delete (clone as Partial<Application>).jobPosting;
+    return clone;
+  }
+
   async findAll(userId: string) {
     const apps = await this.appRepo.find({
       where: { userId },
       relations: ['steps'],
       order: { createdAt: 'DESC' },
     });
-    return this.withDomainAll(apps);
+    return this.withDomainAll(apps).map((a) => this.stripJobPosting(a));
   }
 
   async findOne(userId: string, id: string) {
@@ -69,7 +79,23 @@ export class ApplicationsService {
     });
     if (!app) throw new NotFoundException('카드를 찾을 수 없습니다.');
     app.steps.sort((a, b) => a.orderIndex - b.orderIndex);
-    return this.withDomain(app);
+    return this.withJobPostingStatusGuard(this.withDomain(app));
+  }
+
+  /**
+   * jobposting-parse — 'parsing' 이지만 started_at 이 2분 초과면 stale = idle 로 간주,
+   * 응답에서 jobPostingStatus 를 null 로 내린다 (배너가 "정리 중"에 영구 갇히지 않게).
+   * DB 는 다음 parse 의 atomic 시작 UPDATE (WHERE started_at < NOW()-2min) 가 자연 회수하므로
+   * 여기서는 응답만 보정하고 DB 는 건드리지 않는다. 파싱은 5~15초라 별도 cron 불필요.
+   */
+  private withJobPostingStatusGuard(app: Application): Application {
+    if (app.jobPostingStatus === 'parsing') {
+      const started = app.jobPostingStartedAt?.getTime();
+      if (started === undefined || started < Date.now() - 2 * 60 * 1000) {
+        app.jobPostingStatus = null;
+      }
+    }
+    return app;
   }
 
   // relations 없이 엔티티만 로드 (update 내부용 — cascade 충돌 방지)

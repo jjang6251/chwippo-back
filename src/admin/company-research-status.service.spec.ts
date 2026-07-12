@@ -94,9 +94,12 @@ describe('CompanyResearchStatusService', () => {
         .mockResolvedValueOnce(8); // expired
       // avgFillRate 소스 — 8 항목 중 businessSummary 만 채워진 2 row
       cacheRepo.find.mockResolvedValue([
-        { aiResearch: { businessSummary: '요약1' } } as CompanyResearchCache,
-        { aiResearch: { businessSummary: '요약2' } } as CompanyResearchCache,
-      ]);
+        { aiResearch: { businessSummary: '요약1' } },
+        { aiResearch: { businessSummary: '요약2' } },
+      ] as Pick<
+        CompanyResearchCache,
+        'aiResearch'
+      >[] as CompanyResearchCache[]);
 
       const r = await service.getSummary();
 

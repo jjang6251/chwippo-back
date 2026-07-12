@@ -154,6 +154,16 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     maxOutputTokens: 5_000,
     temperature: 0.5,
   },
+  // 공고 요건 파싱 — note_summary 와 같은 light 모델(gpt-4o-mini). 붙여넣은 공고(최대 10K자 ≈ input 8K cap)
+  // 를 6필드 구조화 JSON 으로. 추출 태스크라 temperature 최저(0.1), output 은 요건 배열이라 1K.
+  jobposting_parse: {
+    provider: 'openai',
+    modelEnvKey: 'OPENAI_MODEL_LIGHT',
+    defaultModel: 'gpt-4o-mini',
+    maxInputTokens: 8_000,
+    maxOutputTokens: 1_000,
+    temperature: 0.1,
+  },
 };
 
 export function getModelConfig(

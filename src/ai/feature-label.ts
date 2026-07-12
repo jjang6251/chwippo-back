@@ -9,6 +9,7 @@ const FEATURE_LABEL: Partial<Record<LlmFeature, string>> = {
   interview_prep_session: 'AI 면접 준비',
   interview_prep_followup: 'AI 꼬리질문',
   note_summary: 'AI 노트 요약',
+  jobposting_parse: 'AI 공고 요건 정리',
 };
 
 export function getFeatureLabel(feature: LlmFeature): string {

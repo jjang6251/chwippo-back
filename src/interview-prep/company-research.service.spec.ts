@@ -92,6 +92,7 @@ describe('CompanyResearchService', () => {
     sources: ['https://ko.wikipedia.org/wiki/카카오'],
     expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60일 남음
     optOut: false,
+    isAlias: false,
     hitCount: 5,
     createdAt: new Date(),
     updatedAt: new Date(),

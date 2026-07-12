@@ -317,6 +317,7 @@ export class AiCoverletterDraftService {
       aiRecommendedLogs: recommendedLogObjs,
       activitySummaries,
       companyResearch: researchForContext,
+      jobPosting: clWithApp.application.jobPosting ?? null,
       myinfo: myinfoDump,
     });
 
