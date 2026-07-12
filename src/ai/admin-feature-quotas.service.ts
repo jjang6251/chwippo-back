@@ -15,20 +15,17 @@ import {
 } from './entities/feature-quota-config.entity';
 import type { LlmFeature } from './entities/llm-call-log.entity';
 
+// legacy 6종(coverletter·interview·interview_followup·score·analysis·auto_tag) 은
+// 호출 경로 0건 확인 후 제거 (2026-07-13, RemoveLegacyQuotaConfigs 마이그레이션과 세트)
 const VALID_FEATURES: LlmFeature[] = [
   'note_summary',
-  'auto_tag',
-  'score',
-  'analysis',
-  'coverletter',
   'coverletter_chat',
   'coverletter_draft_v2',
   'coverletter_feedback',
   'coverletter_recommend',
-  'interview',
-  'interview_followup',
   'interview_prep_session',
   'interview_prep_followup',
+  'jobposting_parse',
 ];
 
 // PR_B2 Phase 0 — CoinTier 통일

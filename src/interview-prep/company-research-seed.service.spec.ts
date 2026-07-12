@@ -17,9 +17,10 @@ import { CompanyResearchCache } from './entities/company-research-cache.entity';
  * 4. 유저 조사 행 (seedVersion NULL) → 덮지 않음
  * 5. opt-out 행 → 덮지 않음 (seed 파일에 남아 있어도 부활 금지)
  * 6. 구버전 seed 행 → 새 버전으로 update
- * 7. aliases → 이름별 복제 row
+ * 7. aliases → 이름별 복제 row (본 행 isAlias false · 별칭 행 isAlias true)
  * 8. 동일 버전 전부 적재됨 → 조기 skip (upsert 미실행)
  * 9. ttlDays 비정상(0) → 기본 180일
+ * 10. 재적재(update) 시 기존 행에도 isAlias 플래그 갱신
  */
 
 function makeDoc(overrides: Partial<ResearchSeedDoc> = {}): ResearchSeedDoc {
@@ -91,6 +92,7 @@ describe('CompanyResearchSeedService', () => {
     expect(saved.companyName).toBe('크래프톤'); // normalize (한글은 lowercase 무영향)
     expect(saved.jobCategory).toBeNull();
     expect(saved.seedVersion).toBe('2026-07');
+    expect(saved.isAlias).toBe(false); // 본 행 → 별칭 아님
     expect(saved.sources).toEqual(['https://krafton.com/news']);
     const ttlMs = saved.expiresAt.getTime() - before;
     expect(ttlMs).toBeGreaterThan(179 * 24 * 60 * 60 * 1000);
@@ -140,7 +142,7 @@ describe('CompanyResearchSeedService', () => {
     expect(saved.seedVersion).toBe('2026-07');
   });
 
-  it('7) aliases → 이름별 복제 row', async () => {
+  it('7) aliases → 이름별 복제 row (본 행 isAlias false · 별칭 행 isAlias true)', async () => {
     const service = await build('backup-bucket');
     const doc = makeDoc({
       companies: [
@@ -153,10 +155,10 @@ describe('CompanyResearchSeedService', () => {
     });
     const r = await service.applySeed(doc);
     expect(r.inserted).toBe(2);
-    const names = repo.save.mock.calls.map(
-      (c) => (c[0] as CompanyResearchCache).companyName,
-    );
-    expect(names).toEqual(['토스', '비바리퍼블리카']);
+    const saved = repo.save.mock.calls.map((c) => c[0] as CompanyResearchCache);
+    expect(saved.map((s) => s.companyName)).toEqual(['토스', '비바리퍼블리카']);
+    // 본 행 = 별칭 아님, aliases 로 만들어진 복제 행 = 별칭.
+    expect(saved.map((s) => s.isAlias)).toEqual([false, true]);
   });
 
   it('8) 동일 버전 전부 적재됨 → 조기 skip', async () => {
@@ -175,5 +177,33 @@ describe('CompanyResearchSeedService', () => {
     const saved = repo.save.mock.calls[0][0] as CompanyResearchCache;
     const ttlMs = saved.expiresAt.getTime() - before;
     expect(ttlMs).toBeGreaterThan(179 * 24 * 60 * 60 * 1000);
+  });
+
+  it('10) 재적재(update) 시 기존 행에도 isAlias 갱신 — 별칭이면 true 소급', async () => {
+    const service = await build('backup-bucket');
+    // 별칭 이름으로 이미 존재하지만 플래그 미마킹(isAlias false)된 구버전 행.
+    // 호출마다 새 객체를 반환 — 같은 참조를 두 번 저장하면 플래그가 덮여 검증 불가.
+    repo.findOne.mockImplementation(() =>
+      Promise.resolve({
+        id: 'row-alias-old',
+        seedVersion: '2026-01',
+        optOut: false,
+        isAlias: false,
+      } as CompanyResearchCache),
+    );
+    const doc = makeDoc({
+      companies: [
+        {
+          companyName: '토스',
+          aliases: ['비바리퍼블리카'],
+          research: { businessSummary: '금융 슈퍼앱' },
+        },
+      ],
+    });
+    const r = await service.applySeed(doc);
+    expect(r.updated).toBe(2);
+    // 본 행 → false, 별칭 행 → true 로 갱신됐는지.
+    const saved = repo.save.mock.calls.map((c) => c[0] as CompanyResearchCache);
+    expect(saved.map((s) => s.isAlias)).toEqual([false, true]);
   });
 });

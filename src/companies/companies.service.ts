@@ -157,6 +157,11 @@ export class CompaniesService {
     }
   }
 
+  /** companies.json 로 로드된 전체 회사 수 (admin 조사 커버리지 분모) */
+  getTotalCount(): number {
+    return this.companies.length;
+  }
+
   /** 회사명으로 domain 조회 (응답 inject 용). 없으면 undefined */
   getDomainByName(name: string | null | undefined): string | undefined {
     if (!name) return undefined;

@@ -14,6 +14,30 @@ import { ApplicationStep } from './application-step.entity';
 
 export type ApplicationStatus = 'PLANNED' | 'IN_PROGRESS' | 'PASSED' | 'FAILED';
 
+/**
+ * 공고 요건 파싱 결과 (jobposting-parse). `applications.job_posting` JSONB 에 박제.
+ *
+ * ⚠️ **원문(rawText) 저장 금지** — 파싱 입력으로만 쓰고 폐기. 이 구조화 결과만 저장.
+ * 6 필드는 LLM 이 채우고 `parsedAt` 은 서버가 저장 시각(now)으로 세팅.
+ *
+ * - `responsibilities` — 담당업무 (없으면 null)
+ * - `requirements` — 필수 자격요건 (경력 연차·학력 요건 포함)
+ * - `preferred` — 우대사항 (변별력 핵심)
+ * - `techStack` — 기술 스택·툴 (기술명·고유명사는 원어 유지)
+ * - `qualifications` — 정량 스펙 (자격증·어학 점수 등)
+ * - `keywords` — 핵심 키워드
+ * - `parsedAt` — 서버 저장 시각 (ISO). 배너 "M/D 정리됨" 신선도 표시용
+ */
+export interface JobPosting {
+  responsibilities: string | null;
+  requirements: string[];
+  preferred: string[];
+  techStack: string[];
+  qualifications: string[];
+  keywords: string[];
+  parsedAt: string;
+}
+
 @Entity('applications')
 export class Application {
   @PrimaryGeneratedColumn('uuid')
@@ -112,6 +136,35 @@ export class Application {
     nullable: true,
   })
   coverletterResearchOutdatedAt: Date | null;
+
+  /**
+   * jobposting-parse — 공고 요건 파싱 결과 (구조화 JSONB). NULL = 미입력.
+   * 원문(rawText)은 절대 저장하지 않음 (금지선). 상세 응답에만 포함, 카드 목록엔 미노출.
+   */
+  @Column({ name: 'job_posting', type: 'jsonb', nullable: true })
+  jobPosting: JobPosting | null;
+
+  /**
+   * jobposting-parse — 파싱 진행 lock. NULL = idle, 'parsing' 만 사용.
+   * 새로고침 재진입 시 배너가 CTA 대신 "정리 중" 표시하는 근거.
+   * atomic UPDATE (WHERE status IS NULL OR started_at < NOW()-2min) 로 중복 파싱 차단.
+   * 파싱은 5~15초라 자소서(30분 cron)와 달리 별도 cron 없이 읽기 시점 stale(2분) 판정으로 회수.
+   */
+  @Column({
+    name: 'job_posting_status',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  jobPostingStatus: 'parsing' | null;
+
+  /** jobposting-parse — parsing 시작 시각. stale(2분 초과) 판정·atomic 회수 조건에 사용 */
+  @Column({
+    name: 'job_posting_started_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  jobPostingStartedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

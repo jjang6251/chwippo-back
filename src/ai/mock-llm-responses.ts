@@ -178,22 +178,23 @@ export function buildMockLlmResponse(
         ...baseTokens,
       };
 
-    case 'auto_tag':
+    case 'jobposting_parse':
       return {
         text: '[MOCK]',
         json: {
-          cat: 'analysis',
-          comps: ['analytical', 'problem_solving'],
-          keywords: ['[MOCK]'],
+          notPosting: false,
+          responsibilities:
+            '[MOCK] 백엔드 API 설계 및 운영, 데이터 파이프라인 구축',
+          requirements: ['[MOCK] 3년 이상 서버 개발 경험', 'Node.js 또는 Java'],
+          preferred: ['[MOCK] 대규모 트래픽 경험', 'AWS 운영 경험'],
+          techStack: ['Node.js', 'PostgreSQL', 'AWS'],
+          qualifications: ['[MOCK] 정보처리기사'],
+          keywords: ['[MOCK] 백엔드', 'API', '대용량'],
         },
         ...baseTokens,
       };
 
-    case 'score':
-    case 'analysis':
-    case 'coverletter':
-    case 'interview':
-    case 'interview_followup':
+    // legacy 6종 개별 케이스 제거 (2026-07-13 — 호출 경로 0건, generic fallback 이 커버)
     default:
       // generic fallback — text-only mock
       if (hasJsonSchema) {

@@ -14,6 +14,7 @@ import { CompanyResearchService } from '../interview-prep/company-research.servi
 import { Application } from './application.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
+import { buildJobPostingBlock } from './coverletter-context-builder';
 
 /**
  * A1 Phase 2 — AI 제출 전 점검 (coverletter_feedback 실구현).
@@ -203,7 +204,7 @@ export class AiCoverletterFeedbackService {
     //    → companyName 은 appRepo 로 직접 조회. cl.applicationId 는 컬럼이라 항상 존재.
     const app = await this.appRepo.findOne({
       where: { id: cl.applicationId, userId },
-      select: ['id', 'companyName'],
+      select: ['id', 'companyName', 'jobPosting'],
     });
     const cached = app
       ? await this.companyResearch
@@ -247,6 +248,8 @@ export class AiCoverletterFeedbackService {
         ? `분량이 제한의 ${shortfallPct}% 에 그친다. 어떤 경험·수치를 보강하면 좋을지 structure 나 vague 의 advice 로 구체적으로 제안하라.`
         : null,
       app?.companyName ? `# 지원 회사\n${app.companyName}` : null,
+      // 공고 요건 (jobposting-parse) — 3경로 공용 빌더. company_mismatch·스펙 나열 지적 근거.
+      buildJobPostingBlock(app?.jobPosting ?? null) || null,
       research?.businessSummary
         ? `# 회사 조사 요약 (company_mismatch 판단 근거)\n${String(research.businessSummary).slice(0, 600)}`
         : null,

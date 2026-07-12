@@ -17,6 +17,56 @@
 
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { ActivityReflection } from '../activity/entities/activity-reflection.entity';
+import type { JobPosting } from './application.entity';
+
+// ── 공고 요건 블록 (jobposting-parse) — 생성·chat·심층점검 3경로 공용 빌더 ──
+
+/**
+ * 공고 요건(job_posting)을 자소서 AI 컨텍스트 블록으로 직렬화한다.
+ *
+ * **단일 진입점** — 자소서 생성(draft)·대화(chat)·심층점검(feedback) 3경로가 모두 이 함수를
+ * 호출해 동일 문구를 주입한다. 문구 수정은 여기 한 곳만 고치면 전 경로 반영.
+ *
+ * **이원 처리** (2026-07-12 CEO 질문 반영):
+ * - 우대사항·필수역량·담당업무 → 사용자 경험 **배치·강조 우선순위 신호** (어필 정렬)
+ * - qualifications(자격증·어학)·경력 연차·학력 요건 → **본문 나열 금지**. 사용자 자료에 실재하는
+ *   취득/경험 **서사만** 허용 (스펙 나열 문장 생성 방지, 없는 경력·학위 있는 척 유도 방지)
+ *
+ * **오독 방지**: "요건 때문에 배치 우선순위가 밀림 ≠ 사용자 경험을 쓰지 말라"가 아니다.
+ * 근거는 항상 사용자 자료 채널(활동·myinfo)에서 나오고, 요건은 배치 신호로만 쓴다.
+ *
+ * jobPosting 이 null 이거나 6필드가 전부 비어 있으면 빈 문자열(블록 미주입).
+ */
+export function buildJobPostingBlock(jobPosting: JobPosting | null): string {
+  if (!jobPosting) return '';
+  const lines: string[] = [];
+  const push = (label: string, arr: string[] | undefined) => {
+    const items = (arr ?? []).map((s) => s.trim()).filter(Boolean);
+    if (items.length > 0) lines.push(`- ${label}: ${items.join(' · ')}`);
+  };
+  const resp = jobPosting.responsibilities?.trim();
+  if (resp) lines.push(`- 담당업무: ${resp}`);
+  push('필수 역량', jobPosting.requirements);
+  push('우대사항', jobPosting.preferred);
+  push('기술 스택', jobPosting.techStack);
+  push('정량 스펙(자격증·어학)', jobPosting.qualifications);
+  push('핵심 키워드', jobPosting.keywords);
+
+  // 6필드가 전부 비어 있으면 블록 미주입
+  if (lines.length === 0) return '';
+
+  return [
+    `# 공고 요건 (이 지원 건에 사용자가 정리한 내용 — 회사 조사 일반 정보보다 우선)`,
+    ...lines,
+    ``,
+    `[공고 요건 활용 규칙]`,
+    `- 우선순위: 위 공고 요건이 회사 조사(사업 요약·인재상 등) 일반 정보와 겹치거나 모순되면 **공고 요건을 우선**한다 (이 지원 건 특정 신호).`,
+    `- 담당업무·필수 역량·우대사항: 사용자 경험 중 이 요건에 맞닿는 것을 **앞·강조 위치로 배치**하는 신호로만 쓴다.`,
+    `- 정량 스펙(자격증·어학)·경력 연차·학력 요건: 자소서 **본문에 나열하지 마라**. 사용자 자료(활동 일지·내 정보)에 그 경험·취득 과정이 **실재할 때만** 서사로 녹인다.`,
+    `- ⚠️ 요건에 맞추려고 사용자 자료에 **없는 경험·수치·경력·학위를 지어내지 마라**. 근거는 항상 사용자 자료에서 나온다.`,
+    `- ⚠️ "요건 때문에 배치 우선순위가 밀렸다"는 것이 "그 경험을 쓰지 말라"는 뜻은 아니다 — 사용자 자료에 있으면 정상적으로 활용한다.`,
+  ].join('\n');
+}
 
 // ── 토큰 추정 (PR 0 LlmService.estimateTokens 와 동일 chars/3) ──
 function estimateTokens(text: string): number {
@@ -99,6 +149,11 @@ export interface BuildCoverletterContextInput {
     jobInsights?: string;
     interviewKeywords?: Array<{ keyword: string } | string>;
   } | null;
+  /**
+   * jobposting-parse — 이 지원 건에 사용자가 정리한 공고 요건 (있을 때만).
+   * 회사 조사 일반 정보보다 우선. 우대·필수역량·담당업무는 어필 정렬, 정량 스펙은 나열 금지 가드.
+   */
+  jobPosting?: JobPosting | null;
   /** myinfo PII 제외 dump (priority 3) */
   myinfo: MyinfoSafeDump;
 }
@@ -260,6 +315,17 @@ export function buildCoverletterContext(
 
   const sections: string[] = [header];
   const droppedRefIds: string[] = [];
+
+  // 1.4) 공고 요건 (jobposting-parse) — 회사 조사보다 우선순위 신호라 research 블록 앞에 배치.
+  //   3경로 공용 buildJobPostingBlock 으로 문구 통일 (우대 최우선 + 정량 나열 금지 가드).
+  const jobPostingBlock = buildJobPostingBlock(input.jobPosting ?? null);
+  if (jobPostingBlock) {
+    const jpTokens = estimateTokens(jobPostingBlock);
+    if (usedTokens + jpTokens <= budget) {
+      sections.push(jobPostingBlock);
+      usedTokens += jpTokens;
+    }
+  }
 
   // 1.5) A1 — 회사조사 요약 (캐시 있을 때만). 마무리 착지의 근거 데이터.
   //   과도한 토큰 방지: 항목별 앞부분만 + 전체 1,200 토큰 상한.

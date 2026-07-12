@@ -74,6 +74,11 @@ export class CompanyResearchCache {
   @Column({ name: 'seed_version', type: 'varchar', length: 20, nullable: true })
   seedVersion: string | null;
 
+  /** 별칭 행 표식 — seed 의 aliases 로 만들어진 복제 행은 true, 본 행은 false.
+   *  커버리지 분자를 "회사 수"로 보정할 때 별칭 행을 제외하기 위한 플래그. */
+  @Column({ name: 'is_alias', type: 'boolean', default: false })
+  isAlias: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 
