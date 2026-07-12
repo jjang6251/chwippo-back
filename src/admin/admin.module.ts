@@ -29,8 +29,9 @@ import { AdminInquiriesService } from './admin-inquiries.service';
 import { AdminAuditLogsController } from './admin-audit-logs.controller';
 import { AdminAuditLogsService } from './admin-audit-logs.service';
 import { AdminNotificationsController } from './admin-notifications.controller';
-import { CompanyResearchMetricsController } from './company-research-metrics.controller';
-import { CompanyResearchMetricsService } from './company-research-metrics.service';
+import { CompanyResearchStatusController } from './company-research-status.controller';
+import { CompanyResearchStatusService } from './company-research-status.service';
+import { CompaniesModule } from '../companies/companies.module';
 import { CompanyResearchCache } from '../interview-prep/entities/company-research-cache.entity';
 import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
@@ -77,6 +78,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     InquiriesModule,
     MyinfoModule,
     NotificationsModule,
+    CompaniesModule, // feature-research-admin — totalCompanies 소스
     // F6 PR 2 Phase 5.4 — DiscordNotifier 공유 (abuser-ban 과 같은 webhook URL)
     forwardRef(() => AiModule),
   ],
@@ -91,7 +93,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AdminInquiriesController, // PR_B2 Phase 4
     AdminAuditLogsController, // PR_B2 Phase 4
     AdminNotificationsController, // PR_B2 Phase 4
-    CompanyResearchMetricsController, // PR_B2 Phase 4
+    CompanyResearchStatusController, // feature-research-admin
     ActivationController, // A8 Activation 측정
   ],
   providers: [
@@ -109,7 +111,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     FeatureCoinMetaAdminService, // PR_B2 Phase 3
     AdminInquiriesService, // PR_B2 Phase 4
     AdminAuditLogsService, // PR_B2 Phase 4
-    CompanyResearchMetricsService, // PR_B2 Phase 4
+    CompanyResearchStatusService, // feature-research-admin
   ],
   exports: [
     AdminAuditService,

@@ -129,8 +129,11 @@ export class CompanyResearchSeedService implements OnApplicationBootstrap {
 
     for (const entry of doc.companies) {
       const sources = this.normalizeSources(entry.sources);
+      // 본 행 = isAlias false, aliases 로 만들어지는 복제 행 = isAlias true.
+      const aliasSet = new Set(entry.aliases ?? []);
       for (const name of [entry.companyName, ...(entry.aliases ?? [])]) {
         const key = this.normalize(name);
+        const isAlias = aliasSet.has(name);
         // ⚠️ TypeORM findOne 은 where 의 null 값을 조용히 무시 — 반드시 IsNull() 사용.
         // (null 로 쓰면 직군 맞춤 행이 generic 행으로 오인돼 seed 가 스킵되는 버그)
         const existing = await this.cacheRepo.findOne({
@@ -150,6 +153,8 @@ export class CompanyResearchSeedService implements OnApplicationBootstrap {
           existing.sources = sources;
           existing.expiresAt = expiresAt;
           existing.seedVersion = doc.version;
+          // 기존 행에도 별칭 플래그를 갱신 (재적재 시 마킹 소급 적용).
+          existing.isAlias = isAlias;
           await this.cacheRepo.save(existing);
           result.updated += 1;
         } else {
@@ -163,6 +168,7 @@ export class CompanyResearchSeedService implements OnApplicationBootstrap {
               optOut: false,
               hitCount: 0,
               seedVersion: doc.version,
+              isAlias,
             }),
           );
           result.inserted += 1;
