@@ -24,14 +24,19 @@ describe('FilesService', () => {
 
     mockS3Send = jest.fn().mockResolvedValue({});
     (S3Client as jest.Mock).mockImplementation(() => ({ send: mockS3Send }));
-    (PutObjectCommand as jest.Mock).mockImplementation((args) => ({
+    // jest.mock 로 auto-mock 된 SDK 커맨드 클래스. 실제 인스턴스 대신 args 를 담은
+    // sentinel 객체를 반환하므로(모킹된 S3Client.send 가 소비), 커맨드 반환 타입을
+    // 강제하는 jest.mocked() 대신 jest.Mock 으로 캐스팅한다.
+    (PutObjectCommand as unknown as jest.Mock).mockImplementation((args) => ({
       ...args,
       _type: 'PutObjectCommand',
     }));
-    (DeleteObjectCommand as jest.Mock).mockImplementation((args) => ({
-      ...args,
-      _type: 'DeleteObjectCommand',
-    }));
+    (DeleteObjectCommand as unknown as jest.Mock).mockImplementation(
+      (args) => ({
+        ...args,
+        _type: 'DeleteObjectCommand',
+      }),
+    );
     (getSignedUrl as jest.Mock).mockResolvedValue(
       'https://presigned.example.com/key?sig=abc',
     );
