@@ -168,10 +168,9 @@ describe('AuthService', () => {
         .mockResolvedValueOnce(existing); // 두 번째 findOne — 다른 요청이 먼저 INSERT 완료
       userRepo.create.mockReturnValue(existing);
 
-      const uniqueErr = new QueryFailedError('insert', [], new Error('dup'));
-      (
-        uniqueErr as QueryFailedError & { driverError?: { code?: string } }
-      ).driverError = { code: '23505' };
+      // PostgreSQL unique violation: driverError.code === '23505'
+      const driverError = Object.assign(new Error('dup'), { code: '23505' });
+      const uniqueErr = new QueryFailedError('insert', [], driverError);
       userRepo.save.mockRejectedValue(uniqueErr);
 
       const result = await service.findOrCreateKakaoUser({

@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, ObjectLiteral, Repository } from 'typeorm';
 import { MyinfoService } from './myinfo.service';
 import { StorageUsageService } from './storage-usage.service';
 import { UserProfile } from './entities/user-profile.entity';
@@ -58,7 +58,7 @@ describe('MyinfoService', () => {
       if (entity === Experience) return expRepo;
       if (entity === Coverletter) return coverRepo;
       if (entity === CoverletterCustom) return coverCustomRepo;
-      return mock<Repository<unknown>>();
+      return mock<Repository<ObjectLiteral>>();
     });
     storageUsage.assertWithinLimit.mockResolvedValue(undefined);
 

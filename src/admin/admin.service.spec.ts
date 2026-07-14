@@ -127,7 +127,7 @@ describe('AdminService', () => {
 
   // ── getAnalytics ───────────────────────────────────────
   describe('getAnalytics', () => {
-    const makeQueryResults = () => [
+    const makeQueryResults = (): Record<string, string | number | null>[][] => [
       [{ date: '2025-08-01', count: 5 }], // signupRows
       [{ date: '2025-08-01', count: 3 }], // dauRows
       [{ date: '2025-08-01', count: 2 }], // cardRows
