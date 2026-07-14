@@ -186,4 +186,18 @@ export class User {
     nullable: true,
   })
   calendarHomeIntroDismissedAt: Date | null;
+
+  /**
+   * 세션 지속성 웨이브 — 푸시-세션 분리.
+   *
+   * 유효 refresh 세션 0개(만료·reuse revoke) + 디바이스 토큰 살아있는 사용자에게
+   * "로그인 만료" 재로그인 유도 푸시를 최초 1회 보낸 시각 (dedup + 14일 발송중단 anchor).
+   * 재로그인(세션 생성) 시 NULL 로 리셋 → 실제 알림 재개.
+   */
+  @Column({
+    name: 'session_expired_notified_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  sessionExpiredNotifiedAt: Date | null;
 }

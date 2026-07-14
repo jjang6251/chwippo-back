@@ -2,7 +2,6 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy, StrategyOptionsWithRequest } from 'passport-jwt';
-import { createHash } from 'crypto';
 import type { Request } from 'express';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -29,7 +28,10 @@ export class JwtRefreshStrategy extends PassportStrategy(
     super(opts);
   }
 
-  async validate(req: Request, payload: { sub: string }) {
+  async validate(
+    req: Request,
+    payload: { sub: string; sid?: string; role?: string },
+  ) {
     const refreshToken = (req.cookies as Record<string, string>)?.[
       'refresh_token'
     ];
@@ -38,14 +40,16 @@ export class JwtRefreshStrategy extends PassportStrategy(
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
     if (!user) throw new UnauthorizedException();
 
-    // DB엔 hash 저장 → cookie의 평문 JWT를 hash해서 비교 (LRR P1T1 M-2)
-    const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
-    if (user.refreshToken !== tokenHash) throw new UnauthorizedException();
-
+    // 세션 지속성 웨이브(B안): token_hash 대조 + rotation 은 AuthService.rotateTokens 에서
+    // 원자적으로 수행 (토큰 패밀리 재사용 감지). 여기선 서명·존재·정지만 검증하고
+    // raw token + sid 를 controller 로 전달한다 (원자적 rotation 을 위해).
     if (user.suspendedAt)
       throw new UnauthorizedException('계정이 정지되었습니다.');
 
     return {
+      // rotation 용 — controller → AuthService.rotateTokens 전달
+      sid: payload.sid ?? null,
+      refreshTokenRaw: refreshToken,
       id: user.id,
       nickname: user.nickname,
       email: user.email,

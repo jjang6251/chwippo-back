@@ -109,7 +109,12 @@ export class DeadlineUrgentService {
       const ok = await this.dispatch.dispatch(
         { id: user.id, alarmPermissionGranted: user.alarmPermissionGranted },
         'deadline_urgent',
-        { title, body, deepLink: `/board/${info.applicationId}` },
+        {
+          title,
+          body,
+          deepLink: `/board/${info.applicationId}`,
+          eventCount: info.count,
+        },
         now,
       );
       if (ok) sent += 1;
