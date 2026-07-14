@@ -32,10 +32,10 @@ describe('CoverletterGenerationStuckCron', () => {
   });
 
   it('SC1) stuck row 3건 → UPDATE 호출 + logger 호출', async () => {
+    // UPDATE...RETURNING 실제 형태 = [rows[], affected] 튜플 (returningRows 회귀 방어)
     dataSource.query.mockResolvedValueOnce([
-      { id: 'app-1' },
-      { id: 'app-2' },
-      { id: 'app-3' },
+      [{ id: 'app-1' }, { id: 'app-2' }, { id: 'app-3' }],
+      3,
     ]);
     const logSpy = jest.spyOn(cron['logger'], 'log');
 

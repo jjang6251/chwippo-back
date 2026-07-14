@@ -141,7 +141,10 @@ describe('TierConfigAdminService', () => {
         makeTierConfig({ monthlyCoinLimit: '100.0' }),
       );
       // query → 30명 영향
-      manager.query.mockResolvedValueOnce(new Array(30).fill({ user_id: 'x' }));
+      manager.query.mockResolvedValueOnce([
+        new Array(30).fill({ user_id: 'x' }),
+        30,
+      ]); // UPDATE RETURNING 튜플
 
       const r = await service.updateTierConfig(
         ADMIN,
@@ -162,7 +165,10 @@ describe('TierConfigAdminService', () => {
       manager.findOne.mockResolvedValueOnce(
         makeTierConfig({ monthlyCoinLimit: '150.0' }),
       );
-      manager.query.mockResolvedValueOnce(new Array(10).fill({ user_id: 'x' }));
+      manager.query.mockResolvedValueOnce([
+        new Array(10).fill({ user_id: 'x' }),
+        10,
+      ]); // UPDATE RETURNING 튜플
 
       await service.updateTierConfig(
         ADMIN,

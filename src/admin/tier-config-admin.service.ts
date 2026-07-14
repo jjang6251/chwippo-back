@@ -5,6 +5,7 @@ import { TierConfig, type CoinTier } from '../ai/entities/tier-config.entity';
 import { UserCoinBalance } from '../ai/entities/user-coin-balance.entity';
 import { AdminAuditService } from './admin-audit.service';
 import { UpdateTierConfigDto } from './dto/update-tier-config.dto';
+import { returningRows } from '../common/db-returning';
 
 /**
  * PR_B2 Phase 3 — tier_configs 매트릭스 수정 (Q3 C admin 선택 + confirm UI 전제).
@@ -116,7 +117,7 @@ export class TierConfigAdminService {
              RETURNING user_id`,
             [diff, tier],
           );
-          affectedUsers = result.length;
+          affectedUsers = returningRows(result).length; // UPDATE...RETURNING 튜플 정규화
         }
       } else {
         affectedUsers = await manager.count(UserCoinBalance, {

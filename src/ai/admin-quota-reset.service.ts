@@ -5,6 +5,7 @@ import { AdminAuditService } from '../admin/admin-audit.service';
 import { User } from '../users/user.entity';
 import { QuotaNotifyService } from './quota-notify.service';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
+import { returningRows } from '../common/db-returning';
 
 export interface ResetAiQuotaDto {
   /** undefined = 전체 사용자. UUID = 그 사용자만 */
@@ -62,9 +63,10 @@ export class AdminQuotaResetService {
            RETURNING user_id`,
           [nowIso],
         );
+        // UPDATE...RETURNING 은 [rows[], count] 튜플 → returningRows 정규화 (INSERT 는 rows[] 라 무해하게 통과)
         return (
-          (Array.isArray(updateResult) ? updateResult.length : 0) +
-          (Array.isArray(insertResult) ? insertResult.length : 0)
+          returningRows(updateResult).length +
+          returningRows(insertResult).length
         );
       });
       await this.audit.log(adminId, 'reset_ai_quota', 'all_users', 'all', {

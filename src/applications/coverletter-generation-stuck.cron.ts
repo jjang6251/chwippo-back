@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { DataSource } from 'typeorm';
+import { returningRows } from '../common/db-returning';
 
 /**
  * PR_B1c Phase C — 자소서 생성 stuck timeout cron.
@@ -32,7 +33,7 @@ export class CoverletterGenerationStuckCron {
            )
          RETURNING id`,
       );
-      const count = Array.isArray(result) ? result.length : 0;
+      const count = returningRows(result).length; // UPDATE...RETURNING 튜플 정규화 (raw .length 는 항상 2)
       if (count > 0) {
         this.logger.log(
           `[CoverletterGenerationStuckCron] stuck timeout ${count}건 'failed' 처리`,
