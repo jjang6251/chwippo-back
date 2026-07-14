@@ -47,7 +47,8 @@ describe('AdminQuotaResetService (5.6.9)', () => {
   it('5) reset({userId=undefined}) → 전체 사용자 raw UPDATE + 누락 user INSERT + scope=all_users', async () => {
     const emQuery = jest
       .fn()
-      .mockResolvedValueOnce([{ user_id: 'a' }, { user_id: 'b' }])
+      // UPDATE...RETURNING = [rows[], count] 튜플 / INSERT...RETURNING = rows[] 직접
+      .mockResolvedValueOnce([[{ user_id: 'a' }, { user_id: 'b' }], 2])
       .mockResolvedValueOnce([{ user_id: 'c' }]);
     const transactionFn = jest
       .fn()

@@ -157,7 +157,13 @@ export class BriefingService {
       const ok = await this.dispatch.dispatch(
         { id: user.id, alarmPermissionGranted: user.alarmPermissionGranted },
         'briefing',
-        { title, body, deepLink, payload: { eventCount: events.length } },
+        {
+          title,
+          body,
+          deepLink,
+          payload: { eventCount: events.length },
+          eventCount: events.length,
+        },
         now,
       );
       if (ok) sent += 1;

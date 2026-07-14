@@ -52,6 +52,10 @@ interface AuthenticatedUser {
   calendarHomeIntroDismissedAt: Date | null;
   /** 알림 — soft-ask 모달 표시 시각. NULL → native 최초 1회 모달 */
   alarmPromptedAt: Date | null;
+  /** 세션 지속성 — refresh 경로 전용: JWT sid claim (legacy 토큰은 null) */
+  sid?: string | null;
+  /** 세션 지속성 — refresh 경로 전용: cookie 평문 refresh JWT (원자적 rotation 용) */
+  refreshTokenRaw?: string;
 }
 
 interface KakaoCallbackUser {
@@ -64,7 +68,8 @@ const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'lax' as const,
-  maxAge: 30 * 24 * 60 * 60 * 1000,
+  // 세션 지속성 웨이브: sliding 60일 세션과 동기화 (30d → 60d)
+  maxAge: 60 * 24 * 60 * 60 * 1000,
   path: '/',
 };
 
@@ -107,6 +112,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async appleNativeLogin(
     @Body() dto: AppleNativeLoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const payload = await this.appleAuthService.verifyIdentityToken(
@@ -120,8 +126,10 @@ export class AuthController {
       throw new ForbiddenException('정지된 계정입니다.');
     }
 
-    const { accessToken, refreshToken } =
-      await this.authService.issueTokens(user);
+    const { accessToken, refreshToken } = await this.authService.issueTokens(
+      user,
+      req.headers['user-agent'] ?? null,
+    );
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
 
@@ -157,6 +165,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async kakaoNativeLogin(
     @Body() dto: KakaoNativeLoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const kakaoUser = await this.kakaoNativeService.verifyAndFetchUser(
@@ -169,8 +178,10 @@ export class AuthController {
       throw new ForbiddenException('정지된 계정입니다.');
     }
 
-    const { accessToken, refreshToken } =
-      await this.authService.issueTokens(user);
+    const { accessToken, refreshToken } = await this.authService.issueTokens(
+      user,
+      req.headers['user-agent'] ?? null,
+    );
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
 
@@ -266,8 +277,10 @@ export class AuthController {
       return res.redirect(`${frontendUrl}/login?error=suspended`);
     }
 
-    const { accessToken, refreshToken } =
-      await this.authService.issueTokens(user);
+    const { accessToken, refreshToken } = await this.authService.issueTokens(
+      user,
+      req.headers['user-agent'] ?? null,
+    );
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
 
@@ -299,12 +312,22 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async refresh(
     @CurrentUser() user: AuthenticatedUser,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    // Refresh token rotation (LRR P1T1 M-1) — 새 access·refresh 둘 다 발급
-    const { accessToken, refreshToken } = await this.authService.refreshTokens(
-      user.id,
-    );
+    // 세션 지속성 웨이브 (B안) — 토큰 패밀리 원자적 rotation + 재사용(탈취) 감지.
+    // rotateTokens 가 던지는 예외로 응답이 갈린다 (아래 res.cookie/return 은 정상 시에만 실행):
+    //   - 401 (UnauthorizedException): 위조·만료·absolute cap·탈취 replay → 프론트 axios 가 로그아웃 처리
+    //   - 409 (ConflictException, body { code:'RETRY' }): 정상 동시 요청 경합 → 재시도 유도.
+    //     기존 프론트는 401 만 로그아웃 처리하므로 409 는 자동 로그아웃 안 됨(안전). 쿠키는 갱신 안 함
+    //     (승자가 세운 새 쿠키로 클라이언트가 재시도하면 성공). 프론트 재시도 최적화는 후속.
+    const { accessToken, refreshToken } = await this.authService.rotateTokens({
+      userId: user.id,
+      role: user.role,
+      sid: user.sid ?? undefined,
+      rawToken: user.refreshTokenRaw ?? '',
+      deviceInfo: req.headers['user-agent'] ?? null,
+    });
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
     return {
       accessToken,
@@ -336,9 +359,14 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async logout(
     @CurrentUser() user: AuthenticatedUser,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.authService.logout(user.id);
+    // 세션 지속성 웨이브 — 해당 기기 세션만 삭제 (전체 아님). 디바이스 토큰 제거는 기존 흐름 유지
+    const rawToken =
+      (req.cookies as Record<string, string> | undefined)?.['refresh_token'] ??
+      null;
+    await this.authService.logout(user.id, rawToken);
     res.clearCookie('refresh_token', { path: '/' });
     return { message: '로그아웃 되었습니다.' };
   }

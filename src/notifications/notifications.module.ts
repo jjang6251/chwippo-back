@@ -4,6 +4,7 @@ import { Notification } from './notification.entity';
 import { NotificationLog } from './notification-log.entity';
 import { User } from '../users/user.entity';
 import { UserDevice } from '../devices/user-device.entity';
+import { AuthModule } from '../auth/auth.module';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { NotificationsService } from './notifications.service';
@@ -30,6 +31,8 @@ import { AdminNotifyService } from './admin-notify.service';
       ApplicationStep,
       ExamSchedule,
     ]),
+    // 푸시-세션 분리: NotificationDispatchService 가 AuthService.hasValidSession 사용
+    AuthModule,
   ],
   controllers: [NotificationsController, AlarmConfigController],
   providers: [

@@ -170,9 +170,9 @@ describe('envValidationSchema', () => {
       expect(value.JWT_EXPIRES_IN).toBe('1h');
     });
 
-    it('JWT_REFRESH_EXPIRES_IN 누락 → 30d', () => {
+    it('JWT_REFRESH_EXPIRES_IN 누락 → 60d (세션 sliding 60d 정합)', () => {
       const { value } = validate(minimalDevEnv);
-      expect(value.JWT_REFRESH_EXPIRES_IN).toBe('30d');
+      expect(value.JWT_REFRESH_EXPIRES_IN).toBe('60d');
     });
 
     it('dev 모드: FRONTEND_URL 누락 → default http://localhost:5173', () => {

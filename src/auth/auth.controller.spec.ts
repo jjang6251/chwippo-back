@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 // jose 는 ESM 전용 · Jest 는 CommonJS · apple-auth.service 가 jose import 하므로 mock 필수
 jest.mock('jose', () => ({
   jwtVerify: jest.fn(),
@@ -48,6 +48,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,
   };
@@ -63,6 +64,14 @@ function makeRes(): jest.Mocked<
   } as jest.Mocked<Pick<Response, 'redirect' | 'cookie' | 'clearCookie'>>;
 }
 
+function makeReq(overrides: Partial<Request> = {}): Request {
+  return {
+    headers: { 'user-agent': 'jest-UA' },
+    cookies: {},
+    ...overrides,
+  } as unknown as Request;
+}
+
 /** state·cookie 일치하는 valid callback request 생성 헬퍼 */
 function makeValidCallbackReq(kakaoUser: {
   kakaoId: string;
@@ -73,13 +82,15 @@ function makeValidCallbackReq(kakaoUser: {
     user: kakaoUser,
     cookies: { oauth_state: VALID_STATE },
     query: { state: VALID_STATE },
+    headers: { 'user-agent': 'jest-UA' },
   } as unknown as Parameters<typeof AuthController.prototype.kakaoCallback>[0];
 }
 
 const mockAuthService = {
   findOrCreateKakaoUser: jest.fn(),
   issueTokens: jest.fn(),
-  refreshTokens: jest.fn(),
+  rotateTokens: jest.fn(),
+  logout: jest.fn(),
 };
 
 const mockAppleAuthService = {
@@ -420,20 +431,34 @@ describe('AuthController', () => {
       sampleCardsDismissedAt: null,
       calendarHomeIntroDismissedAt: null,
       alarmPromptedAt: null,
+      // 세션 지속성 — refresh 경로 전용 필드 (strategy 가 주입)
+      sid: 'sid-1',
+      refreshTokenRaw: 'raw-refresh',
     };
 
-    it('refreshTokens 호출 + 새 refresh cookie set + accessToken/user 반환', async () => {
-      mockAuthService.refreshTokens.mockResolvedValue({
+    it('rotateTokens 호출(sid+rawToken) + 새 refresh cookie set + accessToken/user 반환', async () => {
+      mockAuthService.rotateTokens.mockResolvedValue({
         accessToken: 'new-access',
         refreshToken: 'new-refresh',
       });
       const res = makeRes() as unknown as Response;
 
-      const result = await controller.refresh(authenticatedUser, res);
+      const result = await controller.refresh(
+        authenticatedUser,
+        makeReq(),
+        res,
+      );
 
-      // 새 access·refresh 둘 다 발급
-      expect(mockAuthService.refreshTokens).toHaveBeenCalledWith('user-uuid');
-      // 새 refresh를 cookie로 set (rotation 핵심)
+      // 원자적 rotation — sid + rawToken + role 전달
+      expect(mockAuthService.rotateTokens).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-uuid',
+          role: 'user',
+          sid: 'sid-1',
+          rawToken: 'raw-refresh',
+        }),
+      );
+      // 새 refresh를 cookie로 set (rotation 핵심) — sliding 60일 동기화
       expect(res.cookie).toHaveBeenCalledWith(
         'refresh_token',
         'new-refresh',
@@ -441,7 +466,7 @@ describe('AuthController', () => {
           httpOnly: true,
           sameSite: 'lax',
           path: '/',
-          maxAge: 30 * 24 * 60 * 60 * 1000,
+          maxAge: 60 * 24 * 60 * 60 * 1000,
         }),
       );
       // 응답 body 형식 유지 (frontend 변경 없음)
@@ -469,7 +494,7 @@ describe('AuthController', () => {
     });
 
     it('W1 — refresh 응답에 signup* + sampleCardsDismissedAt 포함 (이미 답변한 user)', async () => {
-      mockAuthService.refreshTokens.mockResolvedValue({
+      mockAuthService.rotateTokens.mockResolvedValue({
         accessToken: 'a',
         refreshToken: 'r',
       });
@@ -481,7 +506,7 @@ describe('AuthController', () => {
         sampleCardsDismissedAt: new Date('2026-06-27'),
       };
 
-      const result = await controller.refresh(answeredUser, res);
+      const result = await controller.refresh(answeredUser, makeReq(), res);
 
       expect(result.user).toMatchObject({
         signupJobCategories: ['백엔드 개발', 'UI/UX·프로덕트 디자이너'],
@@ -491,15 +516,49 @@ describe('AuthController', () => {
     });
 
     it('refresh 응답에 refreshToken 평문 포함 X (cookie로만 전달)', async () => {
-      mockAuthService.refreshTokens.mockResolvedValue({
+      mockAuthService.rotateTokens.mockResolvedValue({
         accessToken: 'a',
         refreshToken: 'r',
       });
       const res = makeRes() as unknown as Response;
 
-      const result = await controller.refresh(authenticatedUser, res);
+      const result = await controller.refresh(
+        authenticatedUser,
+        makeReq(),
+        res,
+      );
 
       expect(result).not.toHaveProperty('refreshToken');
+    });
+  });
+
+  describe('logout() — 해당 세션만 삭제 (푸시-세션 분리)', () => {
+    const authUser = { id: 'user-uuid' } as never;
+
+    it('cookie refresh_token 을 rawToken 으로 logout 호출 + cookie clear', async () => {
+      mockAuthService.logout.mockResolvedValue(undefined);
+      const res = makeRes() as unknown as Response;
+      const req = makeReq({ cookies: { refresh_token: 'raw-rt' } } as never);
+
+      const result = await controller.logout(authUser, req, res);
+
+      expect(mockAuthService.logout).toHaveBeenCalledWith(
+        'user-uuid',
+        'raw-rt',
+      );
+      expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', {
+        path: '/',
+      });
+      expect(result).toEqual({ message: '로그아웃 되었습니다.' });
+    });
+
+    it('cookie 없어도 logout 호출 (rawToken null) — 방어적', async () => {
+      mockAuthService.logout.mockResolvedValue(undefined);
+      const res = makeRes() as unknown as Response;
+
+      await controller.logout(authUser, makeReq(), res);
+
+      expect(mockAuthService.logout).toHaveBeenCalledWith('user-uuid', null);
     });
   });
 
@@ -539,6 +598,7 @@ describe('AuthController', () => {
 
       const result = await controller.appleNativeLogin(
         { identityToken: 'valid.identity.token' },
+        makeReq(),
         res,
       );
 
@@ -576,6 +636,7 @@ describe('AuthController', () => {
 
       await controller.appleNativeLogin(
         { identityToken: 'valid.token', fullName },
+        makeReq(),
         res,
       );
 
@@ -594,6 +655,7 @@ describe('AuthController', () => {
 
       const result = await controller.appleNativeLogin(
         { identityToken: 'valid' },
+        makeReq(),
         res,
       );
 
@@ -612,7 +674,7 @@ describe('AuthController', () => {
       const res = makeRes() as unknown as Response;
 
       await expect(
-        controller.appleNativeLogin({ identityToken: 'valid' }, res),
+        controller.appleNativeLogin({ identityToken: 'valid' }, makeReq(), res),
       ).rejects.toThrow('정지된 계정입니다.');
 
       // 정지된 사용자에게는 토큰 발급 X
@@ -626,7 +688,7 @@ describe('AuthController', () => {
       const res = makeRes() as unknown as Response;
 
       await expect(
-        controller.appleNativeLogin({ identityToken: 'bad' }, res),
+        controller.appleNativeLogin({ identityToken: 'bad' }, makeReq(), res),
       ).rejects.toBe(err);
       expect(mockAppleAuthService.findOrCreateAppleUser).not.toHaveBeenCalled();
     });
@@ -636,6 +698,7 @@ describe('AuthController', () => {
 
       const result = await controller.appleNativeLogin(
         { identityToken: 'valid' },
+        makeReq(),
         res,
       );
 
@@ -674,6 +737,7 @@ describe('AuthController', () => {
 
       const result = await controller.kakaoNativeLogin(
         { accessToken: 'kakao-access-token' },
+        makeReq(),
         res,
       );
 
@@ -707,6 +771,7 @@ describe('AuthController', () => {
 
       const result = await controller.kakaoNativeLogin(
         { accessToken: 'valid' },
+        makeReq(),
         res,
       );
 
@@ -724,7 +789,7 @@ describe('AuthController', () => {
       const res = makeRes() as unknown as Response;
 
       await expect(
-        controller.kakaoNativeLogin({ accessToken: 'valid' }, res),
+        controller.kakaoNativeLogin({ accessToken: 'valid' }, makeReq(), res),
       ).rejects.toThrow('정지된 계정입니다.');
 
       expect(mockAuthService.issueTokens).not.toHaveBeenCalled();
@@ -737,7 +802,7 @@ describe('AuthController', () => {
       const res = makeRes() as unknown as Response;
 
       await expect(
-        controller.kakaoNativeLogin({ accessToken: 'bad' }, res),
+        controller.kakaoNativeLogin({ accessToken: 'bad' }, makeReq(), res),
       ).rejects.toBe(err);
       expect(mockAuthService.findOrCreateKakaoUser).not.toHaveBeenCalled();
     });
@@ -747,6 +812,7 @@ describe('AuthController', () => {
 
       const result = await controller.kakaoNativeLogin(
         { accessToken: 'valid' },
+        makeReq(),
         res,
       );
 

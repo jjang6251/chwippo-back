@@ -43,6 +43,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,
   };
@@ -81,34 +82,34 @@ describe('JwtRefreshStrategy', () => {
     userRepo = module.get(getRepositoryToken(User));
   });
 
-  it('정상: cookie 평문 JWT를 hash해서 DB hash와 일치 → 유저 정보 반환', async () => {
+  // 세션 지속성 웨이브(B안): token_hash 대조 + rotation(토큰 패밀리 재사용 감지)은
+  // AuthService.rotateTokens 에서 원자적으로 수행. strategy 는 서명·존재·정지만 검증하고
+  // sid + rawToken 을 controller 로 전달한다 (hash 불일치·재사용 판정은 service spec 참조).
+
+  it('정상: 서명 유효 + 유저 존재 → 프로필 + sid + rawToken 반환', async () => {
+    userRepo.findOne.mockResolvedValue(makeUser());
+    const req = makeRequest(REFRESH_TOKEN);
+
+    const result = await strategy.validate(req, {
+      sub: 'user-uuid',
+      sid: 'sid-1',
+    });
+
+    expect(result).toMatchObject({
+      id: 'user-uuid',
+      role: 'user',
+      sid: 'sid-1',
+      refreshTokenRaw: REFRESH_TOKEN,
+    });
+  });
+
+  it('legacy 토큰 (payload 에 sid 없음) → sid null 로 전달 (fallback 이전 트리거)', async () => {
     userRepo.findOne.mockResolvedValue(makeUser());
     const req = makeRequest(REFRESH_TOKEN);
 
     const result = await strategy.validate(req, { sub: 'user-uuid' });
 
-    expect(result).toMatchObject({ id: 'user-uuid', role: 'user' });
-  });
-
-  it('DB에 평문 token 저장된 상태 (PR C 도입 직후 기존 사용자) → hash 비교 실패 → 401', async () => {
-    // 마이그레이션 옵션 a: 코드 변경만, 기존 평문 DB 값은 자연스러운 강제 재로그인
-    userRepo.findOne.mockResolvedValue(
-      makeUser({ refreshToken: REFRESH_TOKEN }), // ← 평문 그대로 (도입 전 상태)
-    );
-    const req = makeRequest(REFRESH_TOKEN);
-
-    await expect(strategy.validate(req, { sub: 'user-uuid' })).rejects.toThrow(
-      UnauthorizedException,
-    );
-  });
-
-  it('DB refresh_token이 NULL (로그아웃 후) → 401', async () => {
-    userRepo.findOne.mockResolvedValue(makeUser({ refreshToken: null }));
-    const req = makeRequest(REFRESH_TOKEN);
-
-    await expect(strategy.validate(req, { sub: 'user-uuid' })).rejects.toThrow(
-      UnauthorizedException,
-    );
+    expect(result).toMatchObject({ sid: null, refreshTokenRaw: REFRESH_TOKEN });
   });
 
   it('refresh token 쿠키 없음 → UnauthorizedException', async () => {
@@ -124,16 +125,6 @@ describe('JwtRefreshStrategy', () => {
     const req = makeRequest(REFRESH_TOKEN);
 
     await expect(strategy.validate(req, { sub: 'not-exist' })).rejects.toThrow(
-      UnauthorizedException,
-    );
-  });
-
-  it('저장된 hash와 불일치 (다른 token으로 시도) → UnauthorizedException', async () => {
-    const otherHash = createHash('sha256').update('other-token').digest('hex');
-    userRepo.findOne.mockResolvedValue(makeUser({ refreshToken: otherHash }));
-    const req = makeRequest(REFRESH_TOKEN);
-
-    await expect(strategy.validate(req, { sub: 'user-uuid' })).rejects.toThrow(
       UnauthorizedException,
     );
   });

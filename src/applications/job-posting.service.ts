@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmService } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
+import { returningRows } from '../common/db-returning';
 import { Application, JobPosting } from './application.entity';
 import { ParseJobPostingDto } from './dto/job-posting.dto';
 import { UpdateJobPostingDto } from './dto/job-posting.dto';
@@ -247,7 +248,8 @@ export class JobPostingService {
        RETURNING id`,
       [appId, userId],
     );
-    return Array.isArray(rows) && rows.length > 0;
+    // UPDATE...RETURNING 은 [rows[], count] 튜플 → returningRows 로 정규화 (raw .length 는 항상 2 → 락 무력화)
+    return returningRows(rows).length > 0;
   }
 
   /** parsing lock 원복 (idle). 성공·notPosting·에러·quota차단 모든 경로 공통 (finally). */
