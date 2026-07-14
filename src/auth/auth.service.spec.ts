@@ -54,7 +54,6 @@ describe('AuthService', () => {
       nickname: '테스트유저',
       email: 'test@test.com',
       role: 'user',
-      refreshToken: null,
       lastActiveAt: null,
       createdAt: new Date(),
       termsAgreedAt: null,
@@ -468,7 +467,7 @@ describe('AuthService', () => {
       expect(evictCall![1]).toEqual([user.id, 10]);
     });
 
-    it('재로그인 → session_expired_notified_at 리셋 · 구 refresh_token 컬럼 미기록', async () => {
+    it('재로그인 → session_expired_notified_at 리셋', async () => {
       const user = makeUser();
       jwtService.sign.mockReturnValue('t');
 
@@ -477,10 +476,6 @@ describe('AuthService', () => {
       expect(txUserRepo.update).toHaveBeenCalledWith(user.id, {
         sessionExpiredNotifiedAt: null,
       });
-      const wroteLegacy = txUserRepo.update.mock.calls.some(
-        (c) => (c[1] as Record<string, unknown>).refreshToken !== undefined,
-      );
-      expect(wroteLegacy).toBe(false);
     });
   });
 
@@ -643,61 +638,22 @@ describe('AuthService', () => {
     });
   });
 
-  // ── rotateTokens fallback (legacy · sid 없는 구 토큰) ──────
-  describe('rotateTokens — legacy fallback 이전', () => {
-    const legacyBase = {
-      userId: 'user-uuid-1',
-      role: 'user',
-      sid: undefined,
-      rawToken: 'legacy-rt',
-    };
+  // ── rotateTokens — sid 없는 구 토큰 (재로그인 유도) ──────────
+  describe('rotateTokens — sid 없는 구 토큰', () => {
+    it('⑥ sid 없으면 세션 매핑 불가 → 401 (rotation·세션 생성 안 함)', async () => {
+      const err = await service
+        .rotateTokens({
+          userId: 'user-uuid-1',
+          role: 'user',
+          sid: undefined,
+          rawToken: 'legacy-rt',
+        })
+        .catch((e: unknown) => e);
 
-    beforeEach(() => {
-      txSessionRepo.insert.mockResolvedValue({} as never);
-      txTokenRepo.insert.mockResolvedValue({} as never);
-      txUserRepo.update.mockResolvedValue({} as never);
-    });
-
-    it('⑥ 구 refresh_token 원자 claim 1행 → 세션+최초 토큰 생성 + 새 쌍', async () => {
-      // UPDATE users ... RETURNING → 실제 형태 [rows[], affected]
-      manager.query.mockResolvedValueOnce([[{ id: 'user-uuid-1' }], 1]); // 원자 claim 1행
-      jwtService.sign
-        .mockReturnValueOnce('mig-access') // #1 access
-        .mockReturnValueOnce('mig-refresh'); // #2 refresh
-
-      const result = await service.rotateTokens(legacyBase);
-
-      expect(result).toEqual({
-        accessToken: 'mig-access',
-        refreshToken: 'mig-refresh',
-      });
-      // 원자 claim SQL (TOCTOU 차단): SET refresh_token=NULL WHERE id AND refresh_token RETURNING
-      const claimSql = String(manager.query.mock.calls[0][0]);
-      expect(claimSql).toContain('UPDATE users SET refresh_token = NULL');
-      expect(claimSql).toContain('refresh_token = $2');
-      expect(claimSql).toContain('RETURNING');
-      expect(manager.query.mock.calls[0][1]).toEqual([
-        'user-uuid-1',
-        sha256('legacy-rt'),
-      ]);
-      // 세션 + 토큰 행 생성
-      expect(txSessionRepo.insert).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 'user-uuid-1', revokedAt: null }),
-      );
-      expect(txTokenRepo.insert).toHaveBeenCalledWith(
-        expect.objectContaining({ tokenHash: sha256('mig-refresh') }),
-      );
-      expect(txUserRepo.update).toHaveBeenCalledWith('user-uuid-1', {
-        sessionExpiredNotifiedAt: null,
-      });
-    });
-
-    it('⑥ 원자 claim 0행 (불일치·null·동시 선점 TOCTOU) → 401 · 세션 생성 안 함', async () => {
-      manager.query.mockResolvedValueOnce([[], 0]); // claim 0행 → tx 내부 throw → rollback
-
-      await expect(service.rotateTokens(legacyBase)).rejects.toThrow(
-        UnauthorizedException,
-      );
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      // DB 조회·변경·세션 생성 전부 없음 (조기 return)
+      expect(tokenRepo.query).not.toHaveBeenCalled();
+      expect(manager.query).not.toHaveBeenCalled();
       expect(txSessionRepo.insert).not.toHaveBeenCalled();
       expect(txTokenRepo.insert).not.toHaveBeenCalled();
     });
@@ -707,7 +663,6 @@ describe('AuthService', () => {
   describe('logout', () => {
     it('rawToken 해시로 그 토큰이 속한 세션만 revoke (BOLA 스코프)', async () => {
       sessionRepo.query.mockResolvedValue([] as never);
-      userRepo.update.mockResolvedValue({} as never);
 
       await service.logout('user-uuid-1', 'raw-rt');
 
@@ -716,20 +671,13 @@ describe('AuthService', () => {
       expect(sql).toContain('user_id = $1');
       expect(sql).toContain('SELECT session_id FROM refresh_tokens');
       expect(params).toEqual(['user-uuid-1', sha256('raw-rt')]);
-      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
-        refreshToken: null,
-      });
     });
 
-    it('rawToken 없으면 세션 revoke 스킵 (구 컬럼만 정리)', async () => {
-      userRepo.update.mockResolvedValue({} as never);
-
+    it('rawToken 없으면 세션 revoke 스킵 (아무 변경 없음)', async () => {
       await service.logout('user-uuid-1', null);
 
       expect(sessionRepo.query).not.toHaveBeenCalled();
-      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
-        refreshToken: null,
-      });
+      expect(userRepo.update).not.toHaveBeenCalled();
     });
   });
 
@@ -744,20 +692,11 @@ describe('AuthService', () => {
       expect(userRepo.findOne).not.toHaveBeenCalled();
     });
 
-    it('유효 세션 0 + legacy 구 컬럼 존재 → true (미이전 로그인 상태)', async () => {
+    it('유효 세션 0개 → false (user 조회 없이)', async () => {
       sessionRepo.count.mockResolvedValue(0);
-      userRepo.findOne.mockResolvedValue(
-        makeUser({ refreshToken: sha256('x') }),
-      );
-
-      expect(await service.hasValidSession('user-uuid-1')).toBe(true);
-    });
-
-    it('유효 세션 0 + legacy 컬럼도 null → false', async () => {
-      sessionRepo.count.mockResolvedValue(0);
-      userRepo.findOne.mockResolvedValue(makeUser({ refreshToken: null }));
 
       expect(await service.hasValidSession('user-uuid-1')).toBe(false);
+      expect(userRepo.findOne).not.toHaveBeenCalled();
     });
   });
 

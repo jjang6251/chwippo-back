@@ -2,16 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { UnauthorizedException } from '@nestjs/common';
-import { createHash } from 'crypto';
 import { Repository } from 'typeorm';
 import { JwtRefreshStrategy } from './jwt-refresh.strategy';
 import { User } from '../../users/user.entity';
 import type { Request } from 'express';
 
 const REFRESH_TOKEN = 'valid-refresh-token';
-const REFRESH_TOKEN_HASH = createHash('sha256')
-  .update(REFRESH_TOKEN)
-  .digest('hex');
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
@@ -21,8 +17,6 @@ function makeUser(overrides: Partial<User> = {}): User {
     appleEmail: null,
     nickname: '테스트유저',
     email: 'test@test.com',
-    // DB엔 hash 저장 (LRR P1T1 M-2)
-    refreshToken: REFRESH_TOKEN_HASH,
     role: 'user',
     createdAt: new Date('2026-01-01'),
     lastActiveAt: new Date('2026-05-01'),
@@ -103,7 +97,7 @@ describe('JwtRefreshStrategy', () => {
     });
   });
 
-  it('legacy 토큰 (payload 에 sid 없음) → sid null 로 전달 (fallback 이전 트리거)', async () => {
+  it('sid 없는 구 토큰 (payload 에 sid 없음) → sid null 로 전달 (service 가 401 처리)', async () => {
     userRepo.findOne.mockResolvedValue(makeUser());
     const req = makeRequest(REFRESH_TOKEN);
 

@@ -33,7 +33,6 @@ describe('UsersService', () => {
       nickname: '테스트유저',
       email: null,
       role: 'user',
-      refreshToken: null,
       lastActiveAt: null,
       createdAt: new Date(),
       ...overrides,

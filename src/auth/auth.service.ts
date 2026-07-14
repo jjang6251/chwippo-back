@@ -65,7 +65,7 @@ export interface TokenPair {
 export interface RotateParams {
   userId: string;
   role: string;
-  /** refresh JWT `sid` claim — 없으면 legacy(구조 이전 전) 토큰 → fallback 이전 */
+  /** refresh JWT `sid` claim — 없으면 구 토큰(sid 이전 발급) → 재로그인 유도(401) */
   sid?: string | null;
   /** cookie 의 평문 refresh JWT */
   rawToken: string;
@@ -250,16 +250,16 @@ export class AuthService {
    *  4. used_at IS NULL (미사용) → 원자 UPDATE used_at=NOW WHERE used_at IS NULL RETURNING
    *     - 1행(승자) → 새 토큰 INSERT(같은 sid) + expires_at sliding +60d + 새 쌍 반환
    *     - 0행(방금 다른 요청이 선점) → 재조회 used_at 로 2번과 동일 판정 (경합 409 / 탈취 revoke+401)
-   *  5. sid 없음(legacy) → users.refresh_token 원자 이전 (TOCTOU 차단)
+   *  0. sid 없음(sid 이전 발급 구 토큰) → 세션 매핑 불가 → 재로그인 유도(401)
    *
    * 전 경로 (session.user_id = JWT sub) 스코프 유지 (BOLA A01/API1).
    */
   async rotateTokens(params: RotateParams): Promise<TokenPair> {
-    const { userId, role, sid, rawToken, deviceInfo } = params;
+    const { userId, role, sid, rawToken } = params;
     const presentedHash = hashRefreshToken(rawToken);
 
     if (!sid) {
-      return this.migrateLegacyToken(userId, role, presentedHash, deviceInfo);
+      throw new UnauthorizedException(); // sid 없는 구 토큰 = 세션 매핑 불가 → 재로그인
     }
 
     // 1. presentedHash 로 토큰 조회 (활성 세션 · user_id 스코프)
@@ -407,62 +407,6 @@ export class AuthService {
   }
 
   /**
-   * Legacy(sid 없는 구조 이전) 토큰 fallback 이전.
-   * 구 users.refresh_token 을 원자 UPDATE 로 claim (SET NULL WHERE id AND refresh_token=$hash
-   * RETURNING) → 1행이면 세션+최초 토큰 생성 / 0행이면 401 (동시 요청 TOCTOU 차단).
-   * claim·생성 을 1 트랜잭션으로 묶어 부분 반영(구 컬럼만 null) 방지.
-   */
-  private async migrateLegacyToken(
-    userId: string,
-    role: string,
-    presentedHash: string,
-    deviceInfo?: string | null,
-  ): Promise<TokenPair> {
-    const sid = randomUUID();
-    const tokenId = randomUUID();
-    const accessToken = this.signAccessToken(userId, role);
-    const refreshToken = this.signRefreshToken(userId, role, sid);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + SLIDING_MS);
-
-    await this.dataSource.transaction(async (manager) => {
-      const claimed: unknown = await manager.query(
-        `UPDATE users SET refresh_token = NULL
-          WHERE id = $1 AND refresh_token = $2
-        RETURNING id`,
-        [userId, presentedHash],
-      );
-      if (returningRows(claimed).length === 0) {
-        // 불일치·null·동시 요청 선점 → 401 (tx rollback 으로 구 컬럼 복원)
-        throw new UnauthorizedException();
-      }
-      await manager.getRepository(RefreshSession).insert({
-        id: sid,
-        userId,
-        createdAt: now,
-        expiresAt,
-        deviceInfo: deviceInfo?.slice(0, 255) ?? null,
-        revokedAt: null,
-      });
-      await manager.getRepository(RefreshToken).insert({
-        id: tokenId,
-        sessionId: sid,
-        tokenHash: hashRefreshToken(refreshToken),
-        createdAt: now,
-        usedAt: null,
-      });
-      await this.evictExcessSessions(manager, userId);
-      // 만료-마스킹 상태 해제
-      await manager.getRepository(User).update(userId, {
-        sessionExpiredNotifiedAt: null,
-      });
-    });
-
-    this.logger.log(`[session] legacy 토큰 이전 완료 — user ${userId}`);
-    return { accessToken, refreshToken };
-  }
-
-  /**
    * 기기 상한 초과분 evict — 활성(revoked_at IS NULL) 세션이 상한 초과 시
    * 최저 사용(expires_at 가장 오래된) 세션 revoke. cron 이 이후 hard-delete.
    */
@@ -497,13 +441,10 @@ export class AuthService {
         [userId, h],
       );
     }
-    // legacy 구 컬럼 정리 (best-effort · 구조 이전 전 사용자)
-    await this.userRepo.update(userId, { refreshToken: null });
   }
 
   /**
    * 유효(만료 전·revoke 안 됨) 세션이 하나라도 있으면 true.
-   * legacy 사용자(세션 미이전 · users.refresh_token 존재)도 로그인 상태로 간주.
    * 푸시-세션 분리 판정용 (notification-dispatch 가 단일 호출).
    */
   async hasValidSession(
@@ -513,12 +454,7 @@ export class AuthService {
     const count = await this.sessionRepo.count({
       where: { userId, expiresAt: MoreThan(now), revokedAt: IsNull() },
     });
-    if (count > 0) return true;
-    const user = await this.userRepo.findOne({
-      where: { id: userId },
-      select: { id: true, refreshToken: true },
-    });
-    return !!user?.refreshToken;
+    return count > 0;
   }
 
   /**

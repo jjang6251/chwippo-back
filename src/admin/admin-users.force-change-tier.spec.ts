@@ -41,7 +41,6 @@ function makeUser(overrides: Partial<User> = {}): User {
     appleEmail: null,
     nickname: '대상',
     email: null,
-    refreshToken: null,
     role: 'user',
     createdAt: new Date(),
     lastActiveAt: null,
