@@ -47,7 +47,6 @@ function makeUser(overrides: Partial<User> = {}): User {
     appleEmail: null,
     nickname: '대상유저',
     email: 'target@test.com',
-    refreshToken: null,
     role: 'user',
     createdAt: new Date('2026-01-01'),
     lastActiveAt: null,
@@ -68,6 +67,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,
   };

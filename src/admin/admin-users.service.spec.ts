@@ -33,7 +33,6 @@ function makeUser(overrides: Partial<User> = {}): User {
     appleEmail: null,
     nickname: '테스트유저',
     email: 'test@test.com',
-    refreshToken: 'refresh-token-value',
     role: 'user',
     createdAt: new Date('2026-01-01'),
     lastActiveAt: new Date('2026-05-01'),
@@ -54,6 +53,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,
   };
@@ -744,9 +744,7 @@ describe('AdminUsersService', () => {
     });
 
     it('export 결과에 refreshToken이 포함되지 않는다', async () => {
-      userRepo.findOne.mockResolvedValue(
-        makeUser({ refreshToken: 'secret-refresh' }),
-      );
+      userRepo.findOne.mockResolvedValue(makeUser());
       mockAuditService.log.mockResolvedValue(undefined);
 
       const result = await service.exportUser(ADMIN_ID, USER_ID);

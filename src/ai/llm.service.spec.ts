@@ -53,7 +53,6 @@ describe('LlmService', () => {
     appleEmail: null,
     nickname: '장성원',
     email: null,
-    refreshToken: null,
     role: 'user',
     createdAt: new Date(),
     lastActiveAt: null,
@@ -74,6 +73,7 @@ describe('LlmService', () => {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,
   });

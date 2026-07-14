@@ -17,7 +17,7 @@ export const envValidationSchema = Joi.object({
   JWT_SECRET: Joi.string().required(),
   JWT_EXPIRES_IN: Joi.string().default('1h'),
   JWT_REFRESH_SECRET: Joi.string().required(),
-  JWT_REFRESH_EXPIRES_IN: Joi.string().default('30d'),
+  JWT_REFRESH_EXPIRES_IN: Joi.string().default('60d'), // 세션 sliding 60d 와 정합 필수 — 짧으면 JWT 가 세션보다 먼저 만료 (세션 지속성 웨이브 2026-07-14)
 
   KAKAO_CLIENT_ID: Joi.string().required(),
   KAKAO_CLIENT_SECRET: Joi.string().required(),

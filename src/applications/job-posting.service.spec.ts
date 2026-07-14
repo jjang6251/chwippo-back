@@ -84,7 +84,9 @@ describe('JobPostingService', () => {
       findOne: jest.fn().mockResolvedValue(makeApp()),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       // acquireParsingLock atomic UPDATE ... RETURNING id — 기본은 lock 획득 성공 (1행)
-      query: jest.fn().mockResolvedValue([{ id: APP_ID }]),
+      // ⚠️ UPDATE...RETURNING 실제 런타임 형태 = [rows[], affected] 튜플 (SELECT 의 rows[] 아님).
+      //    mock 을 순수 배열로 두면 락 무력화 버그(returningRows 없이 length 항상 2)를 못 잡는다.
+      query: jest.fn().mockResolvedValue([[{ id: APP_ID }], 1]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -317,7 +319,8 @@ describe('JobPostingService', () => {
   // ── parsing lock (재진입 진행 상태) ──
 
   it('atomic 시작 — 이미 정리 중(affected 0) → ALREADY_PARSING, provider·차감·저장 없음', async () => {
-    appRepo.query.mockResolvedValue([]); // lock 획득 실패 (다른 요청이 진행 중)
+    // lock 획득 실패 — UPDATE 0행. 실제 튜플 형태 [[], 0] (raw .length 는 2 라 returningRows 없으면 오판)
+    appRepo.query.mockResolvedValue([[], 0]);
     const r = await service.parse(USER_ID, APP_ID, parseDto());
     if (!('blocked' in r)) throw new Error('expected blocked result');
     expect(r.code).toBe('ALREADY_PARSING');

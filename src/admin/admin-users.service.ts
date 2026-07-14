@@ -52,15 +52,9 @@ function escapeSearch(s: string): string {
 
 function omitSensitive(
   user: User,
-): Omit<User, 'refreshToken' | 'kakaoId' | 'appleSub' | 'appleEmail'> {
+): Omit<User, 'kakaoId' | 'appleSub' | 'appleEmail'> {
   /* eslint-disable @typescript-eslint/no-unused-vars -- rest 분리로 민감 필드 제거 */
-  const {
-    refreshToken: _r,
-    kakaoId: _k,
-    appleSub: _a,
-    appleEmail: _ae,
-    ...safe
-  } = user;
+  const { kakaoId: _k, appleSub: _a, appleEmail: _ae, ...safe } = user;
   /* eslint-enable @typescript-eslint/no-unused-vars */
   return safe;
 }

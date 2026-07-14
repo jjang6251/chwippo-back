@@ -40,7 +40,6 @@ describe('CompaniesService', () => {
     nickname: 'tester',
     email: null,
     role: 'user',
-    refreshToken: null,
     lastActiveAt: null,
     termsAgreedAt: null,
     createdAt: new Date(),
@@ -60,6 +59,7 @@ describe('CompaniesService', () => {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,
   });
