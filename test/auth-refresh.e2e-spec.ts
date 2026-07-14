@@ -123,16 +123,19 @@ describe('Auth refresh·logout (e2e)', () => {
     });
 
     // A4-8 회귀: logout 후 옛 refresh cookie로 refresh → 401
+    // 세션 지속성 웨이브 — logout 은 refresh 쿠키(sid)로 그 기기 세션을 revoke.
+    // 실제 프론트는 withCredentials=true 라 쿠키가 자동 전송됨 → 테스트도 동일하게 전송.
     it('logout 후 옛 refresh cookie로 /auth/refresh → 401 (A4-8 회귀)', async () => {
       const { accessToken, refreshToken } = await signInAsUser(app);
 
-      // logout (DB hash null)
+      // logout — 브라우저처럼 refresh 쿠키 함께 전송 → 해당 세션 revoke
       await request(app.getHttpServer())
         .post('/auth/logout')
         .set(bearer(accessToken))
+        .set('Cookie', `refresh_token=${refreshToken}`)
         .expect(200);
 
-      // 옛 cookie로 refresh 시도 → hash null이라 비교 실패 → 401
+      // revoke 된 세션의 옛 cookie로 refresh 시도 → 401
       await request(app.getHttpServer())
         .post('/auth/refresh')
         .set('Cookie', `refresh_token=${refreshToken}`)

@@ -12,10 +12,8 @@
  *     .expect(200);
  */
 import { INestApplication } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import { createHash } from 'crypto';
 import { DataSource } from 'typeorm';
+import { AuthService } from '../../src/auth/auth.service';
 import { User } from '../../src/users/user.entity';
 
 export interface SignedInUser {
@@ -39,8 +37,7 @@ export async function signIn(
   opts: SignInOptions = {},
 ): Promise<SignedInUser> {
   const dataSource = app.get(DataSource);
-  const jwtService = app.get(JwtService);
-  const config = app.get(ConfigService);
+  const authService = app.get(AuthService);
 
   const userRepo = dataSource.getRepository(User);
   const kakaoId = `e2e-${opts.kakaoIdSuffix ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -54,19 +51,9 @@ export async function signIn(
   });
   const saved = await userRepo.save(user);
 
-  const payload = { sub: saved.id, role: saved.role };
-  const accessToken = jwtService.sign(payload, {
-    secret: config.getOrThrow<string>('JWT_SECRET'),
-    expiresIn: config.get('JWT_EXPIRES_IN', '1h'),
-  });
-  const refreshToken = jwtService.sign(payload, {
-    secret: config.getOrThrow<string>('JWT_REFRESH_SECRET'),
-    expiresIn: config.get('JWT_REFRESH_EXPIRES_IN', '30d'),
-  });
-
-  await userRepo.update(saved.id, {
-    refreshToken: createHash('sha256').update(refreshToken).digest('hex'),
-  });
+  // 실 세션 발급 — refresh_sessions + refresh_tokens 행 생성 · sid 포함 refresh JWT
+  // (구 users.refresh_token 단일 컬럼 방식 폐기 후 rotation 이 sid 기반)
+  const { accessToken, refreshToken } = await authService.issueTokens(saved);
 
   return { user: saved, accessToken, refreshToken };
 }

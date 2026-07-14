@@ -40,7 +40,6 @@ describe('CompaniesService', () => {
     nickname: 'tester',
     email: null,
     role: 'user',
-    refreshToken: null,
     lastActiveAt: null,
     termsAgreedAt: null,
     createdAt: new Date(),

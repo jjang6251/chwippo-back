@@ -50,9 +50,6 @@ export class User {
   @Column({ nullable: true, type: 'varchar' })
   email: string | null;
 
-  @Column({ name: 'refresh_token', nullable: true, type: 'varchar' })
-  refreshToken: string | null;
-
   @Column({ default: 'user' })
   role: string;
 
