@@ -106,6 +106,11 @@ export interface LlmCallBlocked {
   text: null;
   errorMessage: string;
   callLogId: string;
+  /**
+   * 웨이브 C — 동시 중복 진입 차단(in-flight lock). status 는 audit 호환 위해 'blocked_quota'
+   * 를 재사용하되, caller/프론트가 실제 코인 부족과 구분할 수 있도록 machine-readable code 부여.
+   */
+  code?: 'ALREADY_RUNNING';
 }
 
 export type LlmCallResult = LlmCallOk | LlmCallBlocked;
@@ -118,12 +123,25 @@ function estimateTokens(text: string): number {
 /** AI 사용 동의 현재 버전 — 약관 갱신 시 bump 하면 강제 재동의 */
 export const CURRENT_AI_CONSENT_VERSION = 'v1';
 
+/**
+ * 웨이브 C — in-flight lock stale TTL (ms).
+ * finally 로 해제되지만, 프로세스 크래시·미처리 예외로 해제 누락 시 이 시간(2분) 지난
+ * 항목은 다음 획득 시도에서 stale 로 간주해 회수 (영구 잠금 방지).
+ */
+const IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
   // 'mock' 은 LlmProviderName union 에 있으나 실제 provider 객체 없음 (mock 분기는 buildMockLlmResponse 가 처리).
   // FEATURE_MATRIX 는 cfg.provider 로 mock 반환 안 함 → providers map 은 real 2개만.
   private readonly providers: Record<'openai' | 'anthropic', LlmProvider>;
+
+  /**
+   * 웨이브 C — per (userId, feature) in-flight lock. value = 시작 timestamp(ms).
+   * 프로세스 내 Map (Railway 단일 인스턴스 전제 — 스케일아웃 시 DB advisory lock 으로 승격).
+   */
+  private readonly inFlight = new Map<string, number>();
 
   constructor(
     private readonly openai: OpenAIProvider,
@@ -155,8 +173,30 @@ export class LlmService {
    *    - callJson 실패 시 1회 재시도 + `retry_parsing` audit row
    * 7. 응답 PII 역방향 스크럽 → output_redacted flag
    * 8. audit: prompt_hash + prompt_excerpt(200자) + attempts + provider + status
+   *
+   * **웨이브 C — in-flight lock**: 코인 차감 feature 는 동일 (user,feature) 동시 진입 시
+   * 두 번째 요청을 provider 미호출로 즉시 차단 (code ALREADY_RUNNING). 아래 gate 순서는 보존.
    */
   async call(input: LlmCallInput): Promise<LlmCallResult> {
+    // preBlocked 는 provider 미호출 audit-only 라 lock 대상 아님.
+    const useLock =
+      !input.preBlockedStatus &&
+      (await this.coinService.chargesCoins(input.feature));
+    if (!useLock) {
+      return this.callGuarded(input);
+    }
+    if (!this.tryAcquireInFlight(input.userId, input.feature)) {
+      const cfg = getModelConfig(input.feature, this.config);
+      return this.saveInFlightBlocked(input, cfg.model, cfg.provider);
+    }
+    try {
+      return await this.callGuarded(input);
+    } finally {
+      this.releaseInFlight(input.userId, input.feature);
+    }
+  }
+
+  private async callGuarded(input: LlmCallInput): Promise<LlmCallResult> {
     const startedAt = Date.now();
     const cfg = getModelConfig(input.feature, this.config);
     if (cfg.provider === 'mock') {
@@ -674,6 +714,28 @@ export class LlmService {
   async *callStream<T = unknown>(
     input: LlmCallInput,
   ): AsyncGenerator<LlmStreamEvent<T>> {
+    // 웨이브 C — in-flight lock (코인 차감 feature. coverletter_chat 이 stream 경로).
+    // stream 계약은 blocked 봉투 대신 error event → ALREADY_RUNNING 도 error event + audit row.
+    const useLock = await this.coinService.chargesCoins(input.feature);
+    if (useLock && !this.tryAcquireInFlight(input.userId, input.feature)) {
+      const cfg = getModelConfig(input.feature, this.config);
+      await this.saveInFlightBlocked(input, cfg.model, cfg.provider);
+      yield {
+        type: 'error',
+        message: '이미 처리 중이에요. 잠시만 기다려 주세요.',
+      };
+      return;
+    }
+    try {
+      yield* this.callStreamGuarded<T>(input);
+    } finally {
+      if (useLock) this.releaseInFlight(input.userId, input.feature);
+    }
+  }
+
+  private async *callStreamGuarded<T = unknown>(
+    input: LlmCallInput,
+  ): AsyncGenerator<LlmStreamEvent<T>> {
     if (!input.jsonSchema) {
       yield { type: 'error', message: 'callStream 은 jsonSchema 필수' };
       return;
@@ -884,6 +946,65 @@ export class LlmService {
   }
 
   // ── private helpers ──
+
+  // ── 웨이브 C — in-flight lock helpers ──
+
+  private inFlightKey(userId: string, feature: LlmFeature): string {
+    return `${userId}:${feature}`;
+  }
+
+  /**
+   * 획득 성공 시 true, 이미 진행 중(stale 아님)이면 false.
+   * 없거나 stale(TTL 초과) 항목은 회수 후 획득 (lazy eviction).
+   */
+  private tryAcquireInFlight(userId: string, feature: LlmFeature): boolean {
+    const key = this.inFlightKey(userId, feature);
+    const startedAt = this.inFlight.get(key);
+    const now = Date.now();
+    if (startedAt !== undefined && now - startedAt < IN_FLIGHT_TTL_MS) {
+      return false; // 진행 중
+    }
+    this.inFlight.set(key, now);
+    return true;
+  }
+
+  private releaseInFlight(userId: string, feature: LlmFeature): void {
+    this.inFlight.delete(this.inFlightKey(userId, feature));
+  }
+
+  /**
+   * 웨이브 C — 중복 진입 차단 결과. audit status 는 llm_call_logs enum 호환 위해
+   * blocked_quota 재사용(billableCallWhere 제외 → 한도·이상감시에 카운트 안 됨).
+   * caller/프론트는 code='ALREADY_RUNNING' 으로 실제 코인 부족과 구분.
+   */
+  private async saveInFlightBlocked(
+    input: LlmCallInput,
+    model: string,
+    provider: LlmProviderName,
+  ): Promise<LlmCallBlocked> {
+    const log = await this.saveAudit({
+      input,
+      model,
+      provider,
+      promptHash: null,
+      promptExcerpt: null,
+      status: 'blocked_quota',
+      errorMessage: `[ALREADY_RUNNING] ${input.feature} 동일 요청 진행 중 — 중복 진입 차단`,
+      promptTokens: 0,
+      completionTokens: 0,
+      costUsd: '0',
+      latencyMs: 0,
+      outputRedacted: false,
+      attempts: 0,
+    });
+    return {
+      status: 'blocked_quota',
+      text: null,
+      errorMessage: '이미 처리 중이에요. 잠시만 기다려 주세요.',
+      callLogId: log.id,
+      code: 'ALREADY_RUNNING',
+    };
+  }
 
   /**
    * AI 사용 동의 체크 — NULL 또는 version 불일치면 차단 사유 반환.

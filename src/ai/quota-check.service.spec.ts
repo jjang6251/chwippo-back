@@ -12,6 +12,11 @@ import {
   QuotaCheckService,
   resolveEffectiveDayLimit,
 } from './quota-check.service';
+import {
+  startOfMonthKst,
+  startOfNextMonthKst,
+  startOfTodayKst,
+} from '../common/datetime';
 
 /**
  * F6 PR 2 Phase 1 — QuotaCheckService spec.
@@ -353,73 +358,118 @@ describe('QuotaCheckService', () => {
     });
   });
 
-  // ── 5.6.9 — quota_reset_at 적용 (dayUsed 계산 시 GREATEST(24h, reset_at)) ──
-  describe('5.6.9 quota_reset_at', () => {
-    it('1) quota_reset_at 없음 (row 없음) → 24h ago 그대로 사용 (기존 동작)', async () => {
-      configRepo.findOne.mockResolvedValue(makeConfig());
-      abuserBan.getActiveOverride.mockResolvedValue(null);
-      // user_ai_quotas row 없음 → null
+  // ── 웨이브 A — resolveDayWindowStart (사용자 일 한도 = KST 자정 + reset_at override) ──
+  describe('resolveDayWindowStart (KST 자정 리셋)', () => {
+    it('reset_at 없음 (row 없음) → 오늘 KST 자정 (rolling 24h 아님)', async () => {
       userQuotaRepo.findOne.mockResolvedValue(null);
-      logRepo.count.mockResolvedValue(5);
-      const r = await service.checkAndPrepare(USER_ID, 'note_summary');
-      expect(r.blocked).toBe(false);
-      // count 쿼리의 createdAt 범위가 24h ago 기반
-      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
-      expect(callWhere.createdAt).toBeDefined();
+      const start = await service.resolveDayWindowStart(USER_ID);
+      expect(start.getTime()).toBe(startOfTodayKst().getTime());
     });
 
-    it('2) quota_reset_at="1h ago" → reset_at 이후만 카운트 (since24h 대체)', async () => {
-      configRepo.findOne.mockResolvedValue(makeConfig());
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    it('reset_at 이 자정보다 늦음(오늘 오전) → override 우선', async () => {
+      const resetAt = new Date(); // now — 오늘 자정 이후
       userQuotaRepo.findOne.mockResolvedValue({
         userId: USER_ID,
-        quotaResetAt: { '*': oneHourAgo },
+        quotaResetAt: { '*': resetAt.toISOString() },
       } as unknown as UserAiQuota);
-      logRepo.count.mockResolvedValue(0);
-      await service.checkAndPrepare(USER_ID, 'note_summary');
-      // count 쿼리의 createdAt 범위가 1h ago 부터 시작
-      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
-      const between = callWhere.createdAt as { _value: Date[] };
-      const start = between._value[0];
-      // GREATEST(24h ago, 1h ago) = 1h ago
-      expect(start?.getTime()).toBeGreaterThan(Date.now() - 2 * 60 * 60 * 1000);
+      const start = await service.resolveDayWindowStart(USER_ID);
+      expect(start.getTime()).toBe(resetAt.getTime());
     });
 
-    it('3) quota_reset_at="25h ago" (만료) → GREATEST(24h, 25h) = 24h 선택 (안전)', async () => {
-      configRepo.findOne.mockResolvedValue(makeConfig());
-      const farPast = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    it('reset_at 이 자정보다 이름(어제) → 자정 우선', async () => {
+      const resetAt = new Date(startOfTodayKst().getTime() - 60 * 60 * 1000); // 어제 23:00 KST
       userQuotaRepo.findOne.mockResolvedValue({
         userId: USER_ID,
-        quotaResetAt: { '*': farPast },
+        quotaResetAt: { '*': resetAt.toISOString() },
       } as unknown as UserAiQuota);
-      logRepo.count.mockResolvedValue(0);
-      await service.checkAndPrepare(USER_ID, 'note_summary');
-      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
-      const between = callWhere.createdAt as { _value: Date[] };
-      const start = between._value[0];
-      // 24h ago 가 25h ago 보다 최근 → start ≈ 24h ago
-      const expected24hAgo = Date.now() - 24 * 60 * 60 * 1000;
-      // 1분 오차 허용
-      expect(Math.abs(start.getTime() - expected24hAgo)).toBeLessThan(60_000);
+      const start = await service.resolveDayWindowStart(USER_ID);
+      expect(start.getTime()).toBe(startOfTodayKst().getTime());
     });
 
-    it('4) user_ai_quotas row 있고 quota_reset_at={} (빈 객체) → 24h ago 그대로', async () => {
-      configRepo.findOne.mockResolvedValue(makeConfig());
+    it('quota_reset_at={} (빈 객체) → 자정', async () => {
       userQuotaRepo.findOne.mockResolvedValue({
         userId: USER_ID,
         quotaResetAt: {},
       } as UserAiQuota);
+      const start = await service.resolveDayWindowStart(USER_ID);
+      expect(start.getTime()).toBe(startOfTodayKst().getTime());
+    });
+  });
+
+  // ── 웨이브 A — resolveRolling24hStart (per-note 전용 — 롤링 24h 유지) ──
+  describe('resolveRolling24hStart (per-note 롤링 유지)', () => {
+    it('reset_at 없음 → 24h ago (자정 아님)', async () => {
+      userQuotaRepo.findOne.mockResolvedValue(null);
+      const start = await service.resolveRolling24hStart(USER_ID);
+      const expected = Date.now() - 24 * 60 * 60 * 1000;
+      expect(Math.abs(start.getTime() - expected)).toBeLessThan(2000);
+    });
+
+    it('reset_at="1h ago" → GREATEST(24h ago, 1h ago) = 1h ago', async () => {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      userQuotaRepo.findOne.mockResolvedValue({
+        userId: USER_ID,
+        quotaResetAt: { '*': oneHourAgo.toISOString() },
+      } as unknown as UserAiQuota);
+      const start = await service.resolveRolling24hStart(USER_ID);
+      expect(start.getTime()).toBe(oneHourAgo.getTime());
+    });
+
+    it('reset_at="25h ago"(만료) → GREATEST(24h, 25h) = 24h 선택', async () => {
+      const farPast = new Date(Date.now() - 25 * 60 * 60 * 1000);
+      userQuotaRepo.findOne.mockResolvedValue({
+        userId: USER_ID,
+        quotaResetAt: { '*': farPast.toISOString() },
+      } as unknown as UserAiQuota);
+      const start = await service.resolveRolling24hStart(USER_ID);
+      const expected = Date.now() - 24 * 60 * 60 * 1000;
+      expect(Math.abs(start.getTime() - expected)).toBeLessThan(2000);
+    });
+  });
+
+  // ── 웨이브 A — checkAndPrepare day 윈도우 = 자정, month = KST 경계 ──
+  describe('웨이브 A — checkAndPrepare 윈도우 (자정/월 KST)', () => {
+    it('day 카운트 윈도우 시작 = 오늘 KST 자정 (reset_at 없음)', async () => {
+      configRepo.findOne.mockResolvedValue(makeConfig());
+      userQuotaRepo.findOne.mockResolvedValue(null);
       logRepo.count.mockResolvedValue(0);
       await service.checkAndPrepare(USER_ID, 'note_summary');
-      // cost hardening 🟡1 — where 는 billableCallWhere 배열 (OR 2갈래, createdAt 동일)
-      const callWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
-      const between = callWhere.createdAt as { _value: Date[] };
-      const start = between._value[0];
-      const expected24hAgo = Date.now() - 24 * 60 * 60 * 1000;
-      expect(Math.abs(start.getTime() - expected24hAgo)).toBeLessThan(60_000);
+      const dayWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
+      const between = dayWhere.createdAt as { _value: Date[] };
+      expect(between._value[0].getTime()).toBe(startOfTodayKst().getTime());
+    });
+
+    it('month 카운트 윈도우 = KST 월 경계 (startOfMonthKst ~ startOfNextMonthKst)', async () => {
+      configRepo.findOne.mockResolvedValue(makeConfig({ monthLimit: 1000 }));
+      userQuotaRepo.findOne.mockResolvedValue(null);
+      logRepo.count.mockResolvedValueOnce(0).mockResolvedValueOnce(0); // day, month
+      await service.checkAndPrepare(USER_ID, 'note_summary');
+      const monthWhere = (logRepo.count as jest.Mock).mock.calls[1][0].where[0];
+      const between = monthWhere.createdAt as { _value: Date[] };
+      expect(between._value[0].getTime()).toBe(startOfMonthKst().getTime());
+      expect(between._value[1].getTime()).toBe(startOfNextMonthKst().getTime());
+    });
+
+    it('getMyQuotas — dayUsed 윈도우=자정, month=KST 경계 (표시 정합)', async () => {
+      configRepo.find.mockResolvedValue([
+        makeConfig({ feature: 'note_summary' }),
+      ]);
+      userQuotaRepo.findOne.mockResolvedValue(null);
+      logRepo.count.mockResolvedValue(0);
+      logRepo.findOne.mockResolvedValue(null);
+      await service.getMyQuotas(USER_ID);
+      // getMyQuotas 는 feature 당 [dayUsed, monthUsed] 2회 count (Promise.all 순서 보존)
+      const dayWhere = (logRepo.count as jest.Mock).mock.calls[0][0].where[0];
+      const monthWhere = (logRepo.count as jest.Mock).mock.calls[1][0].where[0];
+      const dayBetween = dayWhere.createdAt as { _value: Date[] };
+      const monthBetween = monthWhere.createdAt as { _value: Date[] };
+      expect(dayBetween._value[0].getTime()).toBe(startOfTodayKst().getTime());
+      expect(monthBetween._value[0].getTime()).toBe(
+        startOfMonthKst().getTime(),
+      );
+      expect(monthBetween._value[1].getTime()).toBe(
+        startOfNextMonthKst().getTime(),
+      );
     });
   });
 });

@@ -124,8 +124,8 @@ export class NoteSummaryService {
       const perNoteLimit =
         cfg?.perResourceDayLimit ?? NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H;
 
-      // 5.6.9 — quota_reset_at 적용 (QuotaCheckService 단일 진입점)
-      const since24h = await this.quotaCheck.resolveSince24h(userId);
+      // 웨이브 A — per-note 가드는 롤링 24h 유지 (CEO 결정). 사용자 일 한도만 자정 리셋.
+      const since24h = await this.quotaCheck.resolveRolling24hStart(userId);
       // 5.6.8 fix — blocked/error row 제외 (QuotaCheckService 와 동일 정책).
       const perNoteCount = await em.count(LlmCallLog, {
         where: billableCallWhere({
@@ -274,8 +274,8 @@ export class NoteSummaryService {
     const perNoteLimit =
       cfg?.perResourceDayLimit ?? NOTE_SUMMARY_LIMITS.PER_NOTE_PER_24H;
 
-    // 5.6.9 — quota_reset_at 적용 (summarize 와 동일 정책)
-    const since24h = await this.quotaCheck.resolveSince24h(userId);
+    // 웨이브 A — per-note 가드는 롤링 24h 유지 (summarize 와 동일 정책)
+    const since24h = await this.quotaCheck.resolveRolling24hStart(userId);
     // 5.6.8 fix — summarize 와 동일 status 필터 (ok·retry_parsing 만 카운트)
     const perNoteUsed = await this.llmLogRepo.count({
       where: billableCallWhere({
