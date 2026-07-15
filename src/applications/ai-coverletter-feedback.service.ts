@@ -8,7 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { LlmService } from '../ai/llm.service';
+import { LlmService, type LlmCallBlocked } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
@@ -274,10 +274,7 @@ export class AiCoverletterFeedbackService {
     if (result.status !== 'ok') {
       return {
         status: 'error',
-        reason:
-          result.status === 'error'
-            ? (result.errorMessage ?? '점검에 실패했어요. 다시 시도해 주세요.')
-            : '점검이 차단됐어요. 잠시 후 다시 시도해 주세요.',
+        reason: this.blockedReason(result),
       };
     }
 
@@ -304,5 +301,33 @@ export class AiCoverletterFeedbackService {
       feedback,
       meta: { callLogId: result.callLogId ?? null },
     };
+  }
+
+  /**
+   * 추가 후보 (웨이브) — 심층 점검 blocked 문구 분화.
+   * 범용 "점검이 차단됐어요" 가 5원인(코인 부족·동의·입력 초과·moderation·비용가드)을 뭉쳐
+   * 재시도해도 실패하는 원인(코인·동의·입력 초과)을 사용자가 구분 못 했음.
+   *
+   * 이 시점의 blocked_quota 는 코인 부족 또는 중복 진입(ALREADY_RUNNING) 뿐 —
+   * 일/월/쿨다운/kill switch 는 이미 step 3 quotaCheck 에서 걸러졌다.
+   */
+  private blockedReason(result: LlmCallBlocked): string {
+    if (result.status === 'error') {
+      return result.errorMessage ?? '점검에 실패했어요. 다시 시도해 주세요.';
+    }
+    if (result.code === 'ALREADY_RUNNING') {
+      return '이미 점검이 진행 중이에요. 잠시만 기다려 주세요.';
+    }
+    switch (result.status) {
+      case 'blocked_quota':
+        return '치뽀 코인이 부족해요. 충전 후 다시 시도해 주세요.';
+      case 'blocked_consent':
+        return 'AI 이용 동의가 필요해요. 설정에서 동의 후 다시 시도해 주세요.';
+      case 'blocked_input_cap':
+        return '내용이 너무 길어요. 답변을 조금 줄여서 다시 시도해 주세요.';
+      default:
+        // blocked_moderation · blocked_cost_quota · 기타
+        return '점검이 차단됐어요. 잠시 후 다시 시도해 주세요.';
+    }
   }
 }

@@ -36,7 +36,7 @@ export class ThresholdCheckService {
     private readonly discord: DiscordNotifier,
   ) {}
 
-  /** 10분 cron. 임계치 3종 순차 체크. enabled=false 면 전체 skip */
+  /** 10분 cron. 임계치 4종 순차 체크. enabled=false 면 전체 skip */
   @Cron(CronExpression.EVERY_10_MINUTES)
   async tick(): Promise<void> {
     try {
@@ -45,9 +45,55 @@ export class ThresholdCheckService {
       await this.checkDailyCost(cfg.dailyCostThresholdUsd);
       await this.checkHourlyErrorRate(cfg.hourlyErrorRateThreshold);
       await this.checkVsYesterday(cfg.vsYesterdayIncreaseThreshold);
+      // 웨이브 D — 코인 차감 feature 이상 사용 감시 (쿨다운·한도 제거의 안전망)
+      await this.checkAbnormalCoinUsage(cfg.abuserSuspectDailyCalls);
     } catch (err) {
       this.logger.error(`tick failed: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * 웨이브 D — 사용자별 최근 24h 코인 차감 feature 호출 수가 임계 초과 시 critical 알림.
+   *
+   * - 대상: feature_coin_meta.charges_coins=true feature (자소서·면접 코인 소비 기능)
+   * - 카운트: billable(ok·retry_parsing·토큰>0 error) 만 — 중복 진입 차단(blocked_quota) 등 제외
+   * - 임계: admin 조절 alert_thresholds.abuser_suspect_daily_calls (기본 100)
+   * - 밴은 수동 (기존 admin 밴/오버라이드 도구). 여기선 감시 알림만.
+   * - dedup: 기존 fireAlert 패턴 (alert_type 별 1h). 초과 유저를 한 메시지로 묶어 1회 발송.
+   *
+   * 기존 abuser-ban(일 한도 3일 연속 도달)과 중복 아님 — 한도 10000 전환으로 그 경로는
+   * 사실상 발동 불가. 본 감시가 코인 feature 남용의 실질 안전망.
+   */
+  async checkAbnormalCoinUsage(threshold: number): Promise<void> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const rows = await this.logRepo
+      .createQueryBuilder('l')
+      .select('l.user_id', 'userId')
+      .addSelect('COUNT(*)', 'calls')
+      .where('l.created_at >= :since', { since })
+      .andWhere(
+        'l.feature IN (SELECT feature FROM feature_coin_meta WHERE charges_coins = TRUE)',
+      )
+      .andWhere(
+        "(l.status IN ('ok', 'retry_parsing') OR (l.status = 'error' AND l.completion_tokens > 0))",
+      )
+      .groupBy('l.user_id')
+      .having('COUNT(*) > :threshold', { threshold })
+      .orderBy('calls', 'DESC')
+      .getRawMany<{ userId: string; calls: string }>();
+
+    if (rows.length === 0) return;
+
+    const maxCalls = Math.max(...rows.map((r) => Number(r.calls)));
+    const lines = rows
+      .map((r) => `- user=${r.userId} calls=${r.calls}`)
+      .join('\n');
+    await this.fireAlert(
+      'abnormal_coin_usage',
+      maxCalls,
+      threshold,
+      `🪙 코인 차감 기능 이상 사용 감지 (최근 24h > ${threshold}회)\n${rows.length}명\n${lines}\n대응: admin 밴/개별 한도 오버라이드`,
+    );
   }
 
   async checkDailyCost(threshold: number): Promise<void> {

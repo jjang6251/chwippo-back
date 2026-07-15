@@ -278,6 +278,77 @@ describe('AiCoverletterFeedbackService', () => {
     expect(r.reason).toBe('provider down');
   });
 
+  // ── 추가 후보 (웨이브) — blocked 문구 분화 ──
+  describe('blocked 문구 분화', () => {
+    it('blocked_quota (코인 부족) → "치뽀 코인이 부족해요"', async () => {
+      llm.call.mockResolvedValue({
+        status: 'blocked_quota',
+        text: null,
+        errorMessage: '코인이 부족해요',
+        callLogId: 'log-q',
+      });
+      const r = await service.review(USER_ID, CL_ID);
+      expect(r.status).toBe('error');
+      expect(r.reason).toContain('치뽀 코인이 부족해요');
+    });
+
+    it('blocked_quota + code ALREADY_RUNNING → "이미 점검이 진행 중"', async () => {
+      llm.call.mockResolvedValue({
+        status: 'blocked_quota',
+        text: null,
+        errorMessage: '이미 처리 중이에요. 잠시만 기다려 주세요.',
+        callLogId: 'log-r',
+        code: 'ALREADY_RUNNING',
+      });
+      const r = await service.review(USER_ID, CL_ID);
+      expect(r.reason).toContain('이미 점검이 진행 중');
+    });
+
+    it('blocked_consent → "AI 이용 동의가 필요해요"', async () => {
+      llm.call.mockResolvedValue({
+        status: 'blocked_consent',
+        text: null,
+        errorMessage: '동의 필요',
+        callLogId: 'log-c',
+      });
+      const r = await service.review(USER_ID, CL_ID);
+      expect(r.reason).toContain('AI 이용 동의가 필요해요');
+    });
+
+    it('blocked_input_cap → "내용이 너무 길어요"', async () => {
+      llm.call.mockResolvedValue({
+        status: 'blocked_input_cap',
+        text: null,
+        errorMessage: '입력 초과',
+        callLogId: 'log-i',
+      });
+      const r = await service.review(USER_ID, CL_ID);
+      expect(r.reason).toContain('내용이 너무 길어요');
+    });
+
+    it('blocked_moderation → 기존 범용 문구 유지', async () => {
+      llm.call.mockResolvedValue({
+        status: 'blocked_moderation',
+        text: null,
+        errorMessage: 'flagged',
+        callLogId: 'log-m',
+      });
+      const r = await service.review(USER_ID, CL_ID);
+      expect(r.reason).toContain('점검이 차단됐어요');
+    });
+
+    it('blocked_cost_quota (비용 가드) → 기존 범용 문구 유지', async () => {
+      llm.call.mockResolvedValue({
+        status: 'blocked_cost_quota',
+        text: null,
+        errorMessage: '비용 한도',
+        callLogId: 'log-cc',
+      });
+      const r = await service.review(USER_ID, CL_ID);
+      expect(r.reason).toContain('점검이 차단됐어요');
+    });
+  });
+
   it('성공 시 결과 영속화 — clRepo.update(feedback + lastFeedbackAt) 호출', async () => {
     const r = await service.review(USER_ID, CL_ID);
 

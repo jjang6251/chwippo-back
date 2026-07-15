@@ -161,7 +161,7 @@ export class QuotaNotifyService {
       const label = getFeatureLabel(feature);
       const body =
         scope === 'day'
-          ? `오늘 ${label} 한도를 모두 사용했어요. 사용 후 24시간이 지나면 그만큼 다시 이용할 수 있어요.`
+          ? `오늘 ${label} 한도를 모두 사용했어요. 자정(KST)이 지나면 다시 이용할 수 있어요.`
           : `이번 달 ${label} 한도를 모두 사용했어요. 다음 달에 다시 이용할 수 있어요.`;
       await this.dataSource.query(
         `INSERT INTO notifications (user_id, type, title, body, deep_link, payload)

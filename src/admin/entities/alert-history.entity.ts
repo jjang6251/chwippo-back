@@ -14,7 +14,9 @@ export type AlertType =
   | 'test'
   // 5.6.10 — provider health cron (5분) detect status 변경
   | 'provider_down'
-  | 'provider_up';
+  | 'provider_up'
+  // 웨이브 D — 사용자별 24h 코인차감 feature 호출 수 임계 초과 (쿨다운·한도 제거 대신 감시)
+  | 'abnormal_coin_usage';
 
 export type WebhookStatus =
   | 'sent'

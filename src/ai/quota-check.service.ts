@@ -11,6 +11,11 @@ import {
 import { LlmCallLog, type LlmFeature } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
 import { QuotaNotifyService } from './quota-notify.service';
+import {
+  startOfMonthKst,
+  startOfNextMonthKst,
+  startOfTodayKst,
+} from '../common/datetime';
 
 /**
  * F6 PR 2 Phase 1 — 모든 LLM caller 가 호출하는 단일 quota 진입점.
@@ -94,12 +99,32 @@ export class QuotaCheckService {
   ) {}
 
   /**
-   * 5.6.9 — quota_reset_at 적용 시작 시각 계산.
-   * GREATEST(24h ago, user_ai_quotas.quota_reset_at['*'])
+   * 쿼터 정책 웨이브 A — 사용자 일 한도 윈도우 시작.
+   * GREATEST(오늘 KST 자정, user_ai_quotas.quota_reset_at['*'] override)
    *
-   * NoteSummaryService 의 per-note 카운트도 같은 정책 (single source of truth).
+   * - KST-fixed (Asia/Seoul) — 서버 로컬 TZ(Railway UTC)와 무관하게 매일 00:00 KST 리셋.
+   * - admin quota_reset_at 오버라이드가 자정보다 늦으면 오버라이드 우선(리셋 후만 카운트),
+   *   이르면(이미 지난 override) 자정 우선.
+   *
+   * per-note 리소스 가드(노트당 5회)는 CEO 결정으로 롤링 유지 → resolveRolling24hStart 사용.
    */
-  async resolveSince24h(userId: string): Promise<Date> {
+  async resolveDayWindowStart(userId: string): Promise<Date> {
+    const midnight = startOfTodayKst();
+    const row = await this.userQuotaRepo.findOne({ where: { userId } });
+    const resetIso = row?.quotaResetAt?.['*'];
+    if (!resetIso) return midnight;
+    const resetAt = new Date(resetIso);
+    return resetAt > midnight ? resetAt : midnight;
+  }
+
+  /**
+   * 쿼터 정책 웨이브 A — per-note 리소스 가드 전용 롤링 24h 윈도우 시작.
+   * GREATEST(24h ago, user_ai_quotas.quota_reset_at['*'] override)
+   *
+   * 노트당 5회 한도(NoteSummaryService)는 자정이 아니라 롤링 유지 (CEO 결정).
+   * 사용자 일 한도(checkAndPrepare)는 resolveDayWindowStart(자정) 사용 — 정확히 분기.
+   */
+  async resolveRolling24hStart(userId: string): Promise<Date> {
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const row = await this.userQuotaRepo.findOne({ where: { userId } });
     const resetIso = row?.quotaResetAt?.['*'];
@@ -153,15 +178,15 @@ export class QuotaCheckService {
       override,
     );
 
-    // ── 5. day 카운트 ── (5.6.9: reset_at 적용)
+    // ── 5. day 카운트 ── (웨이브 A: KST 자정 리셋 + reset_at override)
     const now = new Date();
-    const since24h = await this.resolveSince24h(userId);
+    const dayStart = await this.resolveDayWindowStart(userId);
     // cost hardening 🟡1 — 토큰 소모된 실패도 한도 집계 (billableCallWhere)
     const dayCount = await this.logRepo.count({
       where: billableCallWhere({
         userId,
         feature,
-        createdAt: Between(since24h, now),
+        createdAt: Between(dayStart, now),
       }),
     });
     if (dayCount >= effectiveDayLimit) {
@@ -176,9 +201,9 @@ export class QuotaCheckService {
       };
     }
 
-    // ── 6. month 카운트 ──
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    // ── 6. month 카운트 ── (웨이브 A 버그 수정: 서버 로컬(UTC) → KST 월 경계)
+    const monthStart = startOfMonthKst();
+    const monthEnd = startOfNextMonthKst();
     const monthCount = await this.logRepo.count({
       where: billableCallWhere({
         userId,
@@ -257,10 +282,10 @@ export class QuotaCheckService {
 
     const override = await this.abuserBan.getActiveOverride(userId);
     const now = new Date();
-    // 5.6.9 — reset_at 적용
-    const since24h = await this.resolveSince24h(userId);
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    // 웨이브 A — dayUsed=KST 자정 리셋, month=KST 월 경계 (checkAndPrepare 와 동일 전환)
+    const dayStart = await this.resolveDayWindowStart(userId);
+    const monthStart = startOfMonthKst();
+    const monthEnd = startOfNextMonthKst();
 
     const results = await Promise.all(
       configs.map(async (c) => {
@@ -270,7 +295,7 @@ export class QuotaCheckService {
             where: billableCallWhere({
               userId,
               feature: c.feature,
-              createdAt: Between(since24h, now),
+              createdAt: Between(dayStart, now),
             }),
           }),
           this.logRepo.count({

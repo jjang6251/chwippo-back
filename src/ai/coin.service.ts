@@ -125,6 +125,16 @@ export class CoinService {
     return Math.ceil(equivalentTokens / 100) / 10;
   }
 
+  /**
+   * 쿼터 정책 웨이브 C — feature 가 코인을 차감하는지 여부 (in-flight lock 적용 판정용).
+   * COIN_SYSTEM_ENABLED 와 무관 — 동시호출 방어(lock)는 과금 rollout 상태와 별개로 필요.
+   * feature_coin_meta 행 없으면 false (우리 부담 취급).
+   */
+  async chargesCoins(feature: LlmFeature): Promise<boolean> {
+    const meta = await this.featureMetaRepo.findOne({ where: { feature } });
+    return meta?.chargesCoins ?? false;
+  }
+
   // ──────────────────────────────────────────────────────────────
   // canCharge (호출 시작 전 추정 check)
   // ──────────────────────────────────────────────────────────────

@@ -711,8 +711,8 @@ describe('NoteSummaryService', () => {
       expect(r.remainingPerNote).toBe(0); // Math.max(0, ...)
     });
 
-    // ── 5.6.9 — quota_reset_at 적용 (QuotaCheckService.resolveSince24h 위임) ──
-    it('5.6.9-a) getStatus → quotaCheck.resolveSince24h 호출 (single source of truth)', async () => {
+    // ── 5.6.9 — quota_reset_at 적용 (QuotaCheckService.resolveRolling24hStart 위임) ──
+    it('5.6.9-a) getStatus → quotaCheck.resolveRolling24hStart 호출 (single source of truth)', async () => {
       logFindOne.mockResolvedValue(makeLog());
       llmLogCount.mockResolvedValue(0);
       configRepo.findOne.mockResolvedValue({
@@ -722,18 +722,18 @@ describe('NoteSummaryService', () => {
       } as FeatureQuotaConfig);
       // 1시간 전 반환 시 reset 효과
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-      quotaCheck.resolveSince24h.mockResolvedValueOnce(oneHourAgo);
+      quotaCheck.resolveRolling24hStart.mockResolvedValueOnce(oneHourAgo);
       await service.getStatus('user-1', 'log-1');
-      expect(quotaCheck.resolveSince24h).toHaveBeenCalledWith('user-1');
+      expect(quotaCheck.resolveRolling24hStart).toHaveBeenCalledWith('user-1');
       const where = llmLogCount.mock.calls[0][0].where[0]; // billableCallWhere 배열
       // Between 의 시작 시각이 oneHourAgo 와 같아야 함
       const between = where.createdAt as { _value: Date[] };
       expect(between._value[0]).toBe(oneHourAgo);
     });
 
-    it('5.6.9-b) summarize 도 동일 — perNoteCount 쿼리가 resolveSince24h 사용', async () => {
+    it('5.6.9-b) summarize 도 동일 — perNoteCount 쿼리가 resolveRolling24hStart 사용', async () => {
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-      quotaCheck.resolveSince24h.mockResolvedValueOnce(oneHourAgo);
+      quotaCheck.resolveRolling24hStart.mockResolvedValueOnce(oneHourAgo);
       configRepo.findOne.mockResolvedValue({
         feature: 'note_summary',
         tier: 'free',
@@ -752,7 +752,7 @@ describe('NoteSummaryService', () => {
         outputRedacted: false,
       });
       await service.summarize('user-1', 'log-1');
-      expect(quotaCheck.resolveSince24h).toHaveBeenCalledWith('user-1');
+      expect(quotaCheck.resolveRolling24hStart).toHaveBeenCalledWith('user-1');
       const where = emCount.mock.calls[0][1].where[0]; // billableCallWhere 배열
       const between = where.createdAt as { _value: Date[] };
       expect(between._value[0]).toBe(oneHourAgo);
