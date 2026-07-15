@@ -7,7 +7,11 @@ import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
 import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
-import { CURRENT_AI_CONSENT_VERSION, LlmService } from './llm.service';
+import {
+  CURRENT_AI_CONSENT_VERSION,
+  LlmService,
+  type LlmCallBlocked,
+} from './llm.service';
 import {
   LlmJsonParseError,
   LlmProvider,
@@ -45,6 +49,11 @@ describe('LlmService', () => {
   let openai: MutableProvider;
   let anthropic: MutableProvider;
   let costGuardMock: { check: jest.Mock; invalidate: jest.Mock };
+  let coinServiceMock: {
+    canCharge: jest.Mock;
+    charge: jest.Mock;
+    chargesCoins: jest.Mock;
+  };
 
   const makeUser = (overrides: Partial<User> = {}): User => ({
     id: 'u-1',
@@ -139,7 +148,9 @@ describe('LlmService', () => {
     });
 
     // PR_B1 — CoinService mock (canCharge 항상 통과, charge 0 코인)
-    const coinService = {
+    // 웨이브 C — chargesCoins 기본 false → in-flight lock 미개입 (기존 테스트 동작 보존).
+    //   lock 테스트는 coinServiceMock.chargesCoins.mockResolvedValue(true) 로 전환.
+    const coinService = (coinServiceMock = {
       canCharge: jest.fn().mockResolvedValue({ ok: true }),
       charge: jest.fn().mockResolvedValue({
         coinCost: 0,
@@ -152,7 +163,8 @@ describe('LlmService', () => {
           web_search: 0,
         },
       }),
-    };
+      chargesCoins: jest.fn().mockResolvedValue(false),
+    });
 
     // AI cost guard — 기본 통과 mock (개별 spec 가 mockReturnValueOnce 로 차단 케이스 가능)
     const costGuard = (costGuardMock = {
@@ -1305,6 +1317,180 @@ describe('LlmService', () => {
           .find((row) => row.status === 'ok');
         expect(okRow?.outputRedacted).toBe(true);
       });
+    });
+  });
+
+  // ── 웨이브 C — in-flight lock (코인 차감 feature 동시 중복 진입 차단) ──
+  describe('웨이브 C — in-flight lock', () => {
+    const OK_RESULT = {
+      text: 'ok',
+      promptTokens: 10,
+      completionTokens: 5,
+      finishReason: 'stop',
+    };
+    const CALL_INPUT = {
+      userId: 'u-1',
+      feature: 'note_summary' as const,
+      systemPrompt: 's',
+      userPrompt: 'u',
+    };
+
+    it('동시 2요청 → 1 ok + 1 ALREADY_RUNNING (provider 미호출·audit row)', async () => {
+      coinServiceMock.chargesCoins.mockResolvedValue(true);
+      let resolveProvider!: (v: unknown) => void;
+      openai.complete.mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            resolveProvider = (val) => res(val);
+          }),
+      );
+      openai.complete.mockResolvedValue(OK_RESULT);
+
+      const p1 = service.call({ ...CALL_INPUT });
+      // p1 이 lock 획득 + provider 진입할 때까지 microtask/macrotask drain
+      await new Promise((r) => setImmediate(r));
+
+      const r2 = await service.call({ ...CALL_INPUT });
+      expect(r2.status).toBe('blocked_quota');
+      expect((r2 as LlmCallBlocked).code).toBe('ALREADY_RUNNING');
+      // 두 번째는 provider 미호출 (p1 의 1회만)
+      expect(openai.complete).toHaveBeenCalledTimes(1);
+      // ALREADY_RUNNING audit row
+      const blockedRow = logRepo.save.mock.calls
+        .map((c) => c[0] as Partial<LlmCallLog>)
+        .find((row) => row.errorMessage?.includes('ALREADY_RUNNING'));
+      expect(blockedRow).toBeDefined();
+      expect(blockedRow!.status).toBe('blocked_quota');
+
+      resolveProvider(OK_RESULT);
+      const r1 = await p1;
+      expect(r1.status).toBe('ok');
+    });
+
+    it('finally 해제 후 재요청 ok (lock 회수)', async () => {
+      coinServiceMock.chargesCoins.mockResolvedValue(true);
+      openai.complete.mockResolvedValue(OK_RESULT);
+      const r1 = await service.call({ ...CALL_INPUT });
+      expect(r1.status).toBe('ok');
+      const r2 = await service.call({ ...CALL_INPUT });
+      expect(r2.status).toBe('ok');
+      expect(openai.complete).toHaveBeenCalledTimes(2);
+    });
+
+    it('TTL 2분 초과 항목은 stale 로 회수 (재획득 허용)', async () => {
+      coinServiceMock.chargesCoins.mockResolvedValue(true);
+      const t0 = Date.now();
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(t0);
+      let resolveFirst!: (v: unknown) => void;
+      openai.complete.mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            resolveFirst = (val) => res(val);
+          }),
+      );
+      openai.complete.mockResolvedValue(OK_RESULT);
+
+      const p1 = service.call({ ...CALL_INPUT }); // t0 에 lock 획득 (hang)
+      await new Promise((r) => setImmediate(r));
+
+      // 2분 초과 경과 → 다음 획득 시도에서 stale 회수
+      nowSpy.mockReturnValue(t0 + 2 * 60 * 1000 + 1000);
+      const r2 = await service.call({ ...CALL_INPUT });
+      expect(r2.status).toBe('ok'); // stale → 재획득 성공
+
+      resolveFirst(OK_RESULT);
+      await p1;
+      nowSpy.mockRestore();
+    });
+
+    it('코인 미차감 feature (chargesCoins=false) → lock 미적용, 동시 2요청 모두 진입', async () => {
+      coinServiceMock.chargesCoins.mockResolvedValue(false);
+      openai.complete.mockResolvedValue(OK_RESULT);
+      const [r1, r2] = await Promise.all([
+        service.call({ ...CALL_INPUT }),
+        service.call({ ...CALL_INPUT }),
+      ]);
+      expect(r1.status).toBe('ok');
+      expect(r2.status).toBe('ok');
+      expect(openai.complete).toHaveBeenCalledTimes(2);
+    });
+
+    it('preBlocked 는 lock 대상 아님 (audit-only, chargesCoins 조회 skip)', async () => {
+      coinServiceMock.chargesCoins.mockResolvedValue(true);
+      const r = await service.call({
+        ...CALL_INPUT,
+        preBlockedStatus: 'blocked_quota',
+        preBlockedReason: '일일 한도 초과',
+      });
+      expect(r.status).toBe('blocked_quota');
+      expect((r as LlmCallBlocked).code).toBeUndefined(); // ALREADY_RUNNING 아님
+      expect(coinServiceMock.chargesCoins).not.toHaveBeenCalled();
+    });
+
+    it('스트림 — lock 보유 중 동일 user+feature callStream → ALREADY_RUNNING error event + audit', async () => {
+      coinServiceMock.chargesCoins.mockResolvedValue(true);
+      const schema = {
+        name: 'chat',
+        schema: { type: 'object', properties: { reply: { type: 'string' } } },
+      };
+      const collect = async (gen: AsyncGenerator<unknown>) => {
+        const events: Array<{ type: string; message?: string }> = [];
+        for await (const e of gen) {
+          events.push(e as { type: string; message?: string });
+        }
+        return events;
+      };
+      let releaseDone!: () => void;
+      const donePromise = new Promise<void>((res) => {
+        releaseDone = res;
+      });
+      anthropic.callJsonStream = jest
+        .fn()
+        .mockImplementation(async function* () {
+          yield { type: 'partial', json: { reply: '진행' } };
+          await donePromise; // done 전까지 lock 유지
+          yield {
+            type: 'done',
+            json: { reply: '완료' },
+            response: {
+              text: '{"reply":"완료"}',
+              promptTokens: 30,
+              completionTokens: 10,
+              finishReason: 'tool_use',
+            },
+          };
+        });
+
+      const gen1 = service.callStream({
+        userId: 'u-1',
+        feature: 'coverletter_chat',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: schema,
+      });
+      const first = await gen1.next(); // partial — lock 획득 + provider 진입
+      expect(first.value).toMatchObject({ type: 'partial' });
+
+      const events2 = await collect(
+        service.callStream({
+          userId: 'u-1',
+          feature: 'coverletter_chat',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+        }),
+      );
+      expect(events2).toEqual([
+        { type: 'error', message: '이미 처리 중이에요. 잠시만 기다려 주세요.' },
+      ]);
+      const blockedRow = logRepo.save.mock.calls
+        .map((c) => c[0] as Partial<LlmCallLog>)
+        .find((row) => row.errorMessage?.includes('ALREADY_RUNNING'));
+      expect(blockedRow).toBeDefined();
+      expect(blockedRow!.status).toBe('blocked_quota');
+
+      releaseDone();
+      await collect(gen1); // 첫 스트림 완료 → lock 해제
     });
   });
 });

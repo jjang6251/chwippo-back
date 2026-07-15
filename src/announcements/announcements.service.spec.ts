@@ -122,8 +122,8 @@ describe('AnnouncementsService', () => {
         body: '내용',
         type: 'banner' as const,
         active: true,
-        starts_at: null,
-        ends_at: null,
+        starts_at: undefined,
+        ends_at: undefined,
       };
       const result = await service.create(dto);
       expect(repo.create).toHaveBeenCalled();
@@ -143,7 +143,7 @@ describe('AnnouncementsService', () => {
         type: 'banner' as const,
         active: false,
         starts_at: '2026-06-01T00:00:00.000Z',
-        ends_at: null,
+        ends_at: undefined,
       };
       await service.create(dto);
       const createArg = repo.create.mock.calls[0][0] as Partial<Announcement>;

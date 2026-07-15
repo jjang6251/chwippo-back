@@ -24,6 +24,9 @@ describe('InquiriesService', () => {
     status: 'OPEN',
     user_unread: 0,
     admin_unread: 1,
+    assignedTo: null,
+    priority: 'medium',
+    slaDeadlineAt: null,
     created_at: new Date(),
     ...overrides,
   });
@@ -54,7 +57,7 @@ describe('InquiriesService', () => {
     };
     const mockDataSource = {
       query: jest.fn(),
-      transaction: jest.fn(async (cb: (em: typeof em) => Promise<unknown>) =>
+      transaction: jest.fn(async (cb: (mgr: typeof em) => Promise<unknown>) =>
         cb(em),
       ),
     };

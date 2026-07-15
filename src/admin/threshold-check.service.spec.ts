@@ -38,6 +38,8 @@ describe('ThresholdCheckService', () => {
       addSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      having: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       getMany: jest.fn().mockResolvedValue(raws),
@@ -236,6 +238,70 @@ describe('ThresholdCheckService', () => {
       expect(historyRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ webhookStatus: 'skipped_no_webhook' }),
       );
+    });
+  });
+
+  // ── 웨이브 D — 코인 차감 feature 이상 사용 감시 ──
+  describe('checkAbnormalCoinUsage', () => {
+    it('임계 초과 유저 있음 → critical 알림 + abnormal_coin_usage history', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([{ userId: 'u-1', calls: '250' }]),
+      );
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
+      discord.notify.mockResolvedValue('sent');
+      await service.checkAbnormalCoinUsage(200);
+      expect(discord.notify).toHaveBeenCalledTimes(1);
+      expect(discord.notify).toHaveBeenCalledWith(
+        expect.stringContaining('u-1'),
+        'critical',
+      );
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ alertType: 'abnormal_coin_usage' }),
+      );
+    });
+
+    it('임계 초과 유저 없음 → 무알림', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(makeQb<LlmCallLog>([]));
+      await service.checkAbnormalCoinUsage(200);
+      expect(discord.notify).not.toHaveBeenCalled();
+      expect(historyRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('1h dedup — 최근 sent 있으면 skipped_dedup (알림 생략)', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([{ userId: 'u-1', calls: '300' }]),
+      );
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 1), // 최근 1h sent 있음
+      );
+      await service.checkAbnormalCoinUsage(200);
+      expect(discord.notify).not.toHaveBeenCalled();
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ webhookStatus: 'skipped_dedup' }),
+      );
+    });
+  });
+
+  describe('tick — abnormal_coin_usage 편입', () => {
+    it('enabled=true → checkAbnormalCoinUsage 를 abuserSuspectDailyCalls 로 호출', async () => {
+      thresholds.get.mockResolvedValue({
+        enabled: true,
+        dailyCostThresholdUsd: 50,
+        hourlyErrorRateThreshold: 0.1,
+        vsYesterdayIncreaseThreshold: 200,
+        abuserSuspectDailyCalls: 200,
+      } as AlertThresholds);
+      // 3종은 spy 로 무력화 (query builder mock 불필요)
+      jest.spyOn(service, 'checkDailyCost').mockResolvedValue();
+      jest.spyOn(service, 'checkHourlyErrorRate').mockResolvedValue();
+      jest.spyOn(service, 'checkVsYesterday').mockResolvedValue();
+      const spy = jest
+        .spyOn(service, 'checkAbnormalCoinUsage')
+        .mockResolvedValue();
+      await service.tick();
+      expect(spy).toHaveBeenCalledWith(200);
     });
   });
 });
