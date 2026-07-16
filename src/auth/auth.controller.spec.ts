@@ -18,6 +18,15 @@ const FRONTEND_URL = 'http://localhost:5173';
 const KAKAO_CLIENT_ID = 'kakao-app-id';
 const KAKAO_REDIRECT_URI = 'http://localhost:3000/auth/kakao/callback';
 const VALID_STATE = 'a'.repeat(64); // 32바이트 hex
+const APPLE_SERVICES_ID = 'com.chwippo.web';
+const APPLE_WEB_REDIRECT_URI =
+  'https://api.chwippo.com/auth/apple/web/callback';
+
+// 웹 SIWA 전용 env — 테스트별로 세팅/삭제 (config.get 이 이 store 를 우선 조회)
+const appleWebConfig: Record<string, string | undefined> = {};
+function resetAppleWebConfig(): void {
+  for (const key of Object.keys(appleWebConfig)) delete appleWebConfig[key];
+}
 
 function makeUser(overrides: Partial<User> = {}): User {
   return {
@@ -25,6 +34,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     kakaoId: 'kakao-123',
     appleSub: null,
     appleEmail: null,
+    appleRefreshToken: null,
     nickname: '테스트유저',
     email: 'test@test.com',
     role: 'user',
@@ -96,6 +106,7 @@ const mockAppleAuthService = {
   verifyIdentityToken: jest.fn(),
   extractUserInfo: jest.fn(),
   findOrCreateAppleUser: jest.fn(),
+  exchangeAndStoreRefreshToken: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockAppleS2SService = {
@@ -110,6 +121,7 @@ const mockKakaoNativeService = {
 const mockConfigService = {
   get: jest.fn().mockImplementation((key: string, defaultVal?: string) => {
     if (key === 'FRONTEND_URL') return FRONTEND_URL;
+    if (key in appleWebConfig) return appleWebConfig[key];
     return defaultVal ?? '';
   }),
   getOrThrow: jest.fn().mockImplementation((key: string) => {
@@ -817,6 +829,345 @@ describe('AuthController', () => {
 
       expect(result.user).not.toHaveProperty('kakaoId');
       expect(result.user).not.toHaveProperty('refreshToken');
+    });
+  });
+
+  // ─── GET /auth/apple (웹 SIWA 시작) ────────────────────
+  describe('appleWebLogin() — 웹 SIWA 시작', () => {
+    afterEach(() => resetAppleWebConfig());
+
+    it('SERVICES_ID·REDIRECT_URI 미설정 → apple_web_unavailable redirect · 쿠키 X', () => {
+      const res = makeRes() as unknown as Response;
+
+      controller.appleWebLogin(res);
+
+      expect(res.cookie).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=apple_web_unavailable`,
+      );
+    });
+
+    it('REDIRECT_URI 만 설정(SERVICES_ID 없음) → unavailable', () => {
+      appleWebConfig.APPLE_WEB_REDIRECT_URI = APPLE_WEB_REDIRECT_URI;
+      const res = makeRes() as unknown as Response;
+
+      controller.appleWebLogin(res);
+
+      expect(res.cookie).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=apple_web_unavailable`,
+      );
+    });
+
+    it('SERVICES_ID·REDIRECT_URI 설정 → state 쿠키(SameSite=None·Secure) + Apple authorize redirect', () => {
+      appleWebConfig.APPLE_SERVICES_ID = APPLE_SERVICES_ID;
+      appleWebConfig.APPLE_WEB_REDIRECT_URI = APPLE_WEB_REDIRECT_URI;
+      const res = makeRes() as unknown as Response;
+
+      controller.appleWebLogin(res);
+
+      const cookieCall = (res.cookie as jest.Mock).mock.calls[0] as [
+        string,
+        string,
+        Record<string, unknown>,
+      ];
+      expect(cookieCall[0]).toBe('apple_oauth_state');
+      // 값 = "{state}.{nonce}" (각 32바이트 hex)
+      expect(cookieCall[1]).toMatch(/^[0-9a-f]{64}\.[0-9a-f]{64}$/);
+      expect(cookieCall[2]).toEqual(
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'none',
+          secure: true,
+          path: '/',
+        }),
+      );
+
+      const [state, nonce] = cookieCall[1].split('.');
+      const redirectUrl = (res.redirect as jest.Mock).mock
+        .calls[0][0] as string;
+      expect(redirectUrl).toContain('https://appleid.apple.com/auth/authorize');
+      expect(redirectUrl).toContain(
+        `client_id=${encodeURIComponent(APPLE_SERVICES_ID)}`,
+      );
+      expect(redirectUrl).toContain('response_mode=form_post');
+      expect(redirectUrl).toContain(`state=${state}`);
+      expect(redirectUrl).toContain(`nonce=${nonce}`);
+    });
+
+    it('호출마다 state·nonce 새로 생성 (재사용 X)', () => {
+      appleWebConfig.APPLE_SERVICES_ID = APPLE_SERVICES_ID;
+      appleWebConfig.APPLE_WEB_REDIRECT_URI = APPLE_WEB_REDIRECT_URI;
+      const res1 = makeRes() as unknown as Response;
+      const res2 = makeRes() as unknown as Response;
+
+      controller.appleWebLogin(res1);
+      controller.appleWebLogin(res2);
+
+      const v1 = (res1.cookie as jest.Mock).mock.calls[0][1] as string;
+      const v2 = (res2.cookie as jest.Mock).mock.calls[0][1] as string;
+      expect(v1).not.toBe(v2);
+    });
+  });
+
+  // ─── POST /auth/apple/web/callback (웹 SIWA form_post 콜백) ──
+  describe('appleWebCallback() — 웹 SIWA form_post 콜백', () => {
+    const STATE = 'a'.repeat(64);
+    const NONCE = 'b'.repeat(64);
+    const applePayload = {
+      sub: 'apple-sub-web-1',
+      aud: APPLE_SERVICES_ID,
+      iss: 'https://appleid.apple.com',
+      email: 'web@icloud.com',
+      nonce: NONCE,
+    };
+    const userInfo = {
+      appleSub: 'apple-sub-web-1',
+      email: 'web@icloud.com',
+      isPrivateEmail: false,
+    };
+
+    function makeCallbackReq(
+      body: Record<string, unknown>,
+      cookieValue?: string,
+    ): Request {
+      return {
+        body,
+        cookies:
+          cookieValue === undefined ? {} : { apple_oauth_state: cookieValue },
+        headers: { 'user-agent': 'jest-UA' },
+      } as unknown as Request;
+    }
+
+    beforeEach(() => {
+      appleWebConfig.APPLE_SERVICES_ID = APPLE_SERVICES_ID;
+      appleWebConfig.APPLE_WEB_REDIRECT_URI = APPLE_WEB_REDIRECT_URI;
+      mockAppleAuthService.verifyIdentityToken.mockResolvedValue(applePayload);
+      mockAppleAuthService.extractUserInfo.mockReturnValue(userInfo);
+      mockAppleAuthService.findOrCreateAppleUser.mockResolvedValue({
+        user: makeUser({
+          id: 'u-web-1',
+          appleSub: 'apple-sub-web-1',
+          kakaoId: null,
+        }),
+        isNew: true,
+      });
+      mockAuthService.issueTokens.mockResolvedValue({
+        accessToken: 'web.access.token',
+        refreshToken: 'web.refresh.token',
+      });
+    });
+
+    afterEach(() => resetAppleWebConfig());
+
+    it('state 쿠키 없음 → oauth_state_mismatch · clearCookie(None·Secure) · verify 미호출', async () => {
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq({ state: STATE, id_token: 'tok' }); // 쿠키 없음
+
+      await controller.appleWebCallback(req, res);
+
+      expect(res.clearCookie).toHaveBeenCalledWith('apple_oauth_state', {
+        path: '/',
+        sameSite: 'none',
+        secure: true,
+      });
+      expect(mockAppleAuthService.verifyIdentityToken).not.toHaveBeenCalled();
+      expect(mockAppleAuthService.findOrCreateAppleUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('state 불일치 → oauth_state_mismatch', async () => {
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'tok' },
+        `different.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAppleAuthService.verifyIdentityToken).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('id_token 없음(state 통과) → apple_web_unavailable', async () => {
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq({ state: STATE }, `${STATE}.${NONCE}`);
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAppleAuthService.verifyIdentityToken).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=apple_web_unavailable`,
+      );
+    });
+
+    it('SERVICES_ID 미설정(state·id_token 통과) → apple_web_unavailable', async () => {
+      appleWebConfig.APPLE_SERVICES_ID = undefined;
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'tok' },
+        `${STATE}.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAppleAuthService.verifyIdentityToken).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=apple_web_unavailable`,
+      );
+    });
+
+    it('verifyIdentityToken throw → apple_web_unavailable', async () => {
+      mockAppleAuthService.verifyIdentityToken.mockRejectedValue(
+        new Error('Apple 로그인 검증 실패'),
+      );
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'bad' },
+        `${STATE}.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAppleAuthService.findOrCreateAppleUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=apple_web_unavailable`,
+      );
+    });
+
+    it('nonce fail-closed — payload.nonce 누락 → oauth_state_mismatch', async () => {
+      mockAppleAuthService.verifyIdentityToken.mockResolvedValue({
+        ...applePayload,
+        nonce: undefined,
+      });
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'tok' },
+        `${STATE}.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAppleAuthService.findOrCreateAppleUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('nonce 불일치 → oauth_state_mismatch', async () => {
+      mockAppleAuthService.verifyIdentityToken.mockResolvedValue({
+        ...applePayload,
+        nonce: 'c'.repeat(64),
+      });
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'tok' },
+        `${STATE}.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAppleAuthService.findOrCreateAppleUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('쿠키 nonce 부분 누락(state만) → fail-closed mismatch', async () => {
+      const res = makeRes() as unknown as Response;
+      // 쿠키에 "." 없음 → cookieNonce undefined
+      const req = makeCallbackReq({ state: STATE, id_token: 'tok' }, STATE);
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAppleAuthService.findOrCreateAppleUser).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=oauth_state_mismatch`,
+      );
+    });
+
+    it('정상 → findOrCreate + issueTokens + fragment redirect + refresh 쿠키 + code 교환', async () => {
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'valid.id.token', code: 'auth-code-web' },
+        `${STATE}.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      // aud=SERVICES_ID 로 검증
+      expect(mockAppleAuthService.verifyIdentityToken).toHaveBeenCalledWith(
+        'valid.id.token',
+        APPLE_SERVICES_ID,
+      );
+      // code → refresh_token 교환·저장 (services·redirectUri 전파)
+      expect(
+        mockAppleAuthService.exchangeAndStoreRefreshToken,
+      ).toHaveBeenCalledWith(
+        'u-web-1',
+        'auth-code-web',
+        APPLE_SERVICES_ID,
+        APPLE_WEB_REDIRECT_URI,
+      );
+      expect(res.cookie).toHaveBeenCalledWith(
+        'refresh_token',
+        'web.refresh.token',
+        expect.objectContaining({ httpOnly: true }),
+      );
+      const redirectUrl = (res.redirect as jest.Mock).mock
+        .calls[0][0] as string;
+      expect(redirectUrl).toContain(`${FRONTEND_URL}/login/callback#`);
+      expect(redirectUrl).toContain('access_token=web.access.token');
+      // 토큰은 fragment 에만 (query string 노출 X)
+      expect(redirectUrl).not.toMatch(/\/login\/callback\?[^#]*access_token/);
+    });
+
+    it('code 없음 → 로그인 정상 · exchangeAndStore 미호출 (하위호환)', async () => {
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'valid.id.token' },
+        `${STATE}.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      expect(
+        mockAppleAuthService.exchangeAndStoreRefreshToken,
+      ).not.toHaveBeenCalled();
+      const redirectUrl = (res.redirect as jest.Mock).mock
+        .calls[0][0] as string;
+      expect(redirectUrl).toContain(`${FRONTEND_URL}/login/callback#`);
+    });
+
+    it('정지된 계정 → suspended redirect · 토큰·code교환 미발생', async () => {
+      mockAppleAuthService.findOrCreateAppleUser.mockResolvedValue({
+        user: makeUser({
+          id: 'u-web-susp',
+          appleSub: 'apple-sub-web-1',
+          kakaoId: null,
+          suspendedAt: new Date('2026-06-01'),
+        }),
+        isNew: false,
+      });
+      const res = makeRes() as unknown as Response;
+      const req = makeCallbackReq(
+        { state: STATE, id_token: 'valid.id.token', code: 'x' },
+        `${STATE}.${NONCE}`,
+      );
+
+      await controller.appleWebCallback(req, res);
+
+      expect(mockAuthService.issueTokens).not.toHaveBeenCalled();
+      expect(
+        mockAppleAuthService.exchangeAndStoreRefreshToken,
+      ).not.toHaveBeenCalled();
+      expect((res.redirect as jest.Mock).mock.calls[0][0]).toBe(
+        `${FRONTEND_URL}/login?error=suspended`,
+      );
     });
   });
 });

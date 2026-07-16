@@ -203,7 +203,7 @@ export class UsersService {
    *   2. R2 파일 URL 수집 (DB 삭제 후엔 조회 불가하므로 사전 캐싱)
    *   3. 프로바이더 unlink / revoke (best-effort · 실패해도 로컬 삭제 진행)
    *      - kakaoId 있음 → Kakao unlink API 호출
-   *      - appleSub 있음 → Apple revoke stub (refresh_token 미저장 · 로그만)
+   *      - appleSub 있음 → Apple revoke API 호출 (저장된 apple_refresh_token 사용)
    *   4. DB hard delete (CASCADE로 자식 테이블 · llm_call_logs 등 모두 삭제)
    *   5. R2 cascade 정리 (best-effort)
    *
@@ -220,7 +220,10 @@ export class UsersService {
       await this.identityProvider.unlinkKakao(user.kakaoId);
     }
     if (user.appleSub) {
-      await this.identityProvider.revokeApple(user.appleSub);
+      await this.identityProvider.revokeApple(
+        user.appleRefreshToken,
+        user.appleSub,
+      );
     }
 
     const hadKakao = !!user.kakaoId;

@@ -23,6 +23,17 @@ export const envValidationSchema = Joi.object({
   KAKAO_CLIENT_SECRET: Joi.string().required(),
   KAKAO_REDIRECT_URI: Joi.string().required(),
 
+  // Sign in with Apple.
+  // BUNDLE_ID 는 identity token aud 검증에 항상 필요 → required (기존 getOrThrow 사용처와 정합).
+  // 나머지는 Apple 콘솔 산출물(.p8·Key ID·Services ID)이 없는 로컬/CI 부팅이 안 깨지게 optional.
+  // 미설정 시 revoke·웹 SIWA 는 스킵 (AppleTokenService.isConfigured() 가드).
+  APPLE_BUNDLE_ID: Joi.string().required(),
+  APPLE_TEAM_ID: Joi.string().allow('').optional(),
+  APPLE_KEY_ID: Joi.string().allow('').optional(),
+  APPLE_PRIVATE_KEY: Joi.string().allow('').optional(), // .p8 PEM (개행은 \n 리터럴)
+  APPLE_SERVICES_ID: Joi.string().allow('').optional(), // 웹 SIWA client_id
+  APPLE_WEB_REDIRECT_URI: Joi.string().allow('').optional(), // 웹 SIWA form_post 콜백 URL
+
   // prod에선 required (실수로 누락 시 localhost로 silent redirect 방지)
   FRONTEND_URL: Joi.string().when('NODE_ENV', {
     is: 'production',

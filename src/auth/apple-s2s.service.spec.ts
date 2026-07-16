@@ -17,8 +17,9 @@ import { UserDeletionLog } from '../users/user-deletion-log.entity';
  *
  * 시나리오:
  *   1) verifyAndParse — 정상 · 서명 실패 · events 누락 · JSON 파싱 실패 · type/sub 누락 · empty payload
+ *   1b) aud 배열 분기 — [BUNDLE_ID, SERVICES_ID] 수용 / SERVICES_ID 미설정 시 단일
  *   2) handleNotification dispatch — account-delete / consent-revoked / email-disabled / email-enabled / unknown
- *   3) delete 정책 — Apple only 완전 삭제 / Kakao 병합 시 apple_sub 만 해제 / user 미존재 no-op
+ *   3) delete 정책 — Apple only 완전 삭제 / Kakao 병합 시 apple_sub·apple_refresh_token 해제 / user 미존재 no-op
  *   4) R2 cleanup — 저장 파일 있을 때 deleteFile 호출
  */
 jest.mock('jose', () => ({
@@ -35,14 +36,18 @@ describe('AppleS2SService', () => {
   let userRepo: jest.Mocked<Repository<User>>;
   let storageUsage: jest.Mocked<StorageUsageService>;
   let filesService: jest.Mocked<FilesService>;
+  // aud 배열 분기 검증용 — beforeEach 에서 기본값 세팅, 개별 테스트가 undefined 로 덮어씀
+  let servicesIdValue: string | undefined;
 
   const APPLE_BUNDLE_ID = 'com.chwippo.app';
+  const APPLE_SERVICES_ID = 'com.chwippo.web';
 
   beforeEach(async () => {
     const mockRepo = mock<Repository<User>>();
     const mockStorage = mock<StorageUsageService>();
     const mockFiles = mock<FilesService>();
     mockStorage.collectAllFileUrls.mockResolvedValue([]);
+    servicesIdValue = APPLE_SERVICES_ID;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -64,6 +69,10 @@ describe('AppleS2SService', () => {
             getOrThrow: jest.fn((key: string) => {
               if (key === 'APPLE_BUNDLE_ID') return APPLE_BUNDLE_ID;
               throw new Error(`missing config: ${key}`);
+            }),
+            get: jest.fn((key: string) => {
+              if (key === 'APPLE_SERVICES_ID') return servicesIdValue;
+              return undefined;
             }),
           },
         },
@@ -100,6 +109,29 @@ describe('AppleS2SService', () => {
 
       expect(event.type).toBe('account-delete');
       expect(event.sub).toBe('apple-sub-1');
+    });
+
+    it('aud 배열 — [BUNDLE_ID, SERVICES_ID] 둘 다 수용 (앱·웹 토큰)', async () => {
+      mockVerified(JSON.stringify({ type: 'account-delete', sub: 'sub-1' }));
+
+      await service.verifyAndParse('valid.jwt');
+
+      const options = mockedJwtVerify.mock.calls[0][2] as {
+        audience?: unknown;
+      };
+      expect(options.audience).toEqual([APPLE_BUNDLE_ID, APPLE_SERVICES_ID]);
+    });
+
+    it('SERVICES_ID 미설정 → aud 는 BUNDLE_ID 단일', async () => {
+      servicesIdValue = undefined;
+      mockVerified(JSON.stringify({ type: 'account-delete', sub: 'sub-1' }));
+
+      await service.verifyAndParse('valid.jwt');
+
+      const options = mockedJwtVerify.mock.calls[0][2] as {
+        audience?: unknown;
+      };
+      expect(options.audience).toEqual([APPLE_BUNDLE_ID]);
     });
 
     it('빈 payload → BadRequestException', async () => {
@@ -203,11 +235,12 @@ describe('AppleS2SService', () => {
       expect(result).toEqual({ action: 'deleted', userId: 'u-2' });
     });
 
-    it('account-delete · Kakao 병합 user → apple_sub 만 해제 (Kakao 유지)', async () => {
+    it('account-delete · Kakao 병합 user → apple_sub·apple_refresh_token 해제 (Kakao 유지)', async () => {
       const user = {
         id: 'u-3',
         appleSub: 'sub-3',
         appleEmail: 'foo@relay',
+        appleRefreshToken: 'stale-apple-rt',
         kakaoId: 'kakao-1',
       } as User;
       userRepo.findOne.mockResolvedValue(user);
@@ -220,10 +253,12 @@ describe('AppleS2SService', () => {
         action: 'apple_unlinked',
         userId: 'u-3',
       });
+      // 평문 refresh_token orphan 잔존 차단 — appleRefreshToken 도 null
       expect(userRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
           appleSub: null,
           appleEmail: null,
+          appleRefreshToken: null,
           kakaoId: 'kakao-1',
         }),
       );

@@ -5,6 +5,15 @@ import { UsersService } from '../users/users.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 
+// jose(ESM)는 jest(CJS) 런타임에서 로드 불가 — import 체인(UsersService →
+// IdentityProviderService → AppleTokenService)이 jose 에 닿으므로 mock 필수.
+jest.mock('jose', () => ({
+  jwtVerify: jest.fn(),
+  createRemoteJWKSet: jest.fn(() => jest.fn()),
+  SignJWT: jest.fn(),
+  importPKCS8: jest.fn(),
+}));
+
 describe('AdminService', () => {
   let service: AdminService;
   let usersService: jest.Mocked<UsersService>;

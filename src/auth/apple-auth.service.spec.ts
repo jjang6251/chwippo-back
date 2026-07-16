@@ -9,6 +9,7 @@ import {
   AppleAuthService,
   type AppleIdentityTokenPayload,
 } from './apple-auth.service';
+import { AppleTokenService } from './apple-token.service';
 import { User } from '../users/user.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
 
@@ -16,16 +17,27 @@ import { DiscordNotifier } from '../common/discord-notifier';
  * AppleAuthService spec.
  *
  * jwtVerify 는 jose 모듈 함수 자체를 spy · JWKS 네트워크 mock.
+ * AppleTokenService(교환 헬퍼) 는 mock provider 로 주입 (exchangeCode·isConfigured).
  *
  * 시나리오:
  *   1) verifyIdentityToken — 정상 / iss mismatch / aud mismatch / expired / sub 누락 / 빈 문자열
+ *                            / expectedAudience 기본값(BUNDLE) vs 명시(SERVICES) 전파
  *   2) extractUserInfo — email 있음 · 없음 · relay (private) · fullName 유무
  *   3) findOrCreateAppleUser — 신규 · 기존 · race 23505 · 다른 unique 에러 · nickname derive 3 케이스
+ *   4) storeRefreshToken — userRepo.update 호출 (appleRefreshToken 저장)
+ *   5) exchangeAndStoreRefreshToken (fire-and-forget best-effort)
+ *      - isConfigured false → exchangeCode 미호출 · store 미호출
+ *      - exchangeCode 성공 → storeRefreshToken(update) 호출
+ *      - exchangeCode null(실패) → store 미호출
+ *      - 내부 에러(exchangeCode throw) → throw 안 함 · store 미호출 (자체 흡수)
  */
 // jose 는 ESM 전용 · Jest 는 CommonJS · 완전 mock (spec 은 jose 실제 로직에 의존 안 함)
+// apple-token.service 가 SignJWT·importPKCS8 도 import 하므로 함께 mock (호출은 안 됨)
 jest.mock('jose', () => ({
   jwtVerify: jest.fn(),
   createRemoteJWKSet: jest.fn(() => jest.fn()), // JWKS getter (getKey)
+  SignJWT: jest.fn(),
+  importPKCS8: jest.fn(),
 }));
 
 const mockedJwtVerify = jose.jwtVerify as jest.MockedFunction<
@@ -37,6 +49,12 @@ describe('AppleAuthService', () => {
   let userRepo: jest.Mocked<Repository<User>>;
 
   const APPLE_BUNDLE_ID = 'com.chwippo.app';
+  const APPLE_SERVICES_ID = 'com.chwippo.web';
+
+  const mockAppleTokenService = {
+    isConfigured: jest.fn(),
+    exchangeCode: jest.fn(),
+  };
 
   beforeEach(async () => {
     const mockRepo = mock<Repository<User>>();
@@ -49,6 +67,7 @@ describe('AppleAuthService', () => {
         },
         AppleAuthService,
         { provide: getRepositoryToken(User), useValue: mockRepo },
+        { provide: AppleTokenService, useValue: mockAppleTokenService },
         {
           provide: ConfigService,
           useValue: {
@@ -97,6 +116,36 @@ describe('AppleAuthService', () => {
           issuer: 'https://appleid.apple.com',
           audience: APPLE_BUNDLE_ID,
         },
+      );
+    });
+
+    it('expectedAudience 기본값 = BUNDLE_ID (네이티브) — 명시 안 하면 config 값', async () => {
+      mockedJwtVerify.mockResolvedValue({
+        payload: validPayload,
+        protectedHeader: { alg: 'RS256' },
+      } as never);
+
+      await service.verifyIdentityToken('valid.jwt.token');
+
+      expect(mockedJwtVerify).toHaveBeenCalledWith(
+        'valid.jwt.token',
+        expect.anything(),
+        expect.objectContaining({ audience: APPLE_BUNDLE_ID }),
+      );
+    });
+
+    it('expectedAudience 명시(SERVICES_ID · 웹 SIWA) → jwtVerify 로 그대로 전파', async () => {
+      mockedJwtVerify.mockResolvedValue({
+        payload: { ...validPayload, aud: APPLE_SERVICES_ID },
+        protectedHeader: { alg: 'RS256' },
+      } as never);
+
+      await service.verifyIdentityToken('valid.jwt.token', APPLE_SERVICES_ID);
+
+      expect(mockedJwtVerify).toHaveBeenCalledWith(
+        'valid.jwt.token',
+        expect.anything(),
+        expect.objectContaining({ audience: APPLE_SERVICES_ID }),
       );
     });
 
@@ -328,6 +377,106 @@ describe('AppleAuthService', () => {
       await expect(service.findOrCreateAppleUser(info)).rejects.toThrow(
         QueryFailedError,
       );
+    });
+  });
+
+  // ─── storeRefreshToken ────────────────────────────────
+  describe('storeRefreshToken', () => {
+    it('userRepo.update(userId, { appleRefreshToken }) 호출', async () => {
+      userRepo.update.mockResolvedValue({ affected: 1 } as never);
+
+      await service.storeRefreshToken('user-1', 'refresh-token-xyz');
+
+      expect(userRepo.update).toHaveBeenCalledWith('user-1', {
+        appleRefreshToken: 'refresh-token-xyz',
+      });
+    });
+  });
+
+  // ─── exchangeAndStoreRefreshToken (fire-and-forget best-effort) ─
+  describe('exchangeAndStoreRefreshToken', () => {
+    beforeEach(() => {
+      userRepo.update.mockResolvedValue({ affected: 1 } as never);
+    });
+
+    it('isConfigured false → exchangeCode 미호출 · update 미호출', async () => {
+      mockAppleTokenService.isConfigured.mockReturnValue(false);
+
+      await service.exchangeAndStoreRefreshToken(
+        'user-1',
+        'auth-code',
+        APPLE_BUNDLE_ID,
+      );
+
+      expect(mockAppleTokenService.exchangeCode).not.toHaveBeenCalled();
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('exchangeCode 성공 → storeRefreshToken(update) 호출', async () => {
+      mockAppleTokenService.isConfigured.mockReturnValue(true);
+      mockAppleTokenService.exchangeCode.mockResolvedValue('rt-from-apple');
+
+      await service.exchangeAndStoreRefreshToken(
+        'user-1',
+        'auth-code',
+        APPLE_BUNDLE_ID,
+      );
+
+      expect(mockAppleTokenService.exchangeCode).toHaveBeenCalledWith(
+        'auth-code',
+        APPLE_BUNDLE_ID,
+        undefined,
+      );
+      expect(userRepo.update).toHaveBeenCalledWith('user-1', {
+        appleRefreshToken: 'rt-from-apple',
+      });
+    });
+
+    it('웹 경로 — redirectUri 를 exchangeCode 로 전파', async () => {
+      mockAppleTokenService.isConfigured.mockReturnValue(true);
+      mockAppleTokenService.exchangeCode.mockResolvedValue('rt-web');
+
+      await service.exchangeAndStoreRefreshToken(
+        'user-1',
+        'auth-code',
+        APPLE_SERVICES_ID,
+        'https://chwippo.com/auth/apple/web/callback',
+      );
+
+      expect(mockAppleTokenService.exchangeCode).toHaveBeenCalledWith(
+        'auth-code',
+        APPLE_SERVICES_ID,
+        'https://chwippo.com/auth/apple/web/callback',
+      );
+    });
+
+    it('exchangeCode null(교환 실패) → update 미호출', async () => {
+      mockAppleTokenService.isConfigured.mockReturnValue(true);
+      mockAppleTokenService.exchangeCode.mockResolvedValue(null);
+
+      await service.exchangeAndStoreRefreshToken(
+        'user-1',
+        'auth-code',
+        APPLE_BUNDLE_ID,
+      );
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('내부 에러(exchangeCode throw) → throw 안 함 · update 미호출 (자체 흡수)', async () => {
+      mockAppleTokenService.isConfigured.mockReturnValue(true);
+      mockAppleTokenService.exchangeCode.mockRejectedValue(
+        new Error('unexpected'),
+      );
+
+      await expect(
+        service.exchangeAndStoreRefreshToken(
+          'user-1',
+          'auth-code',
+          APPLE_BUNDLE_ID,
+        ),
+      ).resolves.toBeUndefined();
+      expect(userRepo.update).not.toHaveBeenCalled();
     });
   });
 });
