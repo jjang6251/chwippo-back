@@ -42,6 +42,7 @@ jobs:
       KAKAO_CLIENT_ID: ci-dummy-client-id
       KAKAO_CLIENT_SECRET: ci-dummy-client-secret
       KAKAO_REDIRECT_URI: http://localhost:3000/auth/kakao/callback
+      APPLE_BUNDLE_ID: com.chwippo.app
       FRONTEND_URL: http://localhost:5173
       # R2: prod 외엔 optional이지만 files e2e의 ownership 검증을 위해 더미 prefix 주입 (실 R2 호출은 jest.mock으로 차단)
       R2_PUBLIC_URL: https://file-test.example.com
