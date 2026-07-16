@@ -295,6 +295,40 @@ describe('CalendarService', () => {
       });
     });
 
+    it('note 이벤트에 isDone 포함 (U27 아젠다 인라인 체크 초기 상태)', async () => {
+      appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      stepRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
+      makeNoteQb([
+        makeNote({
+          id: 'note-done',
+          date: '2026-05-11',
+          hourSlot: null,
+          isDone: true,
+        }),
+        makeNote({
+          id: 'note-open',
+          date: '2026-05-12',
+          hourSlot: null,
+          isDone: false,
+        }),
+      ]);
+
+      const result = await service.getMonthEvents('user-1', 2026, 5);
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toMatchObject({
+        type: 'note',
+        noteId: 'note-done',
+        isDone: true,
+        time: null,
+      });
+      expect(result[1]).toMatchObject({
+        type: 'note',
+        noteId: 'note-open',
+        isDone: false,
+      });
+    });
+
     it('step·exam 혼합 시 날짜 ASC 정렬', async () => {
       appRepo.createQueryBuilder.mockReturnValue(makeQb([]) as any);
       stepRepo.createQueryBuilder.mockReturnValue(

@@ -40,6 +40,11 @@ export interface CalendarEvent {
    * exam · note 타입은 항상 undefined.
    */
   isStarred?: boolean;
+  /**
+   * note 타입 전용 — 아젠다 인라인 완료 체크박스(U27) 초기 상태.
+   * step · exam 타입은 항상 undefined.
+   */
+  isDone?: boolean;
 }
 
 function hourSlotToTime(slot: number | null): string | null {
@@ -185,6 +190,7 @@ export class CalendarService {
       stepName: null,
       location: null,
       content: n.content,
+      isDone: n.isDone,
     }));
 
     return [...stepEvents, ...examEvents, ...noteEvents].sort((a, b) =>
