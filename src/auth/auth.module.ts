@@ -11,6 +11,7 @@ import { AuthService } from './auth.service';
 import { SessionCleanupCron } from './session-cleanup.cron';
 import { AppleAuthService } from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
+import { AppleTokenService } from './apple-token.service';
 import { KakaoNativeService } from './kakao-native.service';
 import { IdentityProviderService } from './identity-provider.service';
 import { KakaoStrategy } from './strategies/kakao.strategy';
@@ -37,6 +38,7 @@ import { FilesModule } from '../files/files.module';
     AuthService,
     AppleAuthService,
     AppleS2SService,
+    AppleTokenService,
     KakaoNativeService,
     IdentityProviderService,
     KakaoStrategy,

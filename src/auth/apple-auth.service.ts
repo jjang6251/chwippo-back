@@ -10,6 +10,7 @@ import { QueryFailedError, Repository, IsNull, Not } from 'typeorm';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { User } from '../users/user.entity';
 import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
+import { AppleTokenService } from './apple-token.service';
 
 /**
  * Sign in with Apple (Apple Guideline 4.8) 백엔드 검증.
@@ -35,9 +36,10 @@ export interface AppleIdentityTokenPayload extends JWTPayload {
   email?: string; // Apple relay email or 실 이메일 (첫 로그인 or scope=email 요청 시)
   email_verified?: boolean | string;
   is_private_email?: boolean | string; // 'true'/'false' 문자열로 오는 경우도 있음
-  aud: string; // 우리 iOS bundle id
+  aud: string; // 우리 iOS bundle id (네이티브) 또는 Services ID (웹 SIWA)
   iss: string; // https://appleid.apple.com
   auth_time?: number;
+  nonce?: string; // 웹 SIWA authorize 에 보낸 nonce echo (CSRF·replay 방어)
   nonce_supported?: boolean;
 }
 
@@ -62,10 +64,13 @@ export class AppleAuthService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly config: ConfigService,
     private readonly discord: DiscordNotifier,
+    private readonly appleTokenService: AppleTokenService,
   ) {}
 
   /**
    * Apple identity token 검증 후 payload 반환.
+   *
+   * @param expectedAudience 기본값 = BUNDLE_ID (네이티브). 웹 SIWA 콜백은 SERVICES_ID 명시 전달.
    *
    * 실패 시:
    *   - JWKS lookup 실패 · 네트워크 오류 → UnauthorizedException (Apple 서버 이슈)
@@ -75,12 +80,13 @@ export class AppleAuthService {
    */
   async verifyIdentityToken(
     identityToken: string,
+    expectedAudience: string | string[] = this.config.getOrThrow<string>(
+      'APPLE_BUNDLE_ID',
+    ),
   ): Promise<AppleIdentityTokenPayload> {
     if (!identityToken || typeof identityToken !== 'string') {
       throw new BadRequestException('identityToken 이 필요합니다.');
     }
-
-    const expectedAudience = this.config.getOrThrow<string>('APPLE_BUNDLE_ID');
 
     try {
       const { payload } = await jwtVerify(identityToken, this.jwks, {
@@ -208,6 +214,46 @@ export class AppleAuthService {
     }
     // relay email or 아무 정보 없음 → sub 앞 8자
     return `user_${info.appleSub.slice(0, 8)}`;
+  }
+
+  /**
+   * authorizationCode 교환으로 얻은 refresh_token 저장 (best-effort 호출부에서 사용).
+   * 탈퇴 시 Apple revoke 에 원문 필요 · 응답엔 미노출 (whitelist).
+   */
+  async storeRefreshToken(userId: string, refreshToken: string): Promise<void> {
+    await this.userRepo.update(userId, { appleRefreshToken: refreshToken });
+  }
+
+  /**
+   * authorizationCode → refresh_token 교환 후 저장 (완전 self-contained best-effort).
+   *
+   * 로그인/콜백 응답을 막지 않도록 컨트롤러가 fire-and-forget (`void`) 으로 호출.
+   * isConfigured 가드 + 모든 에러 자체 흡수 (throw X) → unhandled rejection 없음.
+   *
+   * @param clientId 네이티브=BUNDLE_ID · 웹=SERVICES_ID
+   * @param redirectUri 웹만 전달 (네이티브 생략)
+   */
+  async exchangeAndStoreRefreshToken(
+    userId: string,
+    code: string,
+    clientId: string,
+    redirectUri?: string,
+  ): Promise<void> {
+    if (!this.appleTokenService.isConfigured()) return;
+    try {
+      const refreshToken = await this.appleTokenService.exchangeCode(
+        code,
+        clientId,
+        redirectUri,
+      );
+      if (refreshToken) {
+        await this.storeRefreshToken(userId, refreshToken);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `exchangeAndStoreRefreshToken 실패 (userId=${userId}): ${(err as Error).message}`,
+      );
+    }
   }
 
   /**

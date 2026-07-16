@@ -40,4 +40,14 @@ export class AppleNativeLoginDto {
   @ValidateNested()
   @Type(() => AppleFullNameDto)
   fullName?: AppleFullNameDto;
+
+  /**
+   * expo-apple-authentication 응답의 `authorizationCode`.
+   * 있으면 서버가 refresh_token 교환 후 저장 → 탈퇴 시 revoke 에 사용.
+   * 구버전 앱 하위호환 위해 옵셔널 (없으면 revoke 스킵).
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  authorizationCode?: string;
 }

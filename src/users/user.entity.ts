@@ -44,6 +44,15 @@ export class User {
   @Column({ name: 'apple_email', nullable: true, type: 'varchar' })
   appleEmail: string | null;
 
+  /**
+   * Apple revoke (Guideline 5.1.1(v)) 용 refresh_token (평문 · nullable).
+   * authorizationCode 교환 성공 시 저장 · 탈퇴 시 Apple `/auth/revoke` 에 원문 필요.
+   * NULL = 교환 이력 없음(구버전 앱·교환 실패) → revoke 스킵.
+   * **응답 whitelist 제외**: deriveLoginProviders 파생 + admin omitSensitive 로 미노출.
+   */
+  @Column({ name: 'apple_refresh_token', nullable: true, type: 'varchar' })
+  appleRefreshToken: string | null;
+
   @Column()
   nickname: string;
 

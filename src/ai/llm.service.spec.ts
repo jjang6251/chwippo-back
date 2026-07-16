@@ -60,6 +60,7 @@ describe('LlmService', () => {
     kakaoId: 'k-1',
     appleSub: null,
     appleEmail: null,
+    appleRefreshToken: null,
     nickname: '장성원',
     email: null,
     role: 'user',
