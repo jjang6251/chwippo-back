@@ -15,6 +15,15 @@ import type { JobCategory } from './signup-job-categories.const';
 import { DiscordNotifier } from '../common/discord-notifier';
 import { UserDeletionLog } from './user-deletion-log.entity';
 
+// jose(ESM)는 jest(CJS) 런타임에서 로드 불가 — import 체인(IdentityProviderService →
+// AppleTokenService)이 jose 에 닿으므로 mock 필수.
+jest.mock('jose', () => ({
+  jwtVerify: jest.fn(),
+  createRemoteJWKSet: jest.fn(() => jest.fn()),
+  SignJWT: jest.fn(),
+  importPKCS8: jest.fn(),
+}));
+
 describe('UsersService', () => {
   let service: UsersService;
   let userRepo: jest.Mocked<Repository<User>>;
@@ -255,28 +264,41 @@ describe('UsersService', () => {
       expect(identityProvider.revokeApple).not.toHaveBeenCalled();
     });
 
-    it('appleSub 있는 유저 (kakaoId=null) → Apple revoke 호출 · Kakao 미호출', async () => {
-      const user = makeUser({ kakaoId: null, appleSub: 'apple-sub-abc' });
+    it('appleSub 있는 유저 (kakaoId=null) → Apple revoke 호출(refresh_token 전달) · Kakao 미호출', async () => {
+      const user = makeUser({
+        kakaoId: null,
+        appleSub: 'apple-sub-abc',
+        appleRefreshToken: 'apple-rt-abc',
+      });
       userRepo.findOneBy.mockResolvedValue(user);
       userRepo.remove.mockResolvedValue(user);
 
       await service.deleteAccount('user-uuid-1');
 
+      // revokeApple(appleRefreshToken, appleSub) — 저장된 refresh_token 원문 전달
       expect(identityProvider.revokeApple).toHaveBeenCalledWith(
+        'apple-rt-abc',
         'apple-sub-abc',
       );
       expect(identityProvider.unlinkKakao).not.toHaveBeenCalled();
     });
 
     it('kakaoId + appleSub 둘 다 있음 (계정 병합 미래 대비) → 양쪽 모두 호출', async () => {
-      const user = makeUser({ kakaoId: 'kakao-1', appleSub: 'apple-1' });
+      const user = makeUser({
+        kakaoId: 'kakao-1',
+        appleSub: 'apple-1',
+        appleRefreshToken: 'apple-rt-1',
+      });
       userRepo.findOneBy.mockResolvedValue(user);
       userRepo.remove.mockResolvedValue(user);
 
       await service.deleteAccount('user-uuid-1');
 
       expect(identityProvider.unlinkKakao).toHaveBeenCalledWith('kakao-1');
-      expect(identityProvider.revokeApple).toHaveBeenCalledWith('apple-1');
+      expect(identityProvider.revokeApple).toHaveBeenCalledWith(
+        'apple-rt-1',
+        'apple-1',
+      );
     });
 
     it('Kakao unlink 실패 (false 반환) → 로컬 삭제 계속 진행 (best-effort)', async () => {

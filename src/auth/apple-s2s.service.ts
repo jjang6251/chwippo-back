@@ -148,7 +148,12 @@ export class AppleS2SService {
       throw new BadRequestException('payload 가 필요합니다.');
     }
 
-    const expectedAudience = this.config.getOrThrow<string>('APPLE_BUNDLE_ID');
+    // Apple 은 네이티브(BUNDLE_ID)·웹(SERVICES_ID) 어느 client 로든 이벤트를 보낼 수 있으므로
+    // 양쪽 aud 를 모두 수용 (jose 는 배열 audience 허용). SERVICES_ID 미설정 시 BUNDLE_ID 단일.
+    const expectedAudience = [
+      this.config.getOrThrow<string>('APPLE_BUNDLE_ID'),
+      this.config.get<string>('APPLE_SERVICES_ID'),
+    ].filter((v): v is string => !!v);
 
     let verified: AppleS2SPayload;
     try {
@@ -197,6 +202,8 @@ export class AppleS2SService {
     if (user.kakaoId) {
       user.appleSub = null;
       user.appleEmail = null;
+      // 평문 refresh_token orphan 잔존 차단 (revoke 대상은 Apple 측이 이미 정리한 상태)
+      user.appleRefreshToken = null;
       await this.userRepo.save(user);
       this.logger.log(
         `Apple S2S: unlinked apple only (userId=${user.id}, kakao 유지)`,

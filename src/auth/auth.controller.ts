@@ -15,7 +15,10 @@ import { Throttle } from '@nestjs/throttler';
 import { randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
-import { AppleAuthService } from './apple-auth.service';
+import {
+  AppleAuthService,
+  type AppleIdentityTokenPayload,
+} from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
 import { KakaoNativeService } from './kakao-native.service';
 import { AppleNativeLoginDto } from './dto/apple-native-login.dto';
@@ -84,6 +87,20 @@ const OAUTH_STATE_COOKIE_OPTIONS = {
 };
 
 const KAKAO_AUTHORIZE_URL = 'https://kauth.kakao.com/oauth/authorize';
+const APPLE_AUTHORIZE_URL = 'https://appleid.apple.com/auth/authorize';
+
+// 웹 SIWA 전용 state 쿠키.
+// ⚠️ Apple 은 response_mode=form_post 로 cross-site POST 콜백 → SameSite=Lax 쿠키는 미전송.
+// 반드시 SameSite=None; Secure. (httpOnly 유지 · 값 = "{state}.{nonce}")
+// Secure 는 https 필수 → localhost(http) 미동작 · Apple 도 localhost redirect 불허 (배포 전용).
+const APPLE_OAUTH_STATE_COOKIE = 'apple_oauth_state';
+const APPLE_OAUTH_STATE_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'none' as const,
+  maxAge: 5 * 60 * 1000, // 5분 — Apple 로그인 완료에 충분
+  path: '/',
+};
 
 @Controller('auth')
 export class AuthController {
@@ -124,6 +141,19 @@ export class AuthController {
 
     if (user.suspendedAt) {
       throw new ForbiddenException('정지된 계정입니다.');
+    }
+
+    // authorizationCode → refresh_token 교환·저장 (탈퇴 시 revoke 용).
+    // fire-and-forget: Apple /token 왕복이 로그인 응답을 지연시키지 않게 응답 뒤로 뺌.
+    // 헬퍼가 isConfigured 가드·에러 자체 흡수. 구버전 앱은 code 미전송 → 스킵.
+    if (dto.authorizationCode) {
+      void this.appleAuthService
+        .exchangeAndStoreRefreshToken(
+          user.id,
+          dto.authorizationCode,
+          this.config.getOrThrow<string>('APPLE_BUNDLE_ID'),
+        )
+        .catch(() => undefined);
     }
 
     const { accessToken, refreshToken } = await this.authService.issueTokens(
@@ -300,6 +330,185 @@ export class AuthController {
     });
     // Fragment(#) 사용: server access log·Referer header에 token 미노출
     // (브라우저 history만 잔존 — 사용자 본인 디바이스라 신뢰 영역)
+    return res.redirect(`${frontendUrl}/login/callback#${params.toString()}`);
+  }
+
+  /**
+   * 웹 Sign in with Apple 시작 (PC 브라우저 · Apple 가입자 "자소서는 PC에서" 구멍 해소).
+   *
+   * SERVICES_ID·리다이렉트 URI 미설정 시 프론트로 unavailable redirect (로컬은 항상 미동작).
+   * state(CSRF) + nonce(id_token replay 방어) 를 한 쿠키("{state}.{nonce}")에 저장.
+   * ⚠️ Apple 은 response_mode=form_post → cross-site POST 콜백 → SameSite=None; Secure 필수.
+   */
+  @Public()
+  @Get('apple')
+  appleWebLogin(@Res() res: Response) {
+    const frontendUrl = this.config.get<string>(
+      'FRONTEND_URL',
+      'http://localhost:5173',
+    );
+    const servicesId = this.config.get<string>('APPLE_SERVICES_ID');
+    const redirectUri = this.config.get<string>('APPLE_WEB_REDIRECT_URI');
+    if (!servicesId || !redirectUri) {
+      return res.redirect(`${frontendUrl}/login?error=apple_web_unavailable`);
+    }
+
+    const state = randomBytes(32).toString('hex');
+    const nonce = randomBytes(32).toString('hex');
+    res.cookie(
+      APPLE_OAUTH_STATE_COOKIE,
+      `${state}.${nonce}`,
+      APPLE_OAUTH_STATE_COOKIE_OPTIONS,
+    );
+
+    const url =
+      `${APPLE_AUTHORIZE_URL}?` +
+      `client_id=${encodeURIComponent(servicesId)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=${encodeURIComponent('code id_token')}` +
+      `&response_mode=form_post` +
+      `&scope=${encodeURIComponent('name email')}` +
+      `&state=${state}` +
+      `&nonce=${nonce}`;
+    return res.redirect(url);
+  }
+
+  /**
+   * 웹 SIWA form_post 콜백 (Apple → 우리 서버 POST).
+   *
+   * body: code · state · id_token · user?(첫 로그인 이름 JSON 문자열).
+   * 흐름: state 쿠키 검증 → id_token 검증(aud=SERVICES_ID) → nonce 확인 →
+   *       findOrCreate(appleSub 동일 시 앱 계정 자동 병합) → code 교환·저장(best-effort) →
+   *       issueTokens → refresh cookie → 카카오와 동일한 #fragment redirect.
+   *
+   * 실패는 프론트 /login?error= 로 redirect (throw 아님 · 브라우저 흐름).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Post('apple/web/callback')
+  @HttpCode(HttpStatus.OK)
+  async appleWebCallback(@Req() req: Request, @Res() res: Response) {
+    const frontendUrl = this.config.get<string>(
+      'FRONTEND_URL',
+      'http://localhost:5173',
+    );
+
+    const body = (req.body ?? {}) as {
+      code?: string;
+      state?: string;
+      id_token?: string;
+      user?: string;
+    };
+
+    // OAuth state 검증 — 쿠키 "{state}.{nonce}" ↔ body.state (CSRF)
+    const cookieRaw = (req.cookies as Record<string, unknown> | undefined)?.[
+      APPLE_OAUTH_STATE_COOKIE
+    ];
+    // SameSite=None; Secure 쿠키는 clear 시에도 동일 속성 매칭 필요
+    res.clearCookie(APPLE_OAUTH_STATE_COOKIE, {
+      path: '/',
+      sameSite: 'none',
+      secure: true,
+    });
+
+    const [cookieState, cookieNonce] =
+      typeof cookieRaw === 'string' ? cookieRaw.split('.') : [];
+    if (
+      typeof cookieState !== 'string' ||
+      cookieState.length === 0 ||
+      typeof body.state !== 'string' ||
+      body.state !== cookieState
+    ) {
+      return res.redirect(`${frontendUrl}/login?error=oauth_state_mismatch`);
+    }
+
+    if (!body.id_token) {
+      return res.redirect(`${frontendUrl}/login?error=apple_web_unavailable`);
+    }
+
+    // GET /auth/apple 의 graceful 동작과 통일 — 미설정 환경에 직접 POST 시 500 대신 redirect
+    const servicesId = this.config.get<string>('APPLE_SERVICES_ID');
+    if (!servicesId) {
+      return res.redirect(`${frontendUrl}/login?error=apple_web_unavailable`);
+    }
+
+    let payload: AppleIdentityTokenPayload;
+    try {
+      payload = await this.appleAuthService.verifyIdentityToken(
+        body.id_token,
+        servicesId,
+      );
+    } catch {
+      return res.redirect(`${frontendUrl}/login?error=apple_web_unavailable`);
+    }
+
+    // nonce replay 방어 (fail-closed) — authorize 에 항상 nonce 를 보내므로 정상 id_token 은
+    // nonce claim 을 반드시 echo. 쿠키 nonce 누락·claim 누락·불일치는 전부 거부.
+    if (!cookieNonce || !payload.nonce || payload.nonce !== cookieNonce) {
+      return res.redirect(`${frontendUrl}/login?error=oauth_state_mismatch`);
+    }
+
+    // 첫 로그인 시에만 user 필드(JSON 문자열)로 이름 전달됨 (Apple 정책)
+    let fullName:
+      | { givenName?: string | null; familyName?: string | null }
+      | undefined;
+    if (typeof body.user === 'string' && body.user.length > 0) {
+      try {
+        const parsed = JSON.parse(body.user) as {
+          name?: { firstName?: string; lastName?: string };
+        };
+        if (parsed.name) {
+          fullName = {
+            givenName: parsed.name.firstName ?? null,
+            familyName: parsed.name.lastName ?? null,
+          };
+        }
+      } catch {
+        // 이름 파싱 실패는 무시 (로그인엔 영향 X)
+      }
+    }
+
+    const info = this.appleAuthService.extractUserInfo(payload, fullName);
+    const { user } = await this.appleAuthService.findOrCreateAppleUser(info);
+
+    if (user.suspendedAt) {
+      return res.redirect(`${frontendUrl}/login?error=suspended`);
+    }
+
+    // authorizationCode → refresh_token 교환·저장 (탈퇴 revoke 용).
+    // fire-and-forget: Apple /token 왕복이 콜백 redirect 를 지연시키지 않게 응답 뒤로 뺌.
+    if (body.code) {
+      void this.appleAuthService
+        .exchangeAndStoreRefreshToken(
+          user.id,
+          body.code,
+          servicesId,
+          this.config.get<string>('APPLE_WEB_REDIRECT_URI'),
+        )
+        .catch(() => undefined);
+    }
+
+    const { accessToken, refreshToken } = await this.authService.issueTokens(
+      user,
+      req.headers['user-agent'] ?? null,
+    );
+
+    res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    const params = new URLSearchParams({
+      access_token: accessToken,
+      needs_terms: String(!user.termsAgreedAt),
+      user_id: user.id,
+      user_nickname: user.nickname,
+      user_role: user.role,
+      ...(user.email ? { user_email: user.email } : {}),
+      ...(user.termsAgreedAt
+        ? { user_terms_agreed_at: user.termsAgreedAt.toISOString() }
+        : {}),
+      ...(user.onboardedAt
+        ? { user_onboarded_at: user.onboardedAt.toISOString() }
+        : {}),
+    });
     return res.redirect(`${frontendUrl}/login/callback#${params.toString()}`);
   }
 

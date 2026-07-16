@@ -11,7 +11,7 @@
  */
 import { envValidationSchema } from './env.validation';
 
-/** 공통 required(JWT·DB·KAKAO)만 채운 최소 dev env */
+/** 공통 required(JWT·DB·KAKAO·APPLE_BUNDLE_ID)만 채운 최소 dev env */
 const minimalDevEnv: Record<string, string> = {
   NODE_ENV: 'development',
   DB_HOST: 'localhost',
@@ -22,6 +22,8 @@ const minimalDevEnv: Record<string, string> = {
   KAKAO_CLIENT_ID: 'kakao-id',
   KAKAO_CLIENT_SECRET: 'kakao-secret',
   KAKAO_REDIRECT_URI: 'http://localhost:3000/auth/kakao/callback',
+  // Apple SIWA — 네이티브 로그인 필수 (env.validation 에 required 등록)
+  APPLE_BUNDLE_ID: 'com.chwippo.app',
 };
 
 /** prod env = minimal + R2_* + FRONTEND_URL (prod required) */

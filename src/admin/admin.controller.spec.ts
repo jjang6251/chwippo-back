@@ -13,6 +13,15 @@ import { AdminService } from './admin.service';
 import { AdminAuditService } from './admin-audit.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 
+// jose(ESM)는 jest(CJS) 런타임에서 로드 불가 — import 체인(AdminService → UsersService →
+// IdentityProviderService → AppleTokenService)이 jose 에 닿으므로 mock 필수.
+jest.mock('jose', () => ({
+  jwtVerify: jest.fn(),
+  createRemoteJWKSet: jest.fn(() => jest.fn()),
+  SignJWT: jest.fn(),
+  importPKCS8: jest.fn(),
+}));
+
 describe('AdminController — audit 호출', () => {
   let controller: AdminController;
   const inquiriesService = {

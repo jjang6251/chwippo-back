@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AppleTokenService } from './apple-token.service';
 
 /**
  * 소셜 로그인 프로바이더 (Kakao · Apple) 관련 서버-서버 액션 헬퍼.
@@ -16,10 +17,11 @@ import { ConfigService } from '@nestjs/config';
  *
  * ## Apple Revoke
  * SIWA revoke 시 client_secret (ES256 JWT) + refresh_token 필요.
- * 현재 우리는 refresh_token 을 교환하지 않고 identity_token 만 검증하므로
- * revoke API 호출 불가 → 로컬 삭제로 대체 (Apple 정책 위반 X).
- *
- * 향후 refresh_token 도입 시 확장 지점.
+ * 로그인 시 authorizationCode 를 교환해 저장한 `apple_refresh_token` 을
+ * `AppleTokenService.revoke()` 로 무효화 (Apple `/auth/revoke`).
+ * refresh_token 이 네이티브(BUNDLE_ID)·웹(SERVICES_ID) 어느 쪽 발급인지 추적 안 하므로
+ * BUNDLE_ID 로 시도 후 실패 시 SERVICES_ID 로 재시도 (양쪽 best-effort).
+ * refresh_token 미저장(구버전·교환 실패)·미설정 시 스킵 — 로컬 삭제는 정상 진행.
  */
 
 const KAKAO_UNLINK_URL = 'https://kapi.kakao.com/v1/user/unlink';
@@ -28,7 +30,10 @@ const KAKAO_UNLINK_URL = 'https://kapi.kakao.com/v1/user/unlink';
 export class IdentityProviderService {
   private readonly logger = new Logger(IdentityProviderService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly appleTokenService: AppleTokenService,
+  ) {}
 
   /**
    * Kakao 계정 연결 해제 (Admin key 방식).
@@ -80,20 +85,57 @@ export class IdentityProviderService {
   }
 
   /**
-   * Apple SIWA 계정 revoke.
+   * Apple SIWA 계정 revoke (Guideline 5.1.1(v)).
    *
-   * 현재 refresh_token 미저장 · Apple API 호출 불가.
-   * 향후 refresh_token 교환 도입 시:
-   *   POST https://appleid.apple.com/auth/revoke
-   *     client_id={APPLE_BUNDLE_ID} · client_secret={JWT (ES256)} ·
-   *     token={refresh_token} · token_type_hint=refresh_token
+   * @param appleRefreshToken 로그인 시 교환·저장한 refresh_token (없으면 revoke 스킵)
+   * @param appleSub 로깅용 (토큰 원문은 미로깅)
+   * @returns `true` = revoke 성공, `false` = 스킵·실패 (모두 로컬 삭제는 계속 진행).
    *
-   * 지금은 로그만 남기고 로컬 삭제만 수행 (Apple 정책 상 로컬 삭제는 문제 없음).
+   * best-effort (throw X):
+   *   - refresh_token null (구버전·교환 실패 이력) → 스킵
+   *   - AppleTokenService 미설정 (.p8 등 없음) → 스킵
+   *   - BUNDLE_ID 로 revoke 실패 → SERVICES_ID (설정 시) 로 재시도
    */
-  // eslint-disable-next-line @typescript-eslint/require-await
-  async revokeApple(appleSub: string): Promise<boolean> {
-    this.logger.log(
-      `revokeApple stub: refresh_token 미저장으로 API 호출 불가 · 로컬 삭제만 (appleSub=${appleSub.slice(0, 12)}...)`,
+  async revokeApple(
+    appleRefreshToken: string | null,
+    appleSub: string,
+  ): Promise<boolean> {
+    const subTag = appleSub.slice(0, 12);
+
+    if (!appleRefreshToken) {
+      this.logger.log(
+        `revokeApple 스킵: refresh_token 미저장 (appleSub=${subTag}...)`,
+      );
+      return false;
+    }
+    if (!this.appleTokenService.isConfigured()) {
+      this.logger.warn(
+        `revokeApple 스킵: Apple 토큰 설정 누락 (appleSub=${subTag}...)`,
+      );
+      return false;
+    }
+
+    const bundleId = this.config.get<string>('APPLE_BUNDLE_ID');
+    const servicesId = this.config.get<string>('APPLE_SERVICES_ID');
+
+    // 어느 client 로 발급된 refresh_token 인지 추적 안 하므로 양쪽 시도 (best-effort)
+    const clientIds = [bundleId, servicesId].filter((v): v is string => !!v);
+
+    for (const clientId of clientIds) {
+      const ok = await this.appleTokenService.revoke(
+        appleRefreshToken,
+        clientId,
+      );
+      if (ok) {
+        this.logger.log(
+          `revokeApple 성공 (appleSub=${subTag}..., clientId=${clientId})`,
+        );
+        return true;
+      }
+    }
+
+    this.logger.warn(
+      `revokeApple 실패: 모든 client_id 시도 실패 (appleSub=${subTag}...) · 로컬 삭제는 진행`,
     );
     return false;
   }

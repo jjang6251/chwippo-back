@@ -37,6 +37,7 @@ describe('CompaniesService', () => {
     kakaoId: 'k1',
     appleSub: null,
     appleEmail: null,
+    appleRefreshToken: null,
     nickname: 'tester',
     email: null,
     role: 'user',
