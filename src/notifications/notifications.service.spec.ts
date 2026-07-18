@@ -95,6 +95,69 @@ describe('NotificationsService', () => {
 
       expect(qb.andWhere).not.toHaveBeenCalled();
     });
+
+    // U23 — 서버사이드 type 필터
+    it('본인 user_id 로 항상 scope (IDOR)', async () => {
+      qb.getMany.mockResolvedValue([]);
+      repo.count.mockResolvedValue(0);
+
+      await service.list('user-1');
+
+      expect(qb.where).toHaveBeenCalledWith('n.user_id = :userId', {
+        userId: 'user-1',
+      });
+    });
+
+    it('type 전달 → n.type = :type andWhere 적용', async () => {
+      qb.getMany.mockResolvedValue([]);
+      repo.count.mockResolvedValue(0);
+
+      await service.list('user-1', undefined, 'briefing');
+
+      expect(qb.andWhere).toHaveBeenCalledWith('n.type = :type', {
+        type: 'briefing',
+      });
+    });
+
+    it('type 미전달 → type andWhere 미적용 (전체 회귀)', async () => {
+      qb.getMany.mockResolvedValue([]);
+      repo.count.mockResolvedValue(0);
+
+      await service.list('user-1');
+
+      expect(qb.andWhere).not.toHaveBeenCalledWith(
+        'n.type = :type',
+        expect.anything(),
+      );
+    });
+
+    it('cursor + type 교차 → 두 andWhere 모두 적용', async () => {
+      qb.getMany.mockResolvedValue([]);
+      repo.count.mockResolvedValue(0);
+      const cursor = '2026-07-01T00:00:00.000Z';
+
+      await service.list('user-1', cursor, 'deadline_urgent');
+
+      expect(qb.andWhere).toHaveBeenCalledWith('n.type = :type', {
+        type: 'deadline_urgent',
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith('n.created_at < :cursor', {
+        cursor: new Date(cursor),
+      });
+    });
+
+    it('unreadCount 는 type 필터와 무관 — 전체 미읽음 count', async () => {
+      qb.getMany.mockResolvedValue([]);
+      repo.count.mockResolvedValue(9);
+
+      const result = await service.list('user-1', undefined, 'admin');
+
+      // 필터가 admin 이어도 count 조건은 type 없이 전체 미읽음
+      expect(repo.count).toHaveBeenCalledWith({
+        where: { userId: 'user-1', read: false },
+      });
+      expect(result.unreadCount).toBe(9);
+    });
   });
 
   describe('unreadCount', () => {
