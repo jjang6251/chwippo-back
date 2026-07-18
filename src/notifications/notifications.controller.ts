@@ -12,6 +12,7 @@ import {
   NotificationsService,
   NotificationListResult,
 } from './notifications.service';
+import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 
 interface AuthUser {
   id: string;
@@ -32,9 +33,9 @@ export class NotificationsController {
   @Get()
   async list(
     @CurrentUser() user: AuthUser,
-    @Query('cursor') cursor?: string,
+    @Query() query: ListNotificationsQueryDto,
   ): Promise<NotificationListResult> {
-    return this.service.list(user.id, cursor);
+    return this.service.list(user.id, query.cursor, query.type);
   }
 
   @Patch('read-all')

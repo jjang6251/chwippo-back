@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
+import { DailyNote } from '../calendar/daily-note.entity';
 import { User } from '../users/user.entity';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import {
@@ -10,6 +11,9 @@ import {
   resolveAlarmConfig,
 } from './notification.types';
 import { toKstDateString } from '../common/datetime';
+
+/** F4 — 브리핑에 합류할 오늘 할 일 최대 개수 (스팸 방지 cap) */
+const MAX_BRIEFING_TODOS = 3;
 
 interface BriefingEvent {
   kind: 'deadline' | 'interview' | 'exam';
@@ -35,6 +39,10 @@ interface BriefingResult {
  *   6. 이벤트 0건 → 발송 안 함 ("없으면 침묵")
  *   7. notification_logs dedup — 같은 날 재실행해도 1회만
  *
+ * F4 — 오늘(KST) 미완료 할 일(daily_notes)을 브리핑 본문에 합류 (최대 3건).
+ *   단 스텝·시험 이벤트가 1건 이상일 때만 첨부 — 할 일 단독으로는 발송 안 함
+ *   (위 "없으면 침묵" 규칙 유지 · 스팸 방지). eventCount(마스킹 요약)는 이벤트만 카운트.
+ *
  * 인앱 알림은 이벤트 있으면 항상 생성 (push 권한 없어도 백업 채널).
  * push 는 device 등록 + 권한 있을 때만 (best-effort).
  */
@@ -48,6 +56,8 @@ export class BriefingService {
     private readonly stepRepo: Repository<ApplicationStep>,
     @InjectRepository(ExamSchedule)
     private readonly examRepo: Repository<ExamSchedule>,
+    @InjectRepository(DailyNote)
+    private readonly noteRepo: Repository<DailyNote>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly dispatch: NotificationDispatchService,
@@ -139,6 +149,9 @@ export class BriefingService {
       },
     });
 
+    // F4 — 이벤트가 있는 사용자들의 오늘(KST) 미완료 할 일 수집 (userId 별 그룹)
+    const notesByUser = await this.collectTodayTodos(userIds, todayKst);
+
     let sent = 0;
     for (const user of users) {
       if (user.suspendedAt) continue; // 정지 사용자 제외
@@ -151,7 +164,12 @@ export class BriefingService {
       );
       if (events.length === 0) continue; // "없으면 침묵"
 
-      const { title, body } = this.buildMessage(events);
+      // 할 일은 이벤트가 있는 사용자에게만 합류 (단독 발송 없음)
+      const todos = (notesByUser.get(user.id) ?? []).slice(
+        0,
+        MAX_BRIEFING_TODOS,
+      );
+      const { title, body } = this.buildMessage(events, todos);
       const sortedEvents = [...events].sort((a, b) => a.dday - b.dday);
       const deepLink = sortedEvents[0]?.deepLink ?? '/calendar';
       const ok = await this.dispatch.dispatch(
@@ -175,7 +193,10 @@ export class BriefingService {
     return { processedUsers: users.length, sentBriefings: sent };
   }
 
-  private buildMessage(events: BriefingEvent[]): {
+  private buildMessage(
+    events: BriefingEvent[],
+    todos: DailyNote[] = [],
+  ): {
     title: string;
     body: string;
   } {
@@ -184,11 +205,45 @@ export class BriefingService {
       const ddayLabel = e.dday === 0 ? '오늘' : `D-${e.dday}`;
       return `${e.label} · ${ddayLabel}`;
     });
+    // F4 — 오늘 할 일 합류 (한 줄 요약, 표시한 개수만 N으로 노출)
+    if (todos.length > 0) {
+      const names = todos.map((t) => t.content).join(', ');
+      lines.push(`오늘 할 일 ${todos.length}개: ${names}`);
+    }
     const title =
       events.length === 1
         ? '오늘의 일정 알림'
         : `오늘의 일정 ${events.length}건`;
     return { title, body: lines.join('\n') };
+  }
+
+  /**
+   * F4 — 오늘(KST) 미완료 할 일을 userId 별로 수집.
+   * daily_notes.date 는 KST 달력 날짜(date 컬럼)로 저장되므로 문자열 비교로 오늘 판정.
+   * is_done=false 만 (완료 항목·완료만 있는 날 → 미첨부). 이벤트 있는 사용자만 대상.
+   */
+  private async collectTodayTodos(
+    userIds: string[],
+    todayKst: string,
+  ): Promise<Map<string, DailyNote[]>> {
+    const byUser = new Map<string, DailyNote[]>();
+    if (userIds.length === 0) return byUser;
+
+    const notes = await this.noteRepo
+      .createQueryBuilder('n')
+      .where('n.user_id IN (:...userIds)', { userIds })
+      .andWhere('n.date = :today', { today: todayKst })
+      .andWhere('n.is_done = false')
+      .orderBy('n.hour_slot', 'ASC', 'NULLS FIRST')
+      .addOrderBy('n.created_at', 'ASC')
+      .getMany();
+
+    for (const note of notes) {
+      const arr = byUser.get(note.userId) ?? [];
+      arr.push(note);
+      byUser.set(note.userId, arr);
+    }
+    return byUser;
   }
 
   private pushEvent(
