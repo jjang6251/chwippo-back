@@ -40,13 +40,24 @@ export class NotificationsService {
   /**
    * 최신순 목록 (cursor 페이지네이션) + 안 읽음 카운트.
    * @param cursor 이전 페이지 마지막 항목 createdAt ISO (미지정 = 첫 페이지)
+   * @param type 유형 필터 (미지정 = 전체). 커서 페이지네이션과 조합 시 서버에서 필터 적용.
+   *
+   * unreadCount 는 type 필터와 무관하게 항상 전체 미읽음 — 헤더 종 배지 의미(전체 안 읽음) 보존.
    */
-  async list(userId: string, cursor?: string): Promise<NotificationListResult> {
+  async list(
+    userId: string,
+    cursor?: string,
+    type?: NotificationType,
+  ): Promise<NotificationListResult> {
     const qb = this.repo
       .createQueryBuilder('n')
       .where('n.user_id = :userId', { userId })
       .orderBy('n.created_at', 'DESC')
       .take(PAGE_SIZE + 1);
+
+    if (type) {
+      qb.andWhere('n.type = :type', { type });
+    }
 
     if (cursor) {
       const cursorDate = new Date(cursor);
@@ -62,6 +73,7 @@ export class NotificationsService {
       ? items[items.length - 1].createdAt.toISOString()
       : null;
 
+    // 필터와 무관하게 전체 미읽음 (종 배지 의미 유지)
     const unreadCount = await this.unreadCount(userId);
 
     return { items, nextCursor, unreadCount };

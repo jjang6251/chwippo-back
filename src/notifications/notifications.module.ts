@@ -7,6 +7,7 @@ import { UserDevice } from '../devices/user-device.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
+import { DailyNote } from '../calendar/daily-note.entity';
 import { NotificationsService } from './notifications.service';
 import { AlarmConfigService } from './alarm-config.service';
 import { PushService } from './push.service';
@@ -30,6 +31,7 @@ import { AdminNotifyService } from './admin-notify.service';
       UserDevice,
       ApplicationStep,
       ExamSchedule,
+      DailyNote,
     ]),
     // 푸시-세션 분리: NotificationDispatchService 가 AuthService.hasValidSession 사용
     AuthModule,
