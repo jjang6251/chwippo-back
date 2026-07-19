@@ -129,7 +129,8 @@ jobs:
       #   allowlist:
       #     - src/common/datetime.ts       : 헬퍼 doc 이 금지 패턴을 문서로 인용
       #     - src/dashboard/growth.service.ts : naive applications.created_at 한정
-      #         (activity_* timestamptz 통일 수정은 표시 수치 변경 → 별도 CEO 승인 PR)
+      #         (2026-07-19 수정: activity_* timestamptz 는 단일 hop 으로 전환 완료 →
+      #          이 파일에 남는 이중 체인은 naive applications.created_at 전용이라 allowlist 유지)
       #     - *.spec.ts                    : 회귀 단언
       # (블랭킷 'AT TIME ZONE' 금지는 불가 — calendar·admin·ai·streak 등이 정상 단일 hop /
       #  TO_CHAR / date_trunc / 파라미터 tz 로 올바르게 쓰고 있어 오탐. 실제 버그는 이중 체인뿐.)

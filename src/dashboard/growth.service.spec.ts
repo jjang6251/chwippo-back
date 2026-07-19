@@ -420,4 +420,77 @@ describe('GrowthService', () => {
       jest.restoreAllMocks();
     });
   });
+
+  describe('KST 변환 조각 — 테이블별 타입 정합 (회귀 방어)', () => {
+    // naive(applications.created_at) 전용 이중 체인 관용구
+    const DOUBLE_CHAIN = "AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'";
+    // timestamptz(activity_*.created_at) 용 단일 hop
+    const SINGLE_HOP = "AT TIME ZONE 'Asia/Seoul'";
+
+    const countDoubleChain = (sql: string): number =>
+      sql.split(DOUBLE_CHAIN).length - 1;
+
+    async function capturedQueries(): Promise<string[]> {
+      installMock(appRepo, {});
+      await service.getGrowthMetrics(USER_ID);
+      return appRepo.query.mock.calls.map((c) => c[0]);
+    }
+
+    // 월별 카운트 쿼리 = TO_CHAR + 해당 테이블. 요일 쿼리(EXTRACT DOW)·funnel 과 구별.
+    const monthlyQuery = (sqls: string[], table: string): string => {
+      const found = sqls.find(
+        (s) => s.includes('TO_CHAR') && s.includes(`FROM ${table}`),
+      );
+      expect(found).toBeDefined();
+      return found as string;
+    };
+
+    it('월별 applications(naive) 쿼리 → 이중 체인 유지', async () => {
+      const sql = monthlyQuery(await capturedQueries(), 'applications');
+      expect(sql).toContain(DOUBLE_CHAIN);
+    });
+
+    it('월별 activity_logs(timestamptz) 쿼리 → 단일 hop, 이중 체인 없음', async () => {
+      const sql = monthlyQuery(await capturedQueries(), 'activity_logs');
+      expect(sql).toContain(SINGLE_HOP);
+      expect(countDoubleChain(sql)).toBe(0);
+    });
+
+    it('월별 activity_reflections(timestamptz) 쿼리 → 단일 hop, 이중 체인 없음', async () => {
+      const sql = monthlyQuery(await capturedQueries(), 'activity_reflections');
+      expect(sql).toContain(SINGLE_HOP);
+      expect(countDoubleChain(sql)).toBe(0);
+    });
+
+    it('요일 인사이트 UNION → 브랜치별 타입 정합 (applications 이중 체인 1회 · activity_* 단일 hop)', async () => {
+      const sqls = await capturedQueries();
+      const weekday = sqls.find((s) => s.includes('EXTRACT(DOW'));
+      expect(weekday).toBeDefined();
+      const sql = weekday as string;
+
+      // 바깥 EXTRACT 는 변환된 alias(kst_ts) 를 사용 — 재변환하지 않음
+      expect(sql).toContain('EXTRACT(DOW FROM kst_ts');
+
+      // 이중 체인은 naive(applications) 브랜치에서만 정확히 1회
+      expect(countDoubleChain(sql)).toBe(1);
+
+      const branches = sql.split('UNION ALL');
+      const appsBranch = branches.find((b) => b.includes('FROM applications'));
+      const logsBranch = branches.find((b) => b.includes('FROM activity_logs'));
+      const reflBranch = branches.find((b) =>
+        b.includes('FROM activity_reflections'),
+      );
+      expect(appsBranch).toBeDefined();
+      expect(logsBranch).toBeDefined();
+      expect(reflBranch).toBeDefined();
+
+      // applications(naive) → 이중 체인
+      expect(countDoubleChain(appsBranch as string)).toBe(1);
+      // activity_*(timestamptz) → 단일 hop, 이중 체인 없음
+      expect(logsBranch as string).toContain(SINGLE_HOP);
+      expect(countDoubleChain(logsBranch as string)).toBe(0);
+      expect(reflBranch as string).toContain(SINGLE_HOP);
+      expect(countDoubleChain(reflBranch as string)).toBe(0);
+    });
+  });
 });
