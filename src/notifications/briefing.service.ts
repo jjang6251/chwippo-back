@@ -12,7 +12,7 @@ import {
   resolveAlarmConfig,
   type EventToggles,
 } from './notification.types';
-import { toKstDateString } from '../common/datetime';
+import { kstDateSql, toKstDateString } from '../common/datetime';
 
 /** F4 — 브리핑에 합류할 오늘 할 일 최대 개수 (스팸 방지 cap) */
 const MAX_BRIEFING_TODOS = 3;
@@ -92,13 +92,11 @@ export class BriefingService {
       .where('app.deleted_at IS NULL')
       .andWhere("app.status NOT IN ('PASSED','FAILED')")
       .andWhere('step.scheduledDate IS NOT NULL')
-      // timestamptz 는 단일 AT TIME ZONE 으로 KST 벽시각 변환 — 이중 체인
-      // ('UTC' 경유)은 naive 컬럼 전용 관용구로, timestamptz 에 쓰면 하루 어긋남
-      // (2026-07-19 실측: D-3 마감 브리핑 누락 원인)
-      .andWhere(
-        "(step.scheduledDate AT TIME ZONE 'Asia/Seoul')::DATE = ANY(:dates)",
-        { dates: targetDates },
-      )
+      // KST 달력 날짜 매칭 — 단일 hop 헬퍼(kstDateSql). 이중 체인 금지 사유는 헬퍼 doc 참조
+      // (2026-07-19 실사고: D-3 마감 브리핑 누락 원인)
+      .andWhere(`${kstDateSql('step.scheduledDate')} = ANY(:dates)`, {
+        dates: targetDates,
+      })
       .select([
         'step.id',
         'step.name',
@@ -131,7 +129,7 @@ export class BriefingService {
 
     const exams = await this.examRepo
       .createQueryBuilder('e')
-      .where("(e.exam_date AT TIME ZONE 'Asia/Seoul')::DATE = ANY(:dates)", {
+      .where(`${kstDateSql('e.exam_date')} = ANY(:dates)`, {
         dates: targetDates,
       })
       .getMany();

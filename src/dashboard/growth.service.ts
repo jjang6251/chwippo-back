@@ -192,6 +192,14 @@ export class GrowthService {
         ? 'AND deleted_at IS NULL'
         : '';
 
+    // ⚠️ 이중 체인('UTC' 경유) — kstDateSql 헬퍼로 단일화하지 않고 남겨둔 CI 가드 allowlist.
+    // 컬럼 타입이 표에 따라 갈린다 (마이그레이션 실측 2026-07-19):
+    //   applications.created_at = TIMESTAMP(naive) → 이중 체인이 맞는 관용구
+    //   activity_logs.created_at / activity_reflections.created_at = TIMESTAMPTZ
+    //     → 이중 체인은 -9h 시프트(하루 어긋남) 잠복 버그. created_at 은 서버 NOW() 라
+    //       KST 00~09시 생성분만 전월/전일로 오분류되는 부분 영향.
+    // 통일 수정은 표시 수치(월별 비교·요일 인사이트)를 바꾸므로 별도 CEO 승인 PR 로 분리.
+    // (feature-kst-sql-helper 스코프 밖 — 관련 보고 참조)
     const result: { cnt: number }[] = await this.appRepo.query(
       `
       SELECT COUNT(*)::int AS cnt
@@ -253,6 +261,9 @@ export class GrowthService {
   private async getInsights(
     userId: string,
   ): Promise<GrowthMetricsResponse['insights']> {
+    // ⚠️ 이중 체인 — CI 가드 allowlist (kstDateSql 미치환). UNION 은 naive(applications)+
+    // timestamptz(activity_logs·activity_reflections) 를 섞어 timestamptz 로 승격되므로
+    // 세 소스 모두 -9h 시프트 잠복 버그. 통일 수정은 요일 인사이트 수치를 바꿔 별도 PR 로 분리.
     const weekdayQuery: Promise<{ dow: number; cnt: number }[]> =
       this.appRepo.query(
         `

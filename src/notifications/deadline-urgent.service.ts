@@ -11,7 +11,7 @@ import {
   hasKstTime,
   loadSentImminentRefIdsToday,
 } from './imminent.util';
-import { toKstDateString } from '../common/datetime';
+import { kstDateSql, toKstDateString } from '../common/datetime';
 
 interface DeadlineUrgentResult {
   processedUsers: number;
@@ -69,11 +69,10 @@ export class DeadlineUrgentService {
       .andWhere("app.status NOT IN ('PASSED','FAILED')")
       .andWhere('step.order_index = 0')
       .andWhere('step.scheduledDate IS NOT NULL')
-      // timestamptz 는 단일 AT TIME ZONE (이중 'UTC' 체인은 naive 전용 — 하루 어긋남)
-      .andWhere(
-        "(step.scheduledDate AT TIME ZONE 'Asia/Seoul')::DATE = :today",
-        { today: todayKst },
-      )
+      // KST 달력 날짜 매칭 — 단일 hop 헬퍼(kstDateSql). 이중 체인 금지 사유는 헬퍼 doc 참조
+      .andWhere(`${kstDateSql('step.scheduledDate')} = :today`, {
+        today: todayKst,
+      })
       .select(['step.id', 'step.applicationId', 'step.scheduledDate'])
       .addSelect(['app.id', 'app.userId', 'app.companyName'])
       .getMany();

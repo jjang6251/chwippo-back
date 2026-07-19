@@ -245,3 +245,28 @@ export function formatKstDateTime(
   const pick = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
   return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// SQL 조각 — timestamptz 컬럼 → KST 달력 날짜
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * `timestamptz` 컬럼(또는 timestamptz 식)을 KST 달력 날짜로 캐스팅하는 SQL 조각.
+ * 예: `kstDateSql('step.scheduledDate')` → `(step.scheduledDate AT TIME ZONE 'Asia/Seoul')::DATE`
+ *
+ * **단일 hop만 쓴다.** `timestamptz` 를 `AT TIME ZONE 'Asia/Seoul'` 하면 KST 벽시각
+ * naive timestamp 가 나오고, 이어진 `::DATE` 는 그 naive 값의 날짜라 세션 TZ 와 무관하다.
+ *
+ * ⚠️ 이중 체인 `... AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'` 금지 —
+ * 그 관용구는 **naive(`timestamp without time zone`) 컬럼 전용**이다.
+ * timestamptz 에 쓰면 (1) -9h 시프트로 자정 정각(날짜만) 값이 하루 어긋나고
+ * (2) 결과가 timestamptz 로 남아 `::DATE` 가 세션 TZ 에 의존하게 된다
+ * (2026-07-19 실사고: 알림·대시보드 날짜 필터 하루 어긋남). CI 가드가 이 이중 체인을
+ * src 전역에서 차단한다 (allowlist: growth.service.ts — naive 컬럼 applications.created_at 한정).
+ *
+ * SQL injection 주의: `column` 은 반드시 코드 리터럴(엔티티 alias.field)만 전달.
+ * 사용자 입력을 넘기지 말 것.
+ */
+export function kstDateSql(column: string): string {
+  return `(${column} AT TIME ZONE '${APP_TIMEZONE}')::DATE`;
+}

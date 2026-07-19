@@ -5,6 +5,7 @@ import {
   formatKstDateTime,
   getKstWeekMonday,
   getKstWeekSunday,
+  kstDateSql,
   startOfMonthKst,
   startOfTodayKst,
   toKstDateString,
@@ -151,6 +152,24 @@ describe('common/datetime — KST-fixed 헬퍼', () => {
       expect(formatKstDateTime(new Date('2026-05-25T03:00:00Z'), 'UTC')).toBe(
         '2026-05-25 03:00:00',
       );
+    });
+  });
+
+  describe('kstDateSql', () => {
+    it('timestamptz 컬럼 → 단일 hop KST 날짜 조각', () => {
+      expect(kstDateSql('step.scheduledDate')).toBe(
+        "(step.scheduledDate AT TIME ZONE 'Asia/Seoul')::DATE",
+      );
+    });
+    it('다른 컬럼 alias 도 그대로 감싼다', () => {
+      expect(kstDateSql('log.sent_at')).toBe(
+        "(log.sent_at AT TIME ZONE 'Asia/Seoul')::DATE",
+      );
+    });
+    it('이중 체인(naive 전용 관용구) 을 절대 만들지 않는다', () => {
+      // timestamptz 에 이중 체인을 쓰면 -9h 시프트 + 세션 TZ 의존 (2026-07-19 실사고)
+      expect(kstDateSql('n.created_at')).not.toContain("AT TIME ZONE 'UTC'");
+      expect(kstDateSql('n.created_at')).toContain("AT TIME ZONE 'Asia/Seoul'");
     });
   });
 });

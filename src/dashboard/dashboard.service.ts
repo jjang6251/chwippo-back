@@ -6,6 +6,7 @@ import { ApplicationCoverletter } from '../applications/application-coverletter.
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { CompaniesService } from '../companies/companies.service';
+import { kstDateSql } from '../common/datetime';
 
 /**
  * 캘린더 UX 재구성 — Hero CTA 라벨/링크 산출용 next_action enum.
@@ -60,10 +61,7 @@ export class DashboardService {
       .where('app.user_id = :userId', { userId })
       .andWhere('app.deleted_at IS NULL')
       .andWhere('step.scheduledDate IS NOT NULL')
-      .andWhere(
-        "(step.scheduledDate AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE < :today",
-        { today },
-      )
+      .andWhere(`${kstDateSql('step.scheduledDate')} < :today`, { today })
       .andWhere("step.name LIKE '%면접%'")
       .getCount();
 
@@ -90,10 +88,7 @@ export class DashboardService {
       .andWhere('app.status = :status', { status: 'IN_PROGRESS' })
       .andWhere('app.deleted_at IS NULL')
       .andWhere('step.scheduledDate IS NOT NULL')
-      .andWhere(
-        "(step.scheduledDate AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE >= :today",
-        { today },
-      )
+      .andWhere(`${kstDateSql('step.scheduledDate')} >= :today`, { today })
       .select([
         'step.id',
         'step.name',
@@ -108,10 +103,7 @@ export class DashboardService {
     const exams = await this.examRepo
       .createQueryBuilder('e')
       .where('e.user_id = :userId', { userId })
-      .andWhere(
-        "(e.exam_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE >= :today",
-        { today },
-      )
+      .andWhere(`${kstDateSql('e.exam_date')} >= :today`, { today })
       .getMany();
 
     const todayMs = new Date(today).getTime();
@@ -248,10 +240,9 @@ export class DashboardService {
       .andWhere('app.status = :status', { status: 'IN_PROGRESS' })
       .andWhere('app.deleted_at IS NULL')
       .andWhere('step.scheduledDate IS NOT NULL')
-      .andWhere(
-        "(step.scheduledDate AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE = :yesterday",
-        { yesterday },
-      )
+      .andWhere(`${kstDateSql('step.scheduledDate')} = :yesterday`, {
+        yesterday,
+      })
       .andWhere("step.name LIKE '%면접%'")
       .select(['step.id', 'step.name', 'step.applicationId'])
       .addSelect(['app.companyName'])
