@@ -135,15 +135,15 @@ export class CompaniesService {
         this.companies = JSON.parse(raw) as Company[];
         loaded = true;
 
-        console.log(
-          `[CompaniesService] Loaded ${this.companies.length} companies from ${jsonPath}`,
+        this.logger.log(
+          `Loaded ${this.companies.length} companies from ${jsonPath}`,
         );
         break;
       }
     }
     if (!loaded) {
-      console.warn(
-        `[CompaniesService] companies.json 못 찾음. 시도한 경로: ${candidates.join(', ')}. 사용자 누적만 동작`,
+      this.logger.warn(
+        `companies.json 못 찾음. 시도한 경로: ${candidates.join(', ')}. 사용자 누적만 동작`,
       );
       this.companies = [];
     }
