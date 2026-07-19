@@ -140,6 +140,13 @@ describe('common/datetime — KST-fixed 헬퍼', () => {
         '2026-05-25 09:00:00',
       );
     });
+    it('KST 자정 정각 → "00:00:00" (h24 표기 회귀 방지 — Node 20 ICU 는 hour12:false 를 h24 로 해석해 "24:00:00")', () => {
+      // hasKstTime(날짜만 판정)·임박 표기가 이 포맷에 의존 — 24 표기면 운영(node:20)에서
+      // 날짜만 마감이 "시간 있음"으로 오판돼 15시 알림 제외 + 야간 임박 오발송
+      expect(formatKstDateTime(new Date('2026-05-25T00:00:00+09:00'))).toBe(
+        '2026-05-25 00:00:00',
+      );
+    });
     it('tz="UTC" 명시', () => {
       expect(formatKstDateTime(new Date('2026-05-25T03:00:00Z'), 'UTC')).toBe(
         '2026-05-25 03:00:00',

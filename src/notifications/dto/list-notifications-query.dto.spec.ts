@@ -15,7 +15,7 @@ describe('ListNotificationsQueryDto', () => {
     expect(validate({})).toHaveLength(0);
   });
 
-  it.each(['briefing', 'deadline_urgent', 'admin'])(
+  it.each(['briefing', 'deadline_urgent', 'imminent', 'admin'])(
     'type=%s → 통과',
     (type) => {
       expect(validate({ type })).toHaveLength(0);

@@ -7,7 +7,10 @@ import { AuthService } from '../auth/auth.service';
 import { NotificationLog } from './notification-log.entity';
 import { NotificationsService } from './notifications.service';
 import { PushService, PushPayload } from './push.service';
-import type { NotificationType } from './notification.types';
+import {
+  DEDUP_NOTIFICATION_TYPES,
+  type NotificationType,
+} from './notification.types';
 import { toKstDateString } from '../common/datetime';
 
 /** 만료 세션 사용자 대상 마스킹/유도 푸시의 안전 deepLink (특정 board UUID 미노출) */
@@ -26,6 +29,13 @@ export interface DispatchContent {
 const EXPIRED_PUSH_CUTOFF_DAYS = 14;
 const EXPIRED_PUSH_CUTOFF_MS = EXPIRED_PUSH_CUTOFF_DAYS * 24 * 60 * 60 * 1000;
 
+/**
+ * Q2 하드캡 — 당일(KST) 정기 알림 발송 상한.
+ * dispatch 로 보낸 발송 수가 이 값 이상이면 이후 발송을 드롭한다 (스팸 방어).
+ * admin-notify(system-critical)는 dispatch 를 경유하지 않으므로 자동 제외.
+ */
+const DAILY_HARD_CAP = 4;
+
 type PushDecision =
   | { action: 'skip' }
   | {
@@ -36,10 +46,12 @@ type PushDecision =
     };
 
 /**
- * 알림 전달 공용 로직 — briefing·deadline_urgent cron 이 공유.
+ * 알림 전달 공용 로직 — briefing·deadline_urgent·imminent cron 이 공유.
  *
  * 흐름 (원자성 보장):
- *   1. dedup — 오늘(KST) 같은 type 이미 발송했으면 skip
+ *   1. dedup — 오늘(KST) 같은 type 이미 발송했으면 skip (briefing·deadline_urgent 만
+ *      · imminent 는 하루 다건 허용, per-refId dedup 은 발송 서비스 책임)
+ *   1b. Q2 하드캡 — 당일(KST) 총 발송 ≥4 → 드롭+로그 (admin-notify 경로는 캡 제외)
  *   2. TX: 인앱 Notification 생성 + notification_log insert
  *   3. commit 후 push (best-effort) — 권한 + device 있을 때만
  *
@@ -71,7 +83,23 @@ export class NotificationDispatchService {
     content: DispatchContent,
     now: Date = new Date(),
   ): Promise<boolean> {
-    if (await this.alreadySentToday(user.id, type, now)) return false;
+    // type 단위 "하루 1회" dedup — briefing·deadline_urgent 만.
+    // imminent 는 하루 다건 허용 (per-refId dedup 은 ImminentReminderService 책임).
+    if (
+      DEDUP_NOTIFICATION_TYPES.includes(type) &&
+      (await this.alreadySentToday(user.id, type, now))
+    ) {
+      return false;
+    }
+
+    // Q2 하드캡 — 당일 발송 수가 상한 이상이면 드롭 (구분 가능한 로그)
+    const sentToday = await this.countSentToday(user.id, now);
+    if (sentToday >= DAILY_HARD_CAP) {
+      this.logger.warn(
+        `[dispatch] HARDCAP_DROP user ${user.id} type ${type} — 당일 발송 ${sentToday}건 ≥ 상한 ${DAILY_HARD_CAP} (드롭)`,
+      );
+      return false;
+    }
 
     try {
       await this.dataSource.transaction(async (manager) => {
@@ -193,6 +221,21 @@ export class NotificationDispatchService {
       body: content.body,
       deepLink: content.deepLink,
     };
+  }
+
+  /**
+   * 오늘(KST) 이 사용자에게 dispatch 로 보낸 총 발송 수 (모든 type).
+   * Q2 하드캡 판정용. notification_logs 는 dispatch 발송만 기록하므로 그대로 카운트.
+   */
+  async countSentToday(userId: string, now: Date): Promise<number> {
+    const todayKst = toKstDateString(now);
+    return this.logRepo
+      .createQueryBuilder('log')
+      .where('log.user_id = :userId', { userId })
+      .andWhere("(log.sent_at AT TIME ZONE 'Asia/Seoul')::DATE = :today", {
+        today: todayKst,
+      })
+      .getCount();
   }
 
   /** 오늘(KST) 같은 type 발송 기록 존재 여부 */
