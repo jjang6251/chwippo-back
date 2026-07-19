@@ -82,11 +82,13 @@ jobs:
         env:
           PGPASSWORD: ${{ env.DB_PASSWORD }}
         run: |
+          # 세션 TZ 는 PGTZ env 로 지정 — `-c "SET ...; SELECT ..."` 는 SET 명령 태그가
+          # stdout 에 섞여 (-At 로도 억제 안 됨) 값 비교가 깨진다 (2026-07-19 첫 실행 실측)
           Q="(TIMESTAMPTZ '2026-07-04T00:00:00+09:00' AT TIME ZONE 'Asia/Seoul')::DATE"
-          UTC=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d "$DB_DATABASE" -At \
-            -c "SET TIME ZONE 'UTC'; SELECT $Q;")
-          SEOUL=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d "$DB_DATABASE" -At \
-            -c "SET TIME ZONE 'Asia/Seoul'; SELECT $Q;")
+          UTC=$(PGTZ='UTC' psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d "$DB_DATABASE" -At \
+            -c "SELECT $Q;")
+          SEOUL=$(PGTZ='Asia/Seoul' psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d "$DB_DATABASE" -At \
+            -c "SELECT $Q;")
           echo "UTC session   -> $UTC"
           echo "Seoul session -> $SEOUL"
           if [ "$UTC" != "2026-07-04" ] || [ "$SEOUL" != "2026-07-04" ]; then
