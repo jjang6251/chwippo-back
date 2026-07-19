@@ -8,7 +8,7 @@ import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { DailyNote } from '../calendar/daily-note.entity';
 import { User } from '../users/user.entity';
-import type { AlarmConfig } from './notification.types';
+import type { AlarmConfigUpdate } from './notification.types';
 
 // NOW = 2026-07-04 12:00 KST → todayKst '2026-07-04'
 const NOW = new Date('2026-07-04T03:00:00Z');
@@ -36,13 +36,14 @@ function makeStep(
 
 function makeUser(
   id: string,
-  config: Partial<AlarmConfig> | null,
+  config: AlarmConfigUpdate | null,
   overrides: Partial<User> = {},
 ): User {
   return {
     id,
     suspendedAt: null,
-    alarmConfig: config,
+    // 저장된 JSONB 는 부분/구버전일 수 있음 — 서비스가 resolveAlarmConfig 로 해석
+    alarmConfig: config as User['alarmConfig'],
     alarmPermissionGranted: true,
     ...overrides,
   } as User;
@@ -147,7 +148,7 @@ describe('BriefingService — 잘못된 알람 방지 필터', () => {
     expect(dispatch.dispatch).not.toHaveBeenCalled();
   });
 
-  it('master=false → skip', async () => {
+  it('레거시 master=false 저장값 → 채널 강등(briefingEnabled false)으로 skip', async () => {
     stepQb.getMany.mockResolvedValue([makeStep({})]);
     userRepo.find.mockResolvedValue([makeUser('u1', { master: false })]);
 
@@ -181,6 +182,27 @@ describe('BriefingService — 잘못된 알람 방지 필터', () => {
       makeStep({ scheduledDate: kstDate('2026-07-07') }),
     ]);
     userRepo.find.mockResolvedValue([makeUser('u1', { deadlinePoints: 'd3' })]);
+
+    const r = await service.sendDailyBriefings(NOW);
+    expect(r.sentBriefings).toBe(1);
+  });
+
+  // ★ 핵심 신규 회귀 — 누적 프리셋: d3 유저는 D-1 이벤트도 받아야 한다
+  it('deadlinePoints=d3 + D-1 이벤트 → 발송 (누적 프리셋 핵심 회귀)', async () => {
+    stepQb.getMany.mockResolvedValue([
+      makeStep({ scheduledDate: kstDate('2026-07-05') }), // D-1
+    ]);
+    userRepo.find.mockResolvedValue([makeUser('u1', { deadlinePoints: 'd3' })]);
+
+    const r = await service.sendDailyBriefings(NOW);
+    expect(r.sentBriefings).toBe(1);
+  });
+
+  it('deadlinePoints=d1 + D-1 이벤트 → 발송 (d1도 D-day·D-1 누적)', async () => {
+    stepQb.getMany.mockResolvedValue([
+      makeStep({ scheduledDate: kstDate('2026-07-05') }), // D-1
+    ]);
+    userRepo.find.mockResolvedValue([makeUser('u1', { deadlinePoints: 'd1' })]);
 
     const r = await service.sendDailyBriefings(NOW);
     expect(r.sentBriefings).toBe(1);
@@ -309,6 +331,180 @@ describe('BriefingService — 잘못된 알람 방지 필터', () => {
       noteQb.getMany.mockResolvedValue([makeNote({ content: '할일' })]);
 
       await service.sendDailyBriefings(NOW);
+      expect(dispatch.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('todo 토글 OFF → 이벤트는 발송하되 할 일 미첨부', async () => {
+      stepQb.getMany.mockResolvedValue([makeStep({})]);
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', { eventToggles: { todo: false } }),
+      ]);
+      noteQb.getMany.mockResolvedValue([makeNote({ content: '할일-숨김' })]);
+
+      const r = await service.sendDailyBriefings(NOW);
+      expect(r.sentBriefings).toBe(1);
+      const [, , content] = dispatch.dispatch.mock.calls[0];
+      expect(content.body).not.toContain('오늘 할 일');
+      expect(content.body).not.toContain('할일-숨김');
+    });
+  });
+
+  // ── ⑧ 브리핑 시각 선택 (briefingHour) ─────────────────────────────
+  describe('⑧ 브리핑 시각 필터', () => {
+    it('targetHour 미지정 → 시각 무관 발송 (수동·기존 동작)', async () => {
+      stepQb.getMany.mockResolvedValue([makeStep({})]);
+      userRepo.find.mockResolvedValue([makeUser('u1', { briefingHour: 9 })]);
+
+      const r = await service.sendDailyBriefings(NOW); // hour 미지정
+      expect(r.sentBriefings).toBe(1);
+    });
+
+    it('기본(8시) 유저는 8시 cron 에서 발송', async () => {
+      stepQb.getMany.mockResolvedValue([makeStep({})]);
+      userRepo.find.mockResolvedValue([makeUser('u1', null)]); // briefingHour 기본 8
+
+      const r = await service.sendDailyBriefings(NOW, 8);
+      expect(r.sentBriefings).toBe(1);
+    });
+
+    it('9시 유저는 8시 cron 에서 제외', async () => {
+      stepQb.getMany.mockResolvedValue([makeStep({})]);
+      userRepo.find.mockResolvedValue([makeUser('u1', { briefingHour: 9 })]);
+
+      const r = await service.sendDailyBriefings(NOW, 8);
+      expect(r.sentBriefings).toBe(0);
+      expect(dispatch.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('9시 유저는 9시 cron 에서 발송', async () => {
+      stepQb.getMany.mockResolvedValue([makeStep({})]);
+      userRepo.find.mockResolvedValue([makeUser('u1', { briefingHour: 9 })]);
+
+      const r = await service.sendDailyBriefings(NOW, 9);
+      expect(r.sentBriefings).toBe(1);
+    });
+  });
+
+  // ── ⑨ 유형별 토글 (eventToggles) ──────────────────────────────────
+  describe('⑨ 유형별 토글', () => {
+    it('interview OFF → 면접 스텝 제외 · 마감은 발송', async () => {
+      stepQb.getMany.mockResolvedValue([
+        makeStep({ id: 's1', scheduledDate: kstDate('2026-07-04') }), // 마감(orderIndex 0)
+        makeStep({
+          id: 's2',
+          applicationId: 'app-2',
+          orderIndex: 1,
+          name: '1차 면접',
+          scheduledDate: kstDate('2026-07-04'),
+          application: { userId: 'u1', companyName: '네이버' },
+        }),
+      ]);
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', { eventToggles: { interview: false } }),
+      ]);
+
+      const r = await service.sendDailyBriefings(NOW);
+      expect(r.sentBriefings).toBe(1);
+      const [, , content] = dispatch.dispatch.mock.calls[0];
+      expect(content.body).toContain('서류 마감');
+      expect(content.body).not.toContain('1차 면접');
+      expect(content.payload).toEqual({ eventCount: 1 }); // 면접 빠져 1건
+    });
+
+    it('deadline OFF + 마감 단독 → 침묵 (dispatch 없음)', async () => {
+      stepQb.getMany.mockResolvedValue([makeStep({})]); // 마감만
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', { eventToggles: { deadline: false } }),
+      ]);
+
+      const r = await service.sendDailyBriefings(NOW);
+      expect(r.sentBriefings).toBe(0);
+      expect(dispatch.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('exam OFF → 시험 제외', async () => {
+      examQb.getMany.mockResolvedValue([
+        {
+          id: 'e1',
+          user_id: 'u1',
+          name: 'TOEIC',
+          exam_date: kstDate('2026-07-04'),
+        } as ExamSchedule,
+      ]);
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', { eventToggles: { exam: false } }),
+      ]);
+
+      const r = await service.sendDailyBriefings(NOW);
+      expect(r.sentBriefings).toBe(0);
+    });
+
+    it("resultDate OFF → '결과 발표' 스텝 제외 (이름 기반 매핑)", async () => {
+      stepQb.getMany.mockResolvedValue([
+        makeStep({
+          id: 's1',
+          orderIndex: 3,
+          name: '최종 결과 발표',
+          scheduledDate: kstDate('2026-07-04'),
+        }),
+      ]);
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', { eventToggles: { resultDate: false } }),
+      ]);
+
+      const r = await service.sendDailyBriefings(NOW);
+      expect(r.sentBriefings).toBe(0);
+    });
+
+    it("resultDate ON → '결과 발표' 스텝 발송 (라벨에 스텝명)", async () => {
+      stepQb.getMany.mockResolvedValue([
+        makeStep({
+          id: 's1',
+          orderIndex: 3,
+          name: '최종 결과 발표',
+          scheduledDate: kstDate('2026-07-04'),
+        }),
+      ]);
+      userRepo.find.mockResolvedValue([makeUser('u1', null)]);
+
+      const r = await service.sendDailyBriefings(NOW);
+      expect(r.sentBriefings).toBe(1);
+      const [, , content] = dispatch.dispatch.mock.calls[0];
+      expect(content.body).toContain('최종 결과 발표');
+    });
+
+    it('전부 OFF + 이벤트 존재 → 침묵 (이벤트 0 처리)', async () => {
+      stepQb.getMany.mockResolvedValue([
+        makeStep({ id: 's1', scheduledDate: kstDate('2026-07-04') }),
+        makeStep({
+          id: 's2',
+          orderIndex: 1,
+          name: '면접',
+          scheduledDate: kstDate('2026-07-04'),
+        }),
+      ]);
+      examQb.getMany.mockResolvedValue([
+        {
+          id: 'e1',
+          user_id: 'u1',
+          name: 'TOEIC',
+          exam_date: kstDate('2026-07-04'),
+        } as ExamSchedule,
+      ]);
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', {
+          eventToggles: {
+            deadline: false,
+            interview: false,
+            exam: false,
+            resultDate: false,
+            todo: false,
+          },
+        }),
+      ]);
+
+      const r = await service.sendDailyBriefings(NOW);
+      expect(r.sentBriefings).toBe(0);
       expect(dispatch.dispatch).not.toHaveBeenCalled();
     });
   });

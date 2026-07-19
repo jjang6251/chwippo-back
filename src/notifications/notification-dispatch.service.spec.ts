@@ -265,4 +265,108 @@ describe('NotificationDispatchService', () => {
       );
     });
   });
+
+  // ── Q2 하드캡 (당일 발송 상한 4) ──────────────────────────────
+  describe('Q2 하드캡', () => {
+    beforeEach(() => {
+      deviceRepo.find.mockResolvedValue([
+        { deviceToken: 'ExponentPushToken[x]' } as UserDevice,
+      ]);
+    });
+
+    it('당일 발송 4건 도달 → 5번째 드롭 (TX·push 없음, false)', async () => {
+      // 1st getCount = alreadySentToday(type) → 0 · 2nd = countSentToday(전체) → 4
+      logQb.getCount.mockResolvedValueOnce(0).mockResolvedValueOnce(4);
+
+      const ok = await service.dispatch(grantedUser, 'briefing', content, NOW);
+
+      expect(ok).toBe(false);
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(pushService.sendToTokens).not.toHaveBeenCalled();
+    });
+
+    it('당일 발송 3건 → 4번째 통과 (상한 미만, TX 생성)', async () => {
+      logQb.getCount.mockResolvedValueOnce(0).mockResolvedValueOnce(3);
+
+      const ok = await service.dispatch(grantedUser, 'briefing', content, NOW);
+
+      expect(ok).toBe(true);
+      expect(dataSource.transaction).toHaveBeenCalled();
+    });
+
+    it('countSentToday — user+KST날짜 필터로 카운트 (type 무관 · 자정 리셋 근거)', async () => {
+      logQb.getCount.mockResolvedValue(2);
+
+      const n = await service.countSentToday('u1', NOW);
+
+      expect(n).toBe(2);
+      expect(logQb.where).toHaveBeenCalledWith('log.user_id = :userId', {
+        userId: 'u1',
+      });
+      // KST 날짜 predicate — UTC 자정이 아닌 KST 자정 기준 리셋
+      expect(logQb.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining("AT TIME ZONE 'Asia/Seoul'"),
+        expect.objectContaining({ today: expect.any(String) }),
+      );
+    });
+  });
+
+  // ── imminent — type 단위 하루 1회 dedup 미적용 (하루 다건 허용) ──
+  describe('imminent 하루 다건', () => {
+    beforeEach(() => {
+      deviceRepo.find.mockResolvedValue([]);
+    });
+
+    it('imminent → type 단위 dedup 안 탐 (alreadySentToday 미호출 · 캡 카운트만)', async () => {
+      const dedupSpy = jest.spyOn(service, 'alreadySentToday');
+      logQb.getCount.mockResolvedValue(0); // countSentToday(캡)
+
+      const ok = await service.dispatch(grantedUser, 'imminent', content, NOW);
+
+      expect(ok).toBe(true);
+      expect(dedupSpy).not.toHaveBeenCalled();
+      expect(logQb.getCount).toHaveBeenCalledTimes(1); // 캡 판정 1회뿐
+      expect(dataSource.transaction).toHaveBeenCalled();
+    });
+
+    it('같은 날 두 번째 imminent (다른 이벤트) → 발송 허용', async () => {
+      logQb.getCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+
+      const first = await service.dispatch(
+        grantedUser,
+        'imminent',
+        content,
+        NOW,
+      );
+      const second = await service.dispatch(
+        grantedUser,
+        'imminent',
+        content,
+        NOW,
+      );
+
+      expect(first).toBe(true);
+      expect(second).toBe(true);
+      expect(dataSource.transaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('imminent 도 하드캡 편입 — 당일 4건이면 드롭', async () => {
+      logQb.getCount.mockResolvedValue(4); // countSentToday
+
+      const ok = await service.dispatch(grantedUser, 'imminent', content, NOW);
+
+      expect(ok).toBe(false);
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('briefing 은 여전히 type 단위 dedup (회귀)', async () => {
+      const dedupSpy = jest.spyOn(service, 'alreadySentToday');
+      logQb.getCount.mockResolvedValue(1); // alreadySentToday → true
+
+      const ok = await service.dispatch(grantedUser, 'briefing', content, NOW);
+
+      expect(ok).toBe(false);
+      expect(dedupSpy).toHaveBeenCalledWith('u1', 'briefing', NOW);
+    });
+  });
 });

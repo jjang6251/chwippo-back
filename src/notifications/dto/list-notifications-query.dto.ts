@@ -4,6 +4,7 @@ import type { NotificationType } from '../notification.types';
 const NOTIFICATION_TYPES: NotificationType[] = [
   'briefing',
   'deadline_urgent',
+  'imminent',
   'admin',
 ];
 

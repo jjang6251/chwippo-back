@@ -2,7 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
-import { AlarmConfig, resolveAlarmConfig } from './notification.types';
+import {
+  AlarmConfig,
+  AlarmConfigUpdate,
+  resolveAlarmConfig,
+} from './notification.types';
 
 /**
  * 알림 설정 — users.alarm_config + 권한 상태 컬럼 관리.
@@ -28,7 +32,7 @@ export class AlarmConfigService {
   /** 부분 update — 기존 설정과 merge 후 저장. 저장된 최종 설정 반환 */
   async update(
     userId: string,
-    partial: Partial<AlarmConfig>,
+    partial: AlarmConfigUpdate,
   ): Promise<AlarmConfig> {
     const user = await this.userRepo.findOne({
       where: { id: userId },
@@ -36,9 +40,28 @@ export class AlarmConfigService {
     });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
 
+    const current = resolveAlarmConfig(user.alarmConfig);
+    // ⚠️ partial 은 ValidationPipe 가 만든 DTO "클래스 인스턴스" — 안 보낸 필드도
+    // own property `undefined` 로 존재해서, 그대로 spread 하면 기존값을 undefined 로
+    // 덮어쓰고 JSONB 저장에서 키가 탈락한다 (master 소실 실사고 2026-07-19).
+    // undefined 필드를 제거한 뒤에만 merge 한다.
+    const defined = Object.fromEntries(
+      Object.entries(partial).filter(([, v]) => v !== undefined),
+    ) as AlarmConfigUpdate;
     const merged = resolveAlarmConfig({
-      ...resolveAlarmConfig(user.alarmConfig),
-      ...partial,
+      ...current,
+      ...defined,
+      // eventToggles 는 부분 update — 보낸 유형만 현재값에 깊게 merge (다른 유형 유지)
+      eventToggles: defined.eventToggles
+        ? {
+            ...current.eventToggles,
+            ...(Object.fromEntries(
+              Object.entries(defined.eventToggles).filter(
+                ([, v]) => v !== undefined,
+              ),
+            ) as Partial<typeof current.eventToggles>),
+          }
+        : current.eventToggles,
     });
     await this.userRepo.update({ id: userId }, { alarmConfig: merged });
     return merged;
