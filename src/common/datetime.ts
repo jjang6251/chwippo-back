@@ -45,7 +45,9 @@ function datetimeFormatter(tz: Tz): Intl.DateTimeFormat {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      hour12: false,
+      // hour12:false 금지 — Node 20 ICU(en-CA)는 h24 로 해석해 자정이 '24:00:00'
+      // (운영 node:20-alpine 실측 2026-07-19). h23 은 명세상 00~23 고정.
+      hourCycle: 'h23',
     });
     dtFormatters.set(tz, f);
   }
