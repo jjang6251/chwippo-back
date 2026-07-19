@@ -5,6 +5,7 @@ import {
   formatKstDateTime,
   getKstWeekMonday,
   getKstWeekSunday,
+  kstDateSql,
   startOfMonthKst,
   startOfTodayKst,
   toKstDateString,
@@ -140,10 +141,35 @@ describe('common/datetime — KST-fixed 헬퍼', () => {
         '2026-05-25 09:00:00',
       );
     });
+    it('KST 자정 정각 → "00:00:00" (h24 표기 회귀 방지 — Node 20 ICU 는 hour12:false 를 h24 로 해석해 "24:00:00")', () => {
+      // hasKstTime(날짜만 판정)·임박 표기가 이 포맷에 의존 — 24 표기면 운영(node:20)에서
+      // 날짜만 마감이 "시간 있음"으로 오판돼 15시 알림 제외 + 야간 임박 오발송
+      expect(formatKstDateTime(new Date('2026-05-25T00:00:00+09:00'))).toBe(
+        '2026-05-25 00:00:00',
+      );
+    });
     it('tz="UTC" 명시', () => {
       expect(formatKstDateTime(new Date('2026-05-25T03:00:00Z'), 'UTC')).toBe(
         '2026-05-25 03:00:00',
       );
+    });
+  });
+
+  describe('kstDateSql', () => {
+    it('timestamptz 컬럼 → 단일 hop KST 날짜 조각', () => {
+      expect(kstDateSql('step.scheduledDate')).toBe(
+        "(step.scheduledDate AT TIME ZONE 'Asia/Seoul')::DATE",
+      );
+    });
+    it('다른 컬럼 alias 도 그대로 감싼다', () => {
+      expect(kstDateSql('log.sent_at')).toBe(
+        "(log.sent_at AT TIME ZONE 'Asia/Seoul')::DATE",
+      );
+    });
+    it('이중 체인(naive 전용 관용구) 을 절대 만들지 않는다', () => {
+      // timestamptz 에 이중 체인을 쓰면 -9h 시프트 + 세션 TZ 의존 (2026-07-19 실사고)
+      expect(kstDateSql('n.created_at')).not.toContain("AT TIME ZONE 'UTC'");
+      expect(kstDateSql('n.created_at')).toContain("AT TIME ZONE 'Asia/Seoul'");
     });
   });
 });

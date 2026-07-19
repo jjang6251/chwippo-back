@@ -10,3 +10,8 @@
 # 그 경우 [phases.setup] nixpkgsArchive 를 최신 nixpkgs 커밋으로 pin 하는 게 정석.
 [phases.setup]
 nixPkgs = ["...", "postgresql_18"]
+
+# Node 22 pin (2026-07-19) — 현 운영(Railway/Nixpacks)의 실제 Node 버전 결정 지점.
+# engines/.nvmrc 보다 우선. Dockerfile(EC2 Phase 2)·CI·로컬 .nvmrc 와 22 로 통일.
+[variables]
+NIXPACKS_NODE_VERSION = "22"

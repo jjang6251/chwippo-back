@@ -8,15 +8,17 @@ import { User } from '../users/user.entity';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import {
   DEADLINE_POINT_OFFSETS,
+  classifyBriefingEventKind,
   resolveAlarmConfig,
+  type EventToggles,
 } from './notification.types';
-import { toKstDateString } from '../common/datetime';
+import { kstDateSql, toKstDateString } from '../common/datetime';
 
 /** F4 — 브리핑에 합류할 오늘 할 일 최대 개수 (스팸 방지 cap) */
 const MAX_BRIEFING_TODOS = 3;
 
 interface BriefingEvent {
-  kind: 'deadline' | 'interview' | 'exam';
+  kind: 'deadline' | 'interview' | 'exam' | 'resultDate';
   dday: number;
   label: string; // 표시용 (예 "카카오 서류 마감")
   deepLink: string | null;
@@ -28,16 +30,18 @@ interface BriefingResult {
 }
 
 /**
- * 아침 브리핑 발송 — 매일 08:00 KST.
+ * 아침 브리핑 발송 — 매일 07~10시 KST (사용자 briefingHour 선택 · @Cron 4개).
  *
  * "잘못된 알람 방지" 필터가 전부 여기 집중:
  *   1. app.status NOT IN ('PASSED','FAILED') — 끝난 카드 제외
  *   2. app.deleted_at IS NULL — 삭제 카드 제외
  *   3. user.suspended_at IS NULL — 정지 사용자 제외
  *   4. alarm_config.master && briefingEnabled — 설정 off 제외
- *   5. 이벤트 dday ∈ 사용자 deadlinePoints (d1/d3/d7) — 그 외 offset 제외
+ *   4b. targetHour 지정 시 alarm_config.briefingHour === targetHour — 시각 필터
+ *   4c. eventToggles — 유형별 off 제외 (deadline·interview·exam·resultDate·todo)
+ *   5. 이벤트 dday ∈ 사용자 deadlinePoints 누적 프리셋 (d1/d3/d7) — 그 외 offset 제외
  *   6. 이벤트 0건 → 발송 안 함 ("없으면 침묵")
- *   7. notification_logs dedup — 같은 날 재실행해도 1회만
+ *   7. notification_logs dedup — 같은 날 재실행해도 1회만 (시각 변경 당일 이중 발송 방지)
  *
  * F4 — 오늘(KST) 미완료 할 일(daily_notes)을 브리핑 본문에 합류 (최대 3건).
  *   단 스텝·시험 이벤트가 1건 이상일 때만 첨부 — 할 일 단독으로는 발송 안 함
@@ -63,7 +67,14 @@ export class BriefingService {
     private readonly dispatch: NotificationDispatchService,
   ) {}
 
-  async sendDailyBriefings(now: Date = new Date()): Promise<BriefingResult> {
+  /**
+   * @param targetHour 지정 시 alarm_config.briefingHour 가 이 값인 사용자에게만 발송
+   *   (07~10시 각 @Cron 이 자기 시각을 전달). 미지정(수동·테스트)이면 시각 필터 없음.
+   */
+  async sendDailyBriefings(
+    now: Date = new Date(),
+    targetHour?: number,
+  ): Promise<BriefingResult> {
     const todayKst = toKstDateString(now);
     // 오늘 KST 기준 offset 별 target 날짜 (YYYY-MM-DD) → dday 역매핑
     const dateToOffset = new Map<string, number>();
@@ -81,10 +92,11 @@ export class BriefingService {
       .where('app.deleted_at IS NULL')
       .andWhere("app.status NOT IN ('PASSED','FAILED')")
       .andWhere('step.scheduledDate IS NOT NULL')
-      .andWhere(
-        "(step.scheduledDate AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE = ANY(:dates)",
-        { dates: targetDates },
-      )
+      // KST 달력 날짜 매칭 — 단일 hop 헬퍼(kstDateSql). 이중 체인 금지 사유는 헬퍼 doc 참조
+      // (2026-07-19 실사고: D-3 마감 브리핑 누락 원인)
+      .andWhere(`${kstDateSql('step.scheduledDate')} = ANY(:dates)`, {
+        dates: targetDates,
+      })
       .select([
         'step.id',
         'step.name',
@@ -101,11 +113,14 @@ export class BriefingService {
       const dateStr = toKstDateString(step.scheduledDate!);
       const dday = dateToOffset.get(dateStr);
       if (dday === undefined) continue;
-      // 첫 스텝(orderIndex 0) = 서류 마감 · 그 외 = 면접/전형
-      const isDeadline = step.orderIndex === 0;
-      const label = `${app.companyName} ${isDeadline ? '서류 마감' : step.name}`;
+      // 첫 스텝(orderIndex 0)=서류 마감 · '결과·발표' 스텝=resultDate · 그 외=면접/전형
+      const kind = classifyBriefingEventKind(step.orderIndex, step.name);
+      const label =
+        kind === 'deadline'
+          ? `${app.companyName} 서류 마감`
+          : `${app.companyName} ${step.name}`;
       this.pushEvent(eventsByUser, app.userId, {
-        kind: isDeadline ? 'deadline' : 'interview',
+        kind,
         dday,
         label,
         deepLink: `/board/${step.applicationId}`,
@@ -114,10 +129,9 @@ export class BriefingService {
 
     const exams = await this.examRepo
       .createQueryBuilder('e')
-      .where(
-        "(e.exam_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul')::DATE = ANY(:dates)",
-        { dates: targetDates },
-      )
+      .where(`${kstDateSql('e.exam_date')} = ANY(:dates)`, {
+        dates: targetDates,
+      })
       .getMany();
 
     for (const exam of exams) {
@@ -157,18 +171,23 @@ export class BriefingService {
       if (user.suspendedAt) continue; // 정지 사용자 제외
       const config = resolveAlarmConfig(user.alarmConfig);
       if (!config.master || !config.briefingEnabled) continue;
+      // 시각 필터 — 이 cron 시각(targetHour)을 선택한 사용자에게만
+      if (targetHour !== undefined && config.briefingHour !== targetHour) {
+        continue;
+      }
 
       const allowedOffsets = DEADLINE_POINT_OFFSETS[config.deadlinePoints];
-      const events = (eventsByUser.get(user.id) ?? []).filter((e) =>
-        allowedOffsets.includes(e.dday),
+      const toggles = config.eventToggles;
+      const events = (eventsByUser.get(user.id) ?? []).filter(
+        (e) =>
+          allowedOffsets.includes(e.dday) && this.kindEnabled(e.kind, toggles),
       );
       if (events.length === 0) continue; // "없으면 침묵"
 
-      // 할 일은 이벤트가 있는 사용자에게만 합류 (단독 발송 없음)
-      const todos = (notesByUser.get(user.id) ?? []).slice(
-        0,
-        MAX_BRIEFING_TODOS,
-      );
+      // 할 일은 이벤트가 있는 사용자에게만 합류 (단독 발송 없음) · todo 토글 존중
+      const todos = toggles.todo
+        ? (notesByUser.get(user.id) ?? []).slice(0, MAX_BRIEFING_TODOS)
+        : [];
       const { title, body } = this.buildMessage(events, todos);
       const sortedEvents = [...events].sort((a, b) => a.dday - b.dday);
       const deepLink = sortedEvents[0]?.deepLink ?? '/calendar';
@@ -244,6 +263,23 @@ export class BriefingService {
       byUser.set(note.userId, arr);
     }
     return byUser;
+  }
+
+  /** 이벤트 kind 가 사용자 eventToggles 로 켜져 있는지 */
+  private kindEnabled(
+    kind: BriefingEvent['kind'],
+    toggles: EventToggles,
+  ): boolean {
+    switch (kind) {
+      case 'deadline':
+        return toggles.deadline;
+      case 'interview':
+        return toggles.interview;
+      case 'exam':
+        return toggles.exam;
+      case 'resultDate':
+        return toggles.resultDate;
+    }
   }
 
   private pushEvent(

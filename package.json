@@ -1,6 +1,9 @@
 {
   "name": "chwippo-back",
   "version": "0.0.1",
+  "engines": {
+    "node": "22.x"
+  },
   "description": "",
   "author": "",
   "private": true,
