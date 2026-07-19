@@ -192,21 +192,25 @@ export class GrowthService {
         ? 'AND deleted_at IS NULL'
         : '';
 
-    // ⚠️ 이중 체인('UTC' 경유) — kstDateSql 헬퍼로 단일화하지 않고 남겨둔 CI 가드 allowlist.
-    // 컬럼 타입이 표에 따라 갈린다 (마이그레이션 실측 2026-07-19):
-    //   applications.created_at = TIMESTAMP(naive) → 이중 체인이 맞는 관용구
-    //   activity_logs.created_at / activity_reflections.created_at = TIMESTAMPTZ
-    //     → 이중 체인은 -9h 시프트(하루 어긋남) 잠복 버그. created_at 은 서버 NOW() 라
-    //       KST 00~09시 생성분만 전월/전일로 오분류되는 부분 영향.
-    // 통일 수정은 표시 수치(월별 비교·요일 인사이트)를 바꾸므로 별도 CEO 승인 PR 로 분리.
-    // (feature-kst-sql-helper 스코프 밖 — 관련 보고 참조)
+    // KST 변환 조각은 컬럼 타입에 따라 갈린다 (마이그레이션 실측 2026-07-19).
+    //   applications.created_at = TIMESTAMP(naive) → 이중 체인('UTC' 경유)이 맞는 관용구.
+    //     운영 프로세스 TZ=UTC 라 naive 컬럼엔 UTC 벽시각이 저장 → 이중 체인이 정확한 KST 변환.
+    //     ⚠️ dev(mac, TZ=KST)는 KST 벽시각이 저장돼 dev 통계만 어긋날 수 있음(운영 정상).
+    //   activity_logs / activity_reflections.created_at = TIMESTAMPTZ → 단일 hop 이 맞다.
+    //     이중 체인을 쓰면 -9h 시프트로 KST 00~09시 생성분이 전월/전일로 오분류됐다(2026-07-19 수정).
+    // 매핑은 테이블 리터럴 기준 하드코딩 분기 — 사용자 입력이 SQL 로 유입되지 않는다.
+    // (장기 백로그: applications.created_at 을 timestamptz 로 통일하는 마이그레이션 — 별도 PR)
+    const kstMonth =
+      table === 'applications'
+        ? `${timestampCol} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'` // naive → 이중 체인
+        : `${timestampCol} AT TIME ZONE 'Asia/Seoul'`; // timestamptz → 단일 hop
     const result: { cnt: number }[] = await this.appRepo.query(
       `
       SELECT COUNT(*)::int AS cnt
       FROM ${table}
       WHERE user_id = $1
         ${deletedClause}
-        AND TO_CHAR((${timestampCol} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'), 'YYYY-MM') = $2
+        AND TO_CHAR((${kstMonth}), 'YYYY-MM') = $2
       `,
       [userId, yearMonth],
     );
@@ -261,19 +265,23 @@ export class GrowthService {
   private async getInsights(
     userId: string,
   ): Promise<GrowthMetricsResponse['insights']> {
-    // ⚠️ 이중 체인 — CI 가드 allowlist (kstDateSql 미치환). UNION 은 naive(applications)+
-    // timestamptz(activity_logs·activity_reflections) 를 섞어 timestamptz 로 승격되므로
-    // 세 소스 모두 -9h 시프트 잠복 버그. 통일 수정은 요일 인사이트 수치를 바꿔 별도 PR 로 분리.
+    // 각 브랜치에서 자기 타입에 맞는 변환을 먼저 적용해 KST naive 벽시각(kst_ts)으로 통일한 뒤 UNION.
+    //   applications(naive) → 이중 체인('UTC' 경유), activity_*(timestamptz) → 단일 hop.
+    // 이렇게 하면 UNION 이 timestamptz 로 승격돼 세 소스가 -9h 시프트되던 버그가 사라진다(2026-07-19 수정).
+    // 바깥 EXTRACT(DOW) 는 이미 변환된 kst_ts 를 그대로 사용.
     const weekdayQuery: Promise<{ dow: number; cnt: number }[]> =
       this.appRepo.query(
         `
-        SELECT EXTRACT(DOW FROM (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'))::int AS dow, COUNT(*)::int AS cnt
+        SELECT EXTRACT(DOW FROM kst_ts)::int AS dow, COUNT(*)::int AS cnt
         FROM (
-          SELECT created_at FROM applications WHERE user_id = $1 AND deleted_at IS NULL
+          SELECT (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul') AS kst_ts
+            FROM applications WHERE user_id = $1 AND deleted_at IS NULL
           UNION ALL
-          SELECT created_at FROM activity_logs WHERE user_id = $1
+          SELECT (created_at AT TIME ZONE 'Asia/Seoul') AS kst_ts
+            FROM activity_logs WHERE user_id = $1
           UNION ALL
-          SELECT created_at FROM activity_reflections WHERE user_id = $1
+          SELECT (created_at AT TIME ZONE 'Asia/Seoul') AS kst_ts
+            FROM activity_reflections WHERE user_id = $1
         ) u
         GROUP BY dow
         `,
