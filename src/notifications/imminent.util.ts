@@ -1,6 +1,10 @@
 import { Repository } from 'typeorm';
 import { Notification } from './notification.entity';
-import { formatKstDateTime, toKstDateString } from '../common/datetime';
+import {
+  formatKstDateTime,
+  kstDateSql,
+  toKstDateString,
+} from '../common/datetime';
 
 /**
  * imminent(2시간 전) 관련 공유 유틸.
@@ -39,7 +43,7 @@ export async function loadSentImminentRefIdsToday(
     .createQueryBuilder('n')
     .where('n.user_id IN (:...userIds)', { userIds })
     .andWhere("n.type = 'imminent'")
-    .andWhere("(n.created_at AT TIME ZONE 'Asia/Seoul')::DATE = :today", {
+    .andWhere(`${kstDateSql('n.created_at')} = :today`, {
       today: todayKst,
     })
     .select(['n.userId', 'n.payload'])

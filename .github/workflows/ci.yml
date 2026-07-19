@@ -72,6 +72,35 @@ jobs:
       - name: Run migrations (smoke test)
         run: npm run migration:run
 
+      # ── KST SQL 경계 검증 (실 Postgres) ────────────────────
+      # kstDateSql() 이 만드는 단일 hop 조각 `(ts AT TIME ZONE 'Asia/Seoul')::DATE` 이
+      #   (1) KST 자정 정각 timestamptz 를 정확히 그 날짜(2026-07-04)로 캐스팅하고
+      #   (2) 세션 TZ(UTC·Asia/Seoul)와 무관하게 동일한 결과인지
+      # 실 Postgres 로 확인. 이중 체인('UTC' 경유)이었다면 하루 어긋나며 세션 의존이 된다
+      # (2026-07-19 실사고). postgres:15 서비스·DB_* env 재사용.
+      - name: KST SQL boundary check (real Postgres)
+        env:
+          PGPASSWORD: ${{ env.DB_PASSWORD }}
+        run: |
+          # 세션 TZ 는 PGTZ env 로 지정 — `-c "SET ...; SELECT ..."` 는 SET 명령 태그가
+          # stdout 에 섞여 (-At 로도 억제 안 됨) 값 비교가 깨진다 (2026-07-19 첫 실행 실측)
+          Q="(TIMESTAMPTZ '2026-07-04T00:00:00+09:00' AT TIME ZONE 'Asia/Seoul')::DATE"
+          UTC=$(PGTZ='UTC' psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d "$DB_DATABASE" -At \
+            -c "SELECT $Q;")
+          SEOUL=$(PGTZ='Asia/Seoul' psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USERNAME" -d "$DB_DATABASE" -At \
+            -c "SELECT $Q;")
+          echo "UTC session   -> $UTC"
+          echo "Seoul session -> $SEOUL"
+          if [ "$UTC" != "2026-07-04" ] || [ "$SEOUL" != "2026-07-04" ]; then
+            echo "::error::단일 hop KST 캐스팅이 기대값(2026-07-04)과 다릅니다: UTC=$UTC, Seoul=$SEOUL"
+            exit 1
+          fi
+          if [ "$UTC" != "$SEOUL" ]; then
+            echo "::error::세션 TZ 에 따라 결과가 달라집니다 (세션 무관성 위반): UTC=$UTC, Seoul=$SEOUL"
+            exit 1
+          fi
+          echo "OK — 단일 hop KST 날짜 = 2026-07-04, 세션 TZ 무관 일치."
+
       # 가장 최근 마이그레이션의 down() 이 정상 동작하는지 → 다시 올려서 스키마 복구
       - name: Verify migration rollback (down → up)
         run: |
@@ -91,6 +120,31 @@ jobs:
           else
             echo "파괴적 DDL 패턴 없음."
           fi
+
+      # ── KST 이중 체인 가드 ─────────────────────────────────
+      # timestamptz 컬럼에 `AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'` 이중 체인을
+      # 쓰면 -9h 시프트로 날짜가 하루 어긋나고 결과가 세션 TZ 의존이 된다 (2026-07-19 실사고).
+      # 이중 체인은 naive(timestamp without time zone) 컬럼 전용 관용구 — timestamptz 는
+      # src/common/datetime.ts 의 kstDateSql() (단일 hop) 헬퍼를 써야 한다.
+      #   allowlist:
+      #     - src/common/datetime.ts       : 헬퍼 doc 이 금지 패턴을 문서로 인용
+      #     - src/dashboard/growth.service.ts : naive applications.created_at 한정
+      #         (activity_* timestamptz 통일 수정은 표시 수치 변경 → 별도 CEO 승인 PR)
+      #     - *.spec.ts                    : 회귀 단언
+      # (블랭킷 'AT TIME ZONE' 금지는 불가 — calendar·admin·ai·streak 등이 정상 단일 hop /
+      #  TO_CHAR / date_trunc / 파라미터 tz 로 올바르게 쓰고 있어 오탐. 실제 버그는 이중 체인뿐.)
+      - name: Guard against KST double-chain (timestamptz 이중 체인 금지)
+        run: |
+          HITS=$(grep -rn "AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Seoul'" src --include='*.ts' \
+            | grep -v 'src/common/datetime.ts' \
+            | grep -v 'src/dashboard/growth.service.ts' \
+            | grep -v '\.spec\.ts' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::timestamptz 컬럼에 KST 이중 체인이 발견되었습니다. src/common/datetime.ts 의 kstDateSql() 단일 hop 헬퍼를 사용하세요 (이중 체인은 naive 컬럼 전용)."
+            echo "$HITS"
+            exit 1
+          fi
+          echo "KST 이중 체인 없음 (allowlist: datetime.ts · growth.service.ts · *.spec.ts)."
 
       # ── E2E ────────────────────────────────────────────────
       # AppModule 부팅(실 DB 연결) + /health 확인. 향후 실 DB 연동 e2e 작성 기반.

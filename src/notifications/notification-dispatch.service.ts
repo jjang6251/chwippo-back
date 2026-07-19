@@ -11,7 +11,7 @@ import {
   DEDUP_NOTIFICATION_TYPES,
   type NotificationType,
 } from './notification.types';
-import { toKstDateString } from '../common/datetime';
+import { kstDateSql, toKstDateString } from '../common/datetime';
 
 /** 만료 세션 사용자 대상 마스킹/유도 푸시의 안전 deepLink (특정 board UUID 미노출) */
 const MASKED_DEEP_LINK = '/calendar';
@@ -232,7 +232,7 @@ export class NotificationDispatchService {
     return this.logRepo
       .createQueryBuilder('log')
       .where('log.user_id = :userId', { userId })
-      .andWhere("(log.sent_at AT TIME ZONE 'Asia/Seoul')::DATE = :today", {
+      .andWhere(`${kstDateSql('log.sent_at')} = :today`, {
         today: todayKst,
       })
       .getCount();
@@ -249,7 +249,7 @@ export class NotificationDispatchService {
       .createQueryBuilder('log')
       .where('log.user_id = :userId', { userId })
       .andWhere('log.type = :type', { type })
-      .andWhere("(log.sent_at AT TIME ZONE 'Asia/Seoul')::DATE = :today", {
+      .andWhere(`${kstDateSql('log.sent_at')} = :today`, {
         today: todayKst,
       })
       .getCount();
