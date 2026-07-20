@@ -83,6 +83,47 @@ describe('Tier 2 DTO 검증 강화 (e2e, PR δ)', () => {
     });
   });
 
+  // ── UpdateApplicationDto.memo — tiptap JSON 상한 (카드 상세 개편) ──
+  describe('PATCH /applications/:id (memo MaxLength 100_000)', () => {
+    async function createCard(token: string) {
+      const res = await request(app.getHttpServer())
+        .post('/applications')
+        .set(bearer(token))
+        .send({ companyName: '치뽀', templateId: 'general' })
+        .expect(201);
+      return res.body.data.id as string;
+    }
+
+    it('memo 2000자 초과 tiptap JSON → 200 (텍스트 2000자의 JSON 오버헤드 수용 — 구 MaxLength(2000) 회귀 방지)', async () => {
+      const { accessToken } = await signInAsUser(app);
+      const appId = await createCard(accessToken);
+      // 텍스트 ~1800자 tiptap 문서 — 직렬화하면 2000자를 넘는다 (구 제약이면 400 났던 케이스)
+      const memo = JSON.stringify({
+        type: 'doc',
+        content: Array.from({ length: 30 }, () => ({
+          type: 'paragraph',
+          content: [{ type: 'text', text: '가'.repeat(60) }],
+        })),
+      });
+      expect(memo.length).toBeGreaterThan(2000);
+      await request(app.getHttpServer())
+        .patch(`/applications/${appId}`)
+        .set(bearer(accessToken))
+        .send({ memo })
+        .expect(200);
+    });
+
+    it('memo 100_000자 초과 → 400 (상한 유지)', async () => {
+      const { accessToken } = await signInAsUser(app);
+      const appId = await createCard(accessToken);
+      await request(app.getHttpServer())
+        .patch(`/applications/${appId}`)
+        .set(bearer(accessToken))
+        .send({ memo: 'a'.repeat(100_001) })
+        .expect(400);
+    });
+  });
+
   // ── DTO-8 UpdateProfileDto.email_personal ───────────────
   describe('PATCH /myinfo/profile (DTO-8)', () => {
     it('DTO-8: email_personal 잘못된 형식 → 400', async () => {
