@@ -194,4 +194,70 @@ describe('Reviewer login (e2e)', () => {
       })
       .expect(400);
   });
+
+  // ── 자동 시딩 (create 경로) ────────────────────────────
+  interface SeededStep {
+    orderIndex: number;
+    name: string;
+    location: string | null;
+    scheduledDate: string | null;
+  }
+  interface SeededApp {
+    companyName: string;
+    currentStepIndex: number;
+    memo: string | null;
+    steps: SeededStep[];
+  }
+
+  async function loginAndListApps(): Promise<SeededApp[]> {
+    const login = await request(app.getHttpServer())
+      .post('/auth/reviewer-login')
+      .send({ email: REVIEWER_EMAIL, password: REVIEWER_PASSWORD })
+      .expect(200);
+    const token = login.body.data.accessToken as string;
+
+    const apps = await request(app.getHttpServer())
+      .get('/applications')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    return apps.body.data as SeededApp[];
+  }
+
+  it('신규 계정 로그인 → 자동 시딩 (GET /applications 3장 · 면접/서류 스텝 상세)', async () => {
+    const list = await loginAndListApps();
+    expect(list).toHaveLength(3);
+
+    // 카카오 — 1차 기술면접(idx2) 상세 + 현재 스텝 2
+    const kakao = list.find((a) => a.companyName === '카카오');
+    expect(kakao).toBeDefined();
+    expect(kakao?.currentStepIndex).toBe(2);
+    const interview = kakao?.steps.find((s) => s.orderIndex === 2);
+    expect(interview?.name).toBe('1차 기술면접');
+    expect(interview?.location).toBe('판교 카카오 아지트');
+    expect(interview?.scheduledDate).toBeTruthy();
+    // 메모는 카드 레벨 (수동 pre-load 와 동일)
+    expect(kakao?.memo).toContain('기술 블로그');
+
+    // 네이버 — 서류(idx0) 마감일
+    const naver = list.find((a) => a.companyName === '네이버');
+    expect(naver).toBeDefined();
+    const doc = naver?.steps.find((s) => s.orderIndex === 0);
+    expect(doc?.scheduledDate).toBeTruthy();
+  });
+
+  it('탈퇴 후 재로그인(create 재실행) → 자동 재시딩 (다시 3장)', async () => {
+    // 1차: 생성 + 시딩
+    const first = await loginAndListApps();
+    expect(first).toHaveLength(3);
+
+    // 탈퇴 시뮬레이션 — 리뷰어 계정 하드 삭제 (cascade 로 카드도 삭제)
+    await cleanReviewerUser(app);
+
+    // 재로그인 = 재생성 + 재시딩 → 다시 3장
+    const relogin = await loginAndListApps();
+    expect(relogin).toHaveLength(3);
+    expect(relogin.map((a) => a.companyName).sort()).toEqual(
+      first.map((a) => a.companyName).sort(),
+    );
+  });
 });

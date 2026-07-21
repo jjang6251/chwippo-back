@@ -3,6 +3,13 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { mock } from 'jest-mock-extended';
+// jose 는 ESM 전용 · Jest 는 CommonJS · reviewer-seed→UsersService import 체인(→jose) 때문에 mock 필수
+jest.mock('jose', () => ({
+  jwtVerify: jest.fn(),
+  createRemoteJWKSet: jest.fn(() => jest.fn()),
+  SignJWT: jest.fn(),
+  importPKCS8: jest.fn(),
+}));
 import { QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User } from '../users/user.entity';
@@ -11,6 +18,7 @@ import {
   ReviewerAuthService,
   REVIEWER_KAKAO_ID,
 } from './reviewer-auth.service';
+import { ReviewerSeedService } from './reviewer-seed.service';
 
 /**
  * ReviewerAuthService 단위 — App Review 리뷰어 로그인.
@@ -24,6 +32,7 @@ import {
 describe('ReviewerAuthService', () => {
   let service: ReviewerAuthService;
   let userRepo: jest.Mocked<Repository<User>>;
+  let seedService: { seedReviewerData: jest.Mock };
 
   const REVIEWER_EMAIL = 'reviewer@chwippo.com';
   const PASSWORD = 'correct-horse-battery';
@@ -64,11 +73,18 @@ describe('ReviewerAuthService', () => {
             get: jest.fn((key: string) => configStore[key]),
           },
         },
+        {
+          provide: ReviewerSeedService,
+          useValue: {
+            seedReviewerData: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
     service = module.get(ReviewerAuthService);
     userRepo = module.get(getRepositoryToken(User));
+    seedService = module.get(ReviewerSeedService);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -144,6 +160,8 @@ describe('ReviewerAuthService', () => {
         where: { kakaoId: REVIEWER_KAKAO_ID },
       });
       expect(userRepo.save).not.toHaveBeenCalled();
+      // found 경로 → 절대 재시딩 안 함 (기존 데이터 이중 생성 방지)
+      expect(seedService.seedReviewerData).not.toHaveBeenCalled();
     });
 
     it('정상 · 계정 없음 → 생성 (isNew=true) · sentinel kakaoId · role=user', async () => {
@@ -164,6 +182,23 @@ describe('ReviewerAuthService', () => {
       // role 을 명시적으로 admin 등으로 올리지 않음
       const createArg = userRepo.create.mock.calls[0][0] as Partial<User>;
       expect(createArg.role).toBeUndefined();
+      // create 경로 → 신규 user id 로 자동 시딩 호출
+      expect(seedService.seedReviewerData).toHaveBeenCalledWith('u-new');
+    });
+
+    it('create race (23505 → 기존 계정) → 재시딩 안 함 (found 로 귀결)', async () => {
+      const raced = makeReviewerUser({ id: 'u-raced' });
+      userRepo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(raced);
+      userRepo.create.mockReturnValue(makeReviewerUser());
+      const uniqueErr = new QueryFailedError('', [], new Error('duplicate'));
+      (uniqueErr as unknown as { driverError: { code: string } }).driverError =
+        { code: '23505' };
+      userRepo.save.mockRejectedValue(uniqueErr);
+
+      const result = await service.login(REVIEWER_EMAIL, PASSWORD);
+
+      expect(result.isNew).toBe(false);
+      expect(seedService.seedReviewerData).not.toHaveBeenCalled();
     });
 
     it('이메일 대소문자·앞뒤 공백 무시 → 정상 인증', async () => {
