@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 // jose 는 ESM 전용 · Jest 는 CommonJS · apple-auth.service 가 jose import 하므로 mock 필수
@@ -12,6 +13,7 @@ import { AuthService } from './auth.service';
 import { AppleAuthService } from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
 import { KakaoNativeService } from './kakao-native.service';
+import { ReviewerAuthService } from './reviewer-auth.service';
 import { User } from '../users/user.entity';
 
 const FRONTEND_URL = 'http://localhost:5173';
@@ -118,6 +120,10 @@ const mockKakaoNativeService = {
   verifyAndFetchUser: jest.fn(),
 };
 
+const mockReviewerAuthService = {
+  login: jest.fn(),
+};
+
 const mockConfigService = {
   get: jest.fn().mockImplementation((key: string, defaultVal?: string) => {
     if (key === 'FRONTEND_URL') return FRONTEND_URL;
@@ -145,6 +151,7 @@ describe('AuthController', () => {
         { provide: AppleAuthService, useValue: mockAppleAuthService },
         { provide: AppleS2SService, useValue: mockAppleS2SService },
         { provide: KakaoNativeService, useValue: mockKakaoNativeService },
+        { provide: ReviewerAuthService, useValue: mockReviewerAuthService },
         { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
@@ -829,6 +836,125 @@ describe('AuthController', () => {
 
       expect(result.user).not.toHaveProperty('kakaoId');
       expect(result.user).not.toHaveProperty('refreshToken');
+    });
+  });
+
+  describe('reviewerLogin() — App Review 리뷰어 로그인', () => {
+    const dto = { email: 'reviewer@chwippo.com', password: 'pw-1234' };
+
+    beforeEach(() => {
+      mockReviewerAuthService.login.mockResolvedValue({
+        user: makeUser({
+          id: 'u-reviewer-1',
+          kakaoId: 'reviewer',
+          nickname: 'App Reviewer',
+          email: null,
+        }),
+        isNew: true,
+      });
+      mockAuthService.issueTokens.mockResolvedValue({
+        accessToken: 'access.token',
+        refreshToken: 'refresh.token',
+      });
+    });
+
+    it('정상 → accessToken · isNew · user 반환 · refresh_token cookie 설정', async () => {
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.reviewerLogin(dto, makeReq(), res);
+
+      expect(mockReviewerAuthService.login).toHaveBeenCalledWith(
+        dto.email,
+        dto.password,
+      );
+      expect(result.accessToken).toBe('access.token');
+      expect(result.isNew).toBe(true);
+      expect(result.user.id).toBe('u-reviewer-1');
+      expect(result.user.nickname).toBe('App Reviewer');
+
+      expect(result).not.toHaveProperty('refreshToken');
+      const cookieCall = (res.cookie as jest.Mock).mock.calls[0] as [
+        string,
+        string,
+        Record<string, unknown>,
+      ];
+      expect(cookieCall[0]).toBe('refresh_token');
+      expect(cookieCall[2]).toMatchObject({ httpOnly: true });
+    });
+
+    it('기존 리뷰어 계정 (멱등) → isNew:false', async () => {
+      mockReviewerAuthService.login.mockResolvedValue({
+        user: makeUser({ id: 'u-reviewer-1', kakaoId: 'reviewer' }),
+        isNew: false,
+      });
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.reviewerLogin(dto, makeReq(), res);
+
+      expect(result.isNew).toBe(false);
+    });
+
+    it('env 미설정 (login 이 NotFound throw) → 그대로 전파 · 토큰 미발급', async () => {
+      const err = new NotFoundException();
+      mockReviewerAuthService.login.mockRejectedValue(err);
+      const res = makeRes() as unknown as Response;
+
+      await expect(controller.reviewerLogin(dto, makeReq(), res)).rejects.toBe(
+        err,
+      );
+      expect(mockAuthService.issueTokens).not.toHaveBeenCalled();
+      expect(res.cookie).not.toHaveBeenCalled();
+    });
+
+    it('자격 불일치 (login 이 Unauthorized throw) → 그대로 전파 · 토큰 미발급', async () => {
+      const err = new UnauthorizedException(
+        '이메일 또는 비밀번호가 올바르지 않습니다.',
+      );
+      mockReviewerAuthService.login.mockRejectedValue(err);
+      const res = makeRes() as unknown as Response;
+
+      await expect(controller.reviewerLogin(dto, makeReq(), res)).rejects.toBe(
+        err,
+      );
+      expect(mockAuthService.issueTokens).not.toHaveBeenCalled();
+    });
+
+    it('정지된 계정 → ForbiddenException · 토큰 미발급', async () => {
+      mockReviewerAuthService.login.mockResolvedValue({
+        user: makeUser({
+          kakaoId: 'reviewer',
+          suspendedAt: new Date('2026-06-01'),
+        }),
+        isNew: false,
+      });
+      const res = makeRes() as unknown as Response;
+
+      await expect(
+        controller.reviewerLogin(dto, makeReq(), res),
+      ).rejects.toThrow('정지된 계정입니다.');
+      expect(mockAuthService.issueTokens).not.toHaveBeenCalled();
+      expect(res.cookie).not.toHaveBeenCalled();
+    });
+
+    it('응답 user 에 민감 정보 없음 (kakaoId · refreshToken)', async () => {
+      const res = makeRes() as unknown as Response;
+
+      const result = await controller.reviewerLogin(dto, makeReq(), res);
+
+      expect(result.user).not.toHaveProperty('kakaoId');
+      expect(result.user).not.toHaveProperty('refreshToken');
+    });
+
+    it('brute-force 방어 — @Throttle 5회/분 설정 (token 엔드포인트보다 강하게)', () => {
+      // @Throttle({ default: { ttl, limit } }) 는 메서드에 THROTTLER:*default 메타데이터 저장
+      const method = AuthController.prototype.reviewerLogin;
+      const ttl = Reflect.getMetadata('THROTTLER:TTLdefault', method) as number;
+      const limit = Reflect.getMetadata(
+        'THROTTLER:LIMITdefault',
+        method,
+      ) as number;
+      expect(ttl).toBe(60_000);
+      expect(limit).toBe(5);
     });
   });
 

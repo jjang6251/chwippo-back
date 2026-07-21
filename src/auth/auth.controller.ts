@@ -21,7 +21,9 @@ import {
 } from './apple-auth.service';
 import { AppleS2SService } from './apple-s2s.service';
 import { KakaoNativeService } from './kakao-native.service';
+import { ReviewerAuthService } from './reviewer-auth.service';
 import { AppleNativeLoginDto } from './dto/apple-native-login.dto';
+import { ReviewerLoginDto } from './dto/reviewer-login.dto';
 import { deriveLoginProviders } from './login-providers.util';
 import { AppleS2SNotificationDto } from './dto/apple-s2s-notification.dto';
 import { KakaoNativeLoginDto } from './dto/kakao-native-login.dto';
@@ -109,6 +111,7 @@ export class AuthController {
     private readonly appleAuthService: AppleAuthService,
     private readonly appleS2SService: AppleS2SService,
     private readonly kakaoNativeService: KakaoNativeService,
+    private readonly reviewerAuthService: ReviewerAuthService,
     private readonly config: ConfigService,
   ) {}
 
@@ -203,6 +206,59 @@ export class AuthController {
     );
     const { user, isNew } =
       await this.authService.findOrCreateKakaoUser(kakaoUser);
+
+    if (user.suspendedAt) {
+      throw new ForbiddenException('정지된 계정입니다.');
+    }
+
+    const { accessToken, refreshToken } = await this.authService.issueTokens(
+      user,
+      req.headers['user-agent'] ?? null,
+    );
+
+    res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    return {
+      accessToken,
+      isNew,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        role: user.role,
+        loginProviders: deriveLoginProviders(user),
+        onboardedAt: user.onboardedAt,
+        termsAgreedAt: user.termsAgreedAt,
+        aiConsentAt: user.aiConsentAt,
+      },
+    };
+  }
+
+  /**
+   * App Review(App Store Guideline 2.1) 전용 리뷰어 로그인 — 카카오/Apple 계정을
+   * 만들 수 없는 심사관용 우회 경로.
+   *
+   * REVIEWER_EMAIL·REVIEWER_PASSWORD_HASH env 가 둘 다 설정된 경우에만 활성:
+   *   - 미설정 → 404 (엔드포인트 부재처럼 · 운영에 env 넣기 전까지 존재 안 함)
+   *   - 자격 불일치 → 401 (이메일/비번 어느 쪽인지 미노출 · 단일 메시지)
+   *   - 통과 → provider='reviewer' 계정 find-or-create 후 카카오/Apple 과 동일한
+   *     issueTokens·refresh 세션·응답 형태 재사용.
+   *
+   * 429: 분당 5회 — 비밀번호 brute force 방어 (token 엔드포인트 10/min 보다 강하게).
+   */
+  @Public()
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Post('reviewer-login')
+  @HttpCode(HttpStatus.OK)
+  async reviewerLogin(
+    @Body() dto: ReviewerLoginDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { user, isNew } = await this.reviewerAuthService.login(
+      dto.email,
+      dto.password,
+    );
 
     if (user.suspendedAt) {
       throw new ForbiddenException('정지된 계정입니다.');
