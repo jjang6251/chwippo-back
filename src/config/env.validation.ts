@@ -75,6 +75,13 @@ export const envValidationSchema = Joi.object({
   ADMIN_EMAIL: Joi.string().allow('').optional(),
   ADMIN_KAKAO_ID: Joi.string().allow('').optional(),
 
+  // App Review(App Store Guideline 2.1) 전용 리뷰어 로그인 크리덴셜.
+  // 심사관은 카카오 계정을 만들 수 없어 우회 로그인 경로 필요.
+  // 둘 다 설정된 경우에만 POST /auth/reviewer-login 활성 (미설정 → 404, 엔드포인트 부재처럼).
+  // REVIEWER_PASSWORD_HASH = bcrypt hash (평문 비번은 DB·env 어디에도 저장 안 함).
+  REVIEWER_EMAIL: Joi.string().allow('').optional(),
+  REVIEWER_PASSWORD_HASH: Joi.string().allow('').optional(),
+
   // OpenAI (F5+) — dev 에선 optional, prod 필수
   OPENAI_API_KEY: Joi.string().when('NODE_ENV', {
     is: 'production',
