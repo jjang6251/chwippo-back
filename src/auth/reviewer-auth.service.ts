@@ -10,6 +10,7 @@ import { QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User } from '../users/user.entity';
 import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
+import { ReviewerSeedService } from './reviewer-seed.service';
 
 /**
  * App Review(App Store Guideline 2.1) 전용 "리뷰어 로그인".
@@ -44,6 +45,7 @@ export class ReviewerAuthService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly config: ConfigService,
     private readonly discord: DiscordNotifier,
+    private readonly reviewerSeed: ReviewerSeedService,
   ) {}
 
   /** REVIEWER_EMAIL·REVIEWER_PASSWORD_HASH 둘 다 설정돼 있으면 활성. */
@@ -79,6 +81,13 @@ export class ReviewerAuthService {
     }
 
     const result = await this.findOrCreateReviewerUser();
+
+    // create 경로에서만 자동 시딩 (계정 탈퇴 후 재로그인 시 샘플 데이터 무인 복구).
+    // found 경로는 재시딩 금지 (기존 데이터 이중 생성 방지). best-effort — 시딩 실패해도 로그인 성공.
+    if (result.isNew) {
+      await this.reviewerSeed.seedReviewerData(result.user.id);
+    }
+
     this.logger.log(`[reviewer-login] 인증 성공 (userId=${result.user.id})`);
     // 성공만 운영 채널에 1줄 통지 (심사 중 소수 로그인 · best-effort). 실패는 로그로만.
     void this.discord
