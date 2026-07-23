@@ -36,6 +36,7 @@ import { QuotaCheckService } from './quota-check.service';
 import { openaiClientProvider } from './openai-client.provider';
 import { OpenAIProvider } from './providers/openai.provider';
 import { AnthropicProvider } from './providers/anthropic.provider';
+import { ProviderOutageAlertService } from './provider-outage-alert.service';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { AnthropicProvider } from './providers/anthropic.provider';
     openaiClientProvider, // ModerationService 가 사용 (moderations API)
     OpenAIProvider,
     AnthropicProvider,
+    ProviderOutageAlertService, // LlmService error hook — 제공사 장애 Discord 알림
     LlmService,
     ModerationService,
     NoteSummaryService,

@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { LlmService } from '../ai/llm.service';
+import { LlmService, PROVIDER_OUTAGE_USER_MESSAGE } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { returningRows } from '../common/db-returning';
 import { Application, JobPosting } from './application.entity';
@@ -19,7 +19,7 @@ export type ParseJobPostingResult =
   | { notPosting: true; quota: JobPostingQuota }
   | {
       blocked: true;
-      code: 'QUOTA_EXCEEDED' | 'ERROR' | 'ALREADY_PARSING';
+      code: 'QUOTA_EXCEEDED' | 'CONSENT_REQUIRED' | 'ERROR' | 'ALREADY_PARSING';
       reason: string;
       quota: JobPostingQuota;
     };
@@ -188,13 +188,27 @@ export class JobPostingService {
       });
 
       if (result.status !== 'ok') {
+        // 동의 미완(blocked_consent) 은 generic ERROR 로 뭉개지 않고 전용 코드로 분기 —
+        // "정리에 실패했어요" 막다른 길 대신 "동의하면 해결" 을 사용자가 인지 (CEO 실사고).
+        if (result.status === 'blocked_consent') {
+          return {
+            blocked: true,
+            code: 'CONSENT_REQUIRED',
+            reason: 'AI 사용 동의가 필요해요. 동의 후 다시 시도해주세요.',
+            quota: await this.snapshotQuota(userId),
+          };
+        }
+        const isOutage =
+          result.status === 'error' && result.errorKind === 'provider_outage';
         return {
           blocked: true,
           code: 'ERROR',
           // provider 원문 에러는 audit(llm_call_logs)에만 — 클라이언트엔 일반 문구
           // (OpenAI 에러 원문에 조직 ID·빌링 상태 등 내부 정보 포함 가능 — 노출 금지)
-          reason:
-            result.status === 'error'
+          //   provider_outage 는 "제공사 장애·코인 미차감" 안내로 분기.
+          reason: isOutage
+            ? PROVIDER_OUTAGE_USER_MESSAGE
+            : result.status === 'error'
               ? '공고 정리에 실패했어요. 잠시 후 다시 시도해 주세요.'
               : '공고 정리를 진행할 수 없어요.',
           quota: await this.snapshotQuota(userId),

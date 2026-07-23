@@ -116,6 +116,14 @@ export class AlertThresholds {
   })
   perFeatureDailyCostUsd: number;
 
+  // AI 제공사 장애 알림 — 최근 10분(고정 윈도우) 해당 provider error ≥ N 건 → Discord critical
+  @Column({ name: 'ai_outage_alert_count_10m', type: 'int', default: 3 })
+  aiOutageAlertCount10m: number;
+
+  // 동일 provider 재발송 쿨다운(분) — sliding window
+  @Column({ name: 'ai_outage_alert_cooldown_min', type: 'int', default: 30 })
+  aiOutageAlertCooldownMin: number;
+
   @Column({ name: 'updated_by', type: 'uuid', nullable: true })
   updatedBy: string | null;
 

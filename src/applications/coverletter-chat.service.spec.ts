@@ -4,7 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { LlmService } from '../ai/llm.service';
+import { LlmService, PROVIDER_OUTAGE_USER_MESSAGE } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { ApplicationCoverletter } from './application-coverletter.entity';
@@ -381,6 +381,40 @@ describe('CoverletterChatService', () => {
       expect(r.assistantMessage.content).toMatch(/⚠️/);
       expect(r.assistantMessage.suggestedUpdates).toBeNull();
       expect(r.assistantStatus).toBe('error');
+    });
+
+    it('⑦ LLM error(provider_outage) → 제공사 장애 안내 문구', async () => {
+      llm.call.mockResolvedValueOnce({
+        status: 'error',
+        text: null,
+        errorMessage: '500 upstream error',
+        errorKind: 'provider_outage',
+        callLogId: 'log-outage',
+      } as never);
+      const r = await service.chat(USER_ID, APP_ID, { userMessage: 'a' });
+      expect(r.assistantStatus).toBe('error');
+      expect(r.assistantMessage.content).toContain(
+        PROVIDER_OUTAGE_USER_MESSAGE,
+      );
+      // 원문 provider 에러는 사용자에게 노출하지 않음
+      expect(r.assistantMessage.content).not.toContain('500 upstream');
+      expect(r.assistantStatusReason).toBe(PROVIDER_OUTAGE_USER_MESSAGE);
+    });
+
+    it('⑦ LLM error(internal) → 기존 errorMessage 문구 유지', async () => {
+      llm.call.mockResolvedValueOnce({
+        status: 'error',
+        text: null,
+        errorMessage: '입력을 처리할 수 없어요',
+        errorKind: 'internal',
+        callLogId: 'log-internal',
+      } as never);
+      const r = await service.chat(USER_ID, APP_ID, { userMessage: 'a' });
+      expect(r.assistantStatus).toBe('error');
+      expect(r.assistantMessage.content).toContain('입력을 처리할 수 없어요');
+      expect(r.assistantMessage.content).not.toContain(
+        PROVIDER_OUTAGE_USER_MESSAGE,
+      );
     });
 
     it('13) suggestedUpdates clId 가 다른 application 의 cl → 무시 (IDOR)', async () => {

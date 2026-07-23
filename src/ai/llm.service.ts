@@ -23,8 +23,23 @@ import {
 } from './providers/llm-provider.interface';
 import { OpenAIProvider } from './providers/openai.provider';
 import { AnthropicProvider } from './providers/anthropic.provider';
+import { ProviderOutageAlertService } from './provider-outage-alert.service';
 
 export type LlmModelTier = 'light' | 'heavy'; // deprecated — 호환 유지 (NoteSummaryService 가 인자 안 보냄)
+
+/**
+ * status='error' 원인 2분류 — 사용자 안내 + 운영 알림용.
+ * - provider_outage: 5xx·408·429·timeout·네트워크(status 없음) — AI 제공사측 일시 이슈. 코인 미차감.
+ * - internal: 400/401/403·JSON parse 2회 실패·config 오류·예상외 예외 — 우리측/요청 문제.
+ */
+export type LlmErrorKind = 'provider_outage' | 'internal';
+
+/**
+ * provider_outage 시 사용자에게 내려주는 표준 문구 (단일 출처).
+ * caller 는 톤에 맞게 조사를 붙이거나 그대로 사용한다.
+ */
+export const PROVIDER_OUTAGE_USER_MESSAGE =
+  'AI 제공사 일시 장애예요. 잠시 후 다시 시도해주세요 (코인은 차감되지 않았어요)';
 
 export interface LlmCallInput {
   userId: string;
@@ -91,7 +106,7 @@ export type LlmStreamEvent<T = unknown> =
       callLogId: string;
       outputRedacted: boolean;
     }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; errorKind?: LlmErrorKind };
 
 export interface LlmCallBlocked {
   status: Extract<
@@ -111,6 +126,11 @@ export interface LlmCallBlocked {
    * 를 재사용하되, caller/프론트가 실제 코인 부족과 구분할 수 있도록 machine-readable code 부여.
    */
   code?: 'ALREADY_RUNNING';
+  /**
+   * status='error' 일 때만 세팅 — 제공사 장애(provider_outage) vs 우리측(internal) 구분.
+   * caller 가 "AI 제공사 장애 vs 우리 버그" 를 사용자 문구로 분기하는 데 사용. blocked_* 는 미세팅.
+   */
+  errorKind?: LlmErrorKind;
 }
 
 export type LlmCallResult = LlmCallOk | LlmCallBlocked;
@@ -153,6 +173,8 @@ export class LlmService {
     private readonly config: ConfigService,
     private readonly coinService: CoinService, // PR_B1 — canCharge + charge
     private readonly costGuard: CostGuardService, // AI cost guard — per-user/per-feature daily USD cap
+    // 제공사 장애 감시 — error audit 직후 hook (provider_outage 분류일 때만, best-effort)
+    private readonly outageAlert: ProviderOutageAlertService,
   ) {
     this.providers = {
       openai: this.openai,
@@ -306,6 +328,7 @@ export class LlmService {
     // (dev mock 은 위 0단계에서 이미 처리. 여기 도달 = prod/test 또는 preBlocked 케이스)
     if (!provider.isAvailable) {
       const errMsg = `${cfg.provider.toUpperCase()}_API_KEY 미설정`;
+      // config 문제 → internal (제공사 장애 아님, 알림·outage 문구 대상 아님)
       return this.saveBlocked(
         input,
         cfg.model,
@@ -313,6 +336,7 @@ export class LlmService {
         'error',
         errMsg,
         startedAt,
+        'internal',
       );
     }
 
@@ -545,6 +569,14 @@ export class LlmService {
               outputRedacted: false,
               attempts,
             });
+            // 반쪽 장애 방어 — 1차 전면 장애라도 fallback 이 전부 성공하면 bottom catch 에
+            // 안 닿아 hook 이 영원히 안 불림. [FALLBACK_TRIGGERED] 저장 직후 여기서도 평가한다.
+            //   isRecoverable == provider_outage 계열이므로 여기 도달 = 사실상 provider_outage.
+            //   같은 콜에서 fallback 도 실패하면 bottom 에서 한 번 더 불리지만, 임계·쿨다운·
+            //   dedup_key UNIQUE 가 실제 발송 1회를 보장한다 (ProviderOutageAlertService spec).
+            if (this.classifyErrorKind(err) === 'provider_outage') {
+              await this.fireOutageAlert(cfg.provider, message);
+            }
             try {
               this.logger.warn(
                 `Fallback ${cfg.provider} → ${fallbackCfg.provider} (feature=${input.feature})`,
@@ -676,10 +708,16 @@ export class LlmService {
           outputRedacted: false,
           attempts,
         });
+        // 1차 오류(err) 기준 분류 — fallback 까지 실패해도 err 는 1차 오류 그대로다.
+        const errorKind = this.classifyErrorKind(err);
+        if (errorKind === 'provider_outage') {
+          await this.fireOutageAlert(cfg.provider, message);
+        }
         return {
           status: 'error',
           text: null,
           errorMessage: message,
+          errorKind,
           callLogId: log.id,
         };
       }
@@ -941,7 +979,12 @@ export class LlmService {
         outputRedacted: false,
         attempts: 1,
       });
-      yield { type: 'error', message };
+      // 스트림 경로도 error audit 직후 hook (coverletter_chat 이 주력 스트림 UX).
+      const errorKind = this.classifyErrorKind(err);
+      if (errorKind === 'provider_outage') {
+        await this.fireOutageAlert(cfg.provider, message);
+      }
+      yield { type: 'error', message, errorKind };
     }
   }
 
@@ -1083,6 +1126,7 @@ export class LlmService {
     >,
     errorMessage: string,
     startedAt: number,
+    errorKind?: LlmErrorKind,
   ): Promise<LlmCallBlocked> {
     const log = await this.saveAudit({
       input,
@@ -1103,8 +1147,51 @@ export class LlmService {
       status,
       text: null,
       errorMessage,
+      errorKind,
       callLogId: log.id,
     };
+  }
+
+  /**
+   * status='error' 원인 분류 (provider_outage vs internal).
+   *
+   * fallback 의 isRecoverable 휴리스틱과 정렬 + 429 추가:
+   * - parse 실패는 응답을 받은 뒤의 형식 문제라 status 가 없어도 internal.
+   * - 그 외 status 없음(네트워크·timeout)·5xx·408·429·/timeout/ → provider_outage.
+   * - 400/401/403 등 나머지 4xx → internal.
+   *   429 는 fallback 은 안 타지만(비용 폭증 방지) 사용자·운영 안내상 제공사측 이슈로 취급.
+   */
+  private classifyErrorKind(err: unknown): LlmErrorKind {
+    if (err instanceof LlmJsonParseError) return 'internal';
+    const status = (err as { status?: number })?.status;
+    const message = err instanceof Error ? err.message : '';
+    if (
+      status === undefined ||
+      status === null ||
+      status >= 500 ||
+      status === 408 ||
+      status === 429 ||
+      /timeout/i.test(message)
+    ) {
+      return 'provider_outage';
+    }
+    return 'internal';
+  }
+
+  /**
+   * 제공사 장애 알림 hook — best-effort. 알림 로직의 어떤 예외도 본 호출 흐름을 깨지 않게 삼킨다.
+   */
+  private async fireOutageAlert(
+    provider: LlmProviderName,
+    errorMessage: string,
+  ): Promise<void> {
+    try {
+      await this.outageAlert.handleProviderOutage(provider, errorMessage);
+    } catch (err) {
+      this.logger.warn(
+        `provider outage alert hook 실패: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**
