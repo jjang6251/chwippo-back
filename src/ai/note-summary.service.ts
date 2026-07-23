@@ -12,7 +12,7 @@ import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { AbuserBanService } from './abuser-ban.service';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
-import { LlmService } from './llm.service';
+import { LlmService, PROVIDER_OUTAGE_USER_MESSAGE } from './llm.service';
 import { ModerationService } from './moderation.service';
 import { QuotaCheckService } from './quota-check.service';
 
@@ -223,12 +223,25 @@ export class NoteSummaryService {
       });
 
       if (result.status !== 'ok') {
+        // 동의 미완(blocked_consent) 은 generic 실패 문구로 뭉개지 않고 구분 —
+        // 사용자가 "동의하면 해결" 을 인지 (jobposting 실사고와 동일 취지).
+        if (result.status === 'blocked_consent') {
+          return {
+            status: 'blocked',
+            summary: null,
+            cached: false,
+            reason: 'AI 사용 동의가 필요해요. 동의 후 다시 시도해주세요.',
+          };
+        }
+        const isOutage =
+          result.status === 'error' && result.errorKind === 'provider_outage';
         return {
           status: 'blocked',
           summary: null,
           cached: false,
-          reason:
-            result.status === 'error'
+          reason: isOutage
+            ? PROVIDER_OUTAGE_USER_MESSAGE
+            : result.status === 'error'
               ? '요약 생성에 실패했어요. 잠시 후 다시 시도해주세요.'
               : '요약을 진행할 수 없어요.',
         };

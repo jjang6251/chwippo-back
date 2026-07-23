@@ -91,6 +91,21 @@ class UpdateAlertThresholdsDto {
   @Min(0)
   @Max(1000)
   perFeatureDailyCostUsd?: number;
+
+  // AI 제공사 장애 알림 — 10분 error 임계(건) / 재발송 쿨다운(분)
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(1000)
+  aiOutageAlertCount10m?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(1440)
+  aiOutageAlertCooldownMin?: number;
 }
 
 @Controller('admin/alert-thresholds')

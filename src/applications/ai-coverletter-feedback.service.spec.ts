@@ -1,9 +1,13 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { LlmService } from '../ai/llm.service';
+import { LlmService, PROVIDER_OUTAGE_USER_MESSAGE } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { AiCoverletterFeedbackService } from './ai-coverletter-feedback.service';
@@ -265,17 +269,35 @@ describe('AiCoverletterFeedbackService', () => {
     expect(call.userPrompt).not.toContain('분량이 제한의');
   });
 
-  it('llm error → status error + reason (throw 안 함)', async () => {
+  it('llm error(internal) → status error + reason (throw 안 함)', async () => {
     llm.call.mockResolvedValue({
       status: 'error',
       text: null,
       errorMessage: 'provider down',
+      errorKind: 'internal',
       callLogId: 'log-e',
     } as never);
 
     const r = await service.review(USER_ID, CL_ID);
     expect(r.status).toBe('error');
     expect(r.reason).toBe('provider down');
+  });
+
+  it('⑧ llm error(provider_outage) → 503 ServiceUnavailable + 장애 문구', async () => {
+    llm.call.mockResolvedValue({
+      status: 'error',
+      text: null,
+      errorMessage: '500 upstream',
+      errorKind: 'provider_outage',
+      callLogId: 'log-e',
+    } as never);
+
+    await expect(service.review(USER_ID, CL_ID)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    await expect(service.review(USER_ID, CL_ID)).rejects.toThrow(
+      PROVIDER_OUTAGE_USER_MESSAGE,
+    );
   });
 
   // ── 추가 후보 (웨이브) — blocked 문구 분화 ──

@@ -4,11 +4,16 @@ import {
   Inject,
   Injectable,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { LlmService, type LlmCallBlocked } from '../ai/llm.service';
+import {
+  LlmService,
+  PROVIDER_OUTAGE_USER_MESSAGE,
+  type LlmCallBlocked,
+} from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { Application } from './application.entity';
@@ -272,6 +277,11 @@ export class AiCoverletterFeedbackService {
     });
 
     if (result.status !== 'ok') {
+      // 제공사 장애 → 503 + 안내 문구 (사용자가 "우리 버그 아님·재시도" 로 인지). 코인 미차감.
+      //   internal·blocked_* 은 기존 계약(구조화 error result) 유지.
+      if (result.status === 'error' && result.errorKind === 'provider_outage') {
+        throw new ServiceUnavailableException(PROVIDER_OUTAGE_USER_MESSAGE);
+      }
       return {
         status: 'error',
         reason: this.blockedReason(result),

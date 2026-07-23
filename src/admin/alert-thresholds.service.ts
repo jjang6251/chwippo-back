@@ -20,6 +20,9 @@ export interface UpdateAlertThresholdsDto {
   // AI cost guard
   perUserDailyCostUsd?: number;
   perFeatureDailyCostUsd?: number;
+  // AI 제공사 장애 알림
+  aiOutageAlertCount10m?: number;
+  aiOutageAlertCooldownMin?: number;
 }
 
 /**
@@ -83,6 +86,10 @@ export class AlertThresholdsService {
       row.perUserDailyCostUsd = dto.perUserDailyCostUsd;
     if (dto.perFeatureDailyCostUsd !== undefined)
       row.perFeatureDailyCostUsd = dto.perFeatureDailyCostUsd;
+    if (dto.aiOutageAlertCount10m !== undefined)
+      row.aiOutageAlertCount10m = dto.aiOutageAlertCount10m;
+    if (dto.aiOutageAlertCooldownMin !== undefined)
+      row.aiOutageAlertCooldownMin = dto.aiOutageAlertCooldownMin;
     row.updatedBy = adminUserId;
     const saved = await this.repo.save(row);
     // 🟡3 — 저장 즉시 CostGuard 캐시 무효화 (기존엔 최대 5분 stale)
