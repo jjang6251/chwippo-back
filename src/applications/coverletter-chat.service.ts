@@ -10,7 +10,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { LlmService } from '../ai/llm.service';
+import {
+  LlmService,
+  PROVIDER_OUTAGE_USER_MESSAGE,
+  type LlmErrorKind,
+} from '../ai/llm.service';
 import { scrubPii } from '../ai/pii-scrubber';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { ApplicationCoverletter } from './application-coverletter.entity';
@@ -526,7 +530,13 @@ export class CoverletterChatService {
       }
     } else if (result.status !== 'ok') {
       // LlmCallBlocked. status 자체로 분기 (string match 폐기)
-      const errMsg = result.errorMessage;
+      // 제공사 장애(provider_outage) → "우리 버그 아님·코인 미차감" 안내 문구로 교체.
+      //   internal·blocked_* 은 기존 문구(errorMessage) 유지.
+      const isOutage =
+        result.status === 'error' && result.errorKind === 'provider_outage';
+      const errMsg = isOutage
+        ? PROVIDER_OUTAGE_USER_MESSAGE
+        : result.errorMessage;
       assistantContent = errMsg ? `⚠️ ${errMsg}` : assistantContent;
       assistantStatusReason = errMsg;
       switch (result.status) {
@@ -796,6 +806,7 @@ export class CoverletterChatService {
       suggestedUpdates?: CoverletterSuggestedUpdate[];
     } | null = null;
     let errorMessage: string | null = null;
+    let errorKind: LlmErrorKind | null = null;
     try {
       for await (const event of this.llm.callStream<{
         reply?: string;
@@ -827,6 +838,7 @@ export class CoverletterChatService {
           finalJson = event.json;
         } else {
           errorMessage = event.message;
+          errorKind = event.errorKind ?? null;
         }
       }
     } catch (err) {
@@ -858,7 +870,13 @@ export class CoverletterChatService {
         if (suggestedUpdates.length === 0) suggestedUpdates = null;
       }
     } else if (errorMessage) {
-      assistantContent = `⚠️ ${errorMessage}`;
+      // 제공사 장애면 친절 문구로 교체 (internal 은 기존 메시지 유지)
+      const shown =
+        errorKind === 'provider_outage'
+          ? PROVIDER_OUTAGE_USER_MESSAGE
+          : errorMessage;
+      assistantContent = `⚠️ ${shown}`;
+      assistantStatusReason = shown;
     }
 
     const assistantCitations: CoverletterCitations | null =

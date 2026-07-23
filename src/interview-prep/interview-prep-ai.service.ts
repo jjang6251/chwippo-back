@@ -3,7 +3,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { LlmService } from '../ai/llm.service';
+import {
+  LlmService,
+  PROVIDER_OUTAGE_USER_MESSAGE,
+  type LlmErrorKind,
+} from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { Application } from '../applications/application.entity';
 import { ApplicationCoverletter } from '../applications/application-coverletter.entity';
@@ -402,7 +406,11 @@ export class InterviewPrepAiService {
     if (stage1.status !== 'ok') {
       return {
         status: 'blocked',
-        reason: this.formatBlockReason(stage1.status, stage1.errorMessage),
+        reason: this.formatBlockReason(
+          stage1.status,
+          stage1.errorMessage,
+          stage1.errorKind,
+        ),
         meta: {
           callLogId: stage1.callLogId,
           coverlettersUsed: ctx.meta.coverlettersUsed,
@@ -625,7 +633,11 @@ export class InterviewPrepAiService {
     if (result.status !== 'ok') {
       return {
         status: 'blocked',
-        reason: this.formatBlockReason(result.status, result.errorMessage),
+        reason: this.formatBlockReason(
+          result.status,
+          result.errorMessage,
+          result.errorKind,
+        ),
         meta: { callLogId: result.callLogId },
       };
     }
@@ -674,7 +686,12 @@ export class InterviewPrepAiService {
   private formatBlockReason(
     status: string,
     errorMessage: string | undefined | null,
+    errorKind?: LlmErrorKind,
   ): string {
+    // 제공사 장애 → "제공사 장애·코인 미차감" 안내 (internal error 는 기존 문구)
+    if (status === 'error' && errorKind === 'provider_outage') {
+      return PROVIDER_OUTAGE_USER_MESSAGE;
+    }
     switch (status) {
       case 'blocked_consent':
         return errorMessage ?? 'AI 사용 동의가 필요합니다.';

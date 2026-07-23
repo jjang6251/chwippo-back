@@ -9,7 +9,11 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
-import { LlmService } from '../ai/llm.service';
+import {
+  LlmService,
+  PROVIDER_OUTAGE_USER_MESSAGE,
+  type LlmErrorKind,
+} from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { MyinfoService } from '../myinfo/myinfo.service';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
@@ -338,6 +342,7 @@ export class AiCoverletterDraftService {
         reason: this.formatBlockReason(
           draftResult.status,
           draftResult.errorMessage,
+          draftResult.errorKind,
         ),
       };
     }
@@ -444,7 +449,12 @@ export class AiCoverletterDraftService {
   private formatBlockReason(
     status: string,
     errorMessage: string | undefined | null,
+    errorKind?: LlmErrorKind,
   ): string {
+    // 제공사 장애 → "우리 버그 아님·코인 미차감" 안내 (internal error 는 기존 문구)
+    if (status === 'error' && errorKind === 'provider_outage') {
+      return PROVIDER_OUTAGE_USER_MESSAGE;
+    }
     switch (status) {
       case 'blocked_consent':
         return errorMessage ?? 'AI 사용 동의가 필요합니다.';

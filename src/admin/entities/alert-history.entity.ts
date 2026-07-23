@@ -16,7 +16,9 @@ export type AlertType =
   | 'provider_down'
   | 'provider_up'
   // 웨이브 D — 사용자별 24h 코인차감 feature 호출 수 임계 초과 (쿨다운·한도 제거 대신 감시)
-  | 'abnormal_coin_usage';
+  | 'abnormal_coin_usage'
+  // AI 제공사 장애 관측 — 실 호출 error 급증 감지 (LlmService error audit hook)
+  | 'provider_outage';
 
 export type WebhookStatus =
   | 'sent'
@@ -32,6 +34,11 @@ export type WebhookStatus =
  */
 @Entity('alert_history')
 @Index('idx_alert_history_type_created', ['alertType', 'createdAt'])
+// provider_outage 동시 발송 race 차단 — 같은 dedup_key 는 1건만 (partial unique, NULL 제외)
+@Index('uq_alert_history_dedup_key', ['dedupKey'], {
+  unique: true,
+  where: '"dedup_key" IS NOT NULL',
+})
 export class AlertHistory {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -68,6 +75,14 @@ export class AlertHistory {
 
   @Column({ name: 'webhook_status', type: 'varchar', length: 20 })
   webhookStatus: WebhookStatus;
+
+  /**
+   * 발송 idempotency 키 (provider_outage 전용). 예: `provider_outage:anthropic:{bucket}`.
+   * 동시 2 레플리카가 같은 bucket 에서 발송 시도하면 UNIQUE 충돌로 1건만 성공.
+   * 기존 알림 type 은 NULL (partial unique index 대상 아님).
+   */
+  @Column({ name: 'dedup_key', type: 'varchar', length: 200, nullable: true })
+  dedupKey: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

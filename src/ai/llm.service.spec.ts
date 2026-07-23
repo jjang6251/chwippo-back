@@ -18,6 +18,7 @@ import {
 } from './providers/llm-provider.interface';
 import { AnthropicProvider } from './providers/anthropic.provider';
 import { OpenAIProvider } from './providers/openai.provider';
+import { ProviderOutageAlertService } from './provider-outage-alert.service';
 
 /**
  * LlmService 단위 spec — PR 0 신규 아키텍처 검증.
@@ -54,6 +55,7 @@ describe('LlmService', () => {
     charge: jest.Mock;
     chargesCoins: jest.Mock;
   };
+  let outageAlertMock: { handleProviderOutage: jest.Mock };
 
   const makeUser = (overrides: Partial<User> = {}): User => ({
     id: 'u-1',
@@ -179,6 +181,11 @@ describe('LlmService', () => {
       invalidate: jest.fn(),
     });
 
+    // 제공사 장애 알림 hook — 기본 no-op mock (호출 여부만 검증)
+    const outageAlert = (outageAlertMock = {
+      handleProviderOutage: jest.fn().mockResolvedValue(undefined),
+    });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LlmService,
@@ -189,6 +196,7 @@ describe('LlmService', () => {
         { provide: ConfigService, useValue: config },
         { provide: CoinService, useValue: coinService },
         { provide: CostGuardService, useValue: costGuard },
+        { provide: ProviderOutageAlertService, useValue: outageAlert },
       ],
     }).compile();
 
@@ -1109,6 +1117,176 @@ describe('LlmService', () => {
       });
       expect(r.status).toBe('ok');
       if (r.status === 'ok') expect(r.wasFallback).toBe(true);
+    });
+  });
+
+  // ── errorKind 분류 + 제공사 장애 알림 hook (provider_outage vs internal) ──
+  describe('errorKind 분류 + outage alert hook', () => {
+    const schema = {
+      name: 'fb',
+      schema: { type: 'object', properties: { v: { type: 'number' } } },
+    };
+    const withStatus = (status?: number, msg = 'boom') => {
+      const e = new Error(status ? `${status} ${msg}` : msg) as Error & {
+        status?: number;
+      };
+      if (status) e.status = status;
+      return e;
+    };
+
+    it('① 1차 5xx + fallback 5xx → error·provider_outage + hook 2회 (fallback-trigger + bottom)', async () => {
+      anthropic.complete = jest.fn().mockRejectedValue(withStatus(500));
+      anthropic.callJson = jest.fn().mockRejectedValue(withStatus(500));
+      openai.complete = jest.fn().mockRejectedValue(withStatus(503));
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2', // anthropic 1차, openai fallback
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('expected error');
+      expect(r.errorKind).toBe('provider_outage');
+      // Fix A — [FALLBACK_TRIGGERED] 저장 직후 1회 + bottom catch 1회 = 2회.
+      //   실제 Discord 발송 중복은 alert service 의 쿨다운·dedup UNIQUE 가 차단 (별도 spec).
+      expect(outageAlertMock.handleProviderOutage).toHaveBeenCalledTimes(2);
+      // 두 호출 모두 1차 provider(anthropic) + 1차 오류 메시지 기준
+      expect(outageAlertMock.handleProviderOutage).toHaveBeenNthCalledWith(
+        1,
+        'anthropic',
+        expect.stringContaining('500'),
+      );
+      expect(outageAlertMock.handleProviderOutage).toHaveBeenNthCalledWith(
+        2,
+        'anthropic',
+        expect.stringContaining('500'),
+      );
+    });
+
+    it('② 400 → internal · fallback 미발동 · hook 미호출', async () => {
+      anthropic.complete = jest.fn().mockRejectedValue(withStatus(400));
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('expected error');
+      expect(r.errorKind).toBe('internal');
+      expect(openai.complete).not.toHaveBeenCalled(); // fallback 미발동
+      expect(outageAlertMock.handleProviderOutage).not.toHaveBeenCalled();
+    });
+
+    it('③ 429 → provider_outage · fallback 미발동 · hook 1회', async () => {
+      anthropic.complete = jest.fn().mockRejectedValue(withStatus(429));
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('expected error');
+      expect(r.errorKind).toBe('provider_outage');
+      expect(openai.complete).not.toHaveBeenCalled(); // 429 는 fallback X
+      expect(outageAlertMock.handleProviderOutage).toHaveBeenCalledTimes(1);
+    });
+
+    it('④ timeout(no status) → provider_outage', async () => {
+      // fallback(anthropic) 미가용으로 격리 → 1차 openai timeout 만 평가
+      anthropic.isAvailable = false;
+      openai.complete = jest
+        .fn()
+        .mockRejectedValue(withStatus(undefined, 'timeout'));
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary', // openai 1차
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('expected error');
+      expect(r.errorKind).toBe('provider_outage');
+      expect(outageAlertMock.handleProviderOutage).toHaveBeenCalledWith(
+        'openai',
+        expect.stringContaining('timeout'),
+      );
+    });
+
+    it('⑤ parse 2회 실패 → internal · hook 미호출', async () => {
+      anthropic.callJson = jest
+        .fn()
+        .mockRejectedValue(
+          new LlmJsonParseError('anthropic', 'garbage', 'bad json'),
+        );
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_feedback',
+        systemPrompt: 's',
+        userPrompt: 'u',
+        jsonSchema: schema,
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('expected error');
+      expect(r.errorKind).toBe('internal');
+      expect(outageAlertMock.handleProviderOutage).not.toHaveBeenCalled();
+    });
+
+    it('⑥ Fix A — 1차 5xx + fallback 성공 → 응답 ok(wasFallback)·errorKind 없음 · hook 1회 (반쪽 장애 관측)', async () => {
+      anthropic.complete = jest.fn().mockRejectedValue(withStatus(500));
+      openai.complete.mockResolvedValue({
+        text: 'fallback ok',
+        promptTokens: 10,
+        completionTokens: 5,
+        finishReason: 'stop',
+      });
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') throw new Error('expected ok');
+      expect(r.wasFallback).toBe(true);
+      // 최종 결과는 ok 라 errorKind 없음. 하지만 1차 전면 장애는 관측돼야 함 → hook 1회.
+      expect(outageAlertMock.handleProviderOutage).toHaveBeenCalledTimes(1);
+      expect(outageAlertMock.handleProviderOutage).toHaveBeenCalledWith(
+        'anthropic',
+        expect.stringContaining('500'),
+      );
+    });
+
+    it('provider 미가용(API key 없음) → internal · hook 미호출', async () => {
+      openai.isAvailable = false;
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'note_summary',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('expected error');
+      expect(r.errorKind).toBe('internal');
+      expect(outageAlertMock.handleProviderOutage).not.toHaveBeenCalled();
+    });
+
+    it('⑫ hook 예외 → 본 흐름 정상 (best-effort, error 반환 유지)', async () => {
+      anthropic.complete = jest.fn().mockRejectedValue(withStatus(500));
+      openai.complete = jest.fn().mockRejectedValue(withStatus(500));
+      outageAlertMock.handleProviderOutage.mockRejectedValue(
+        new Error('alert svc down'),
+      );
+      const r = await service.call({
+        userId: 'u-1',
+        feature: 'coverletter_draft_v2',
+        systemPrompt: 's',
+        userPrompt: 'u',
+      });
+      expect(r.status).toBe('error');
+      if (r.status === 'ok') throw new Error('expected error');
+      expect(r.errorKind).toBe('provider_outage');
     });
   });
   // ── cost hardening (2026-07-06) — 실패 비용 실측 기록 · fallback 연쇄 차단 · 스트림 cost guard ──

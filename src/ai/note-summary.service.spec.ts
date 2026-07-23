@@ -12,7 +12,7 @@ import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { AbuserBanService } from './abuser-ban.service';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
-import { LlmService } from './llm.service';
+import { LlmService, PROVIDER_OUTAGE_USER_MESSAGE } from './llm.service';
 import { ModerationService } from './moderation.service';
 import {
   NOTE_SUMMARY_LIMITS,
@@ -435,6 +435,38 @@ describe('NoteSummaryService', () => {
       const result = await service.summarize('user-1', 'log-1');
       expect(result.status).toBe('blocked');
       expect(result.reason).toContain('잠시 후');
+    });
+
+    it('③ blocked_consent → 동의 문구 구분 (generic 실패 문구로 뭉개지 않음)', async () => {
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValue(0);
+      llm.call.mockResolvedValue({
+        status: 'blocked_consent',
+        text: null,
+        errorMessage: 'AI 사용 동의가 필요합니다.',
+        callLogId: 'c',
+      });
+
+      const result = await service.summarize('user-1', 'log-1');
+      expect(result.status).toBe('blocked');
+      expect(result.reason).toContain('동의');
+      expect(result.reason).not.toContain('요약 생성에 실패');
+    });
+
+    it('④ provider_outage → 장애 문구 회귀 유지 (consent 분기가 삼키지 않음)', async () => {
+      emFindOne.mockResolvedValue(makeLog());
+      emCount.mockResolvedValue(0);
+      llm.call.mockResolvedValue({
+        status: 'error',
+        text: null,
+        errorMessage: '500 upstream',
+        errorKind: 'provider_outage',
+        callLogId: 'c',
+      });
+
+      const result = await service.summarize('user-1', 'log-1');
+      expect(result.status).toBe('blocked');
+      expect(result.reason).toBe(PROVIDER_OUTAGE_USER_MESSAGE);
     });
 
     it('moderation API 실패 (apiFailed=true) → fail-open, 정상 LLM 호출 진행', async () => {

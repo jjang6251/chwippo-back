@@ -3,7 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { ConfigService } from '@nestjs/config';
-import { LlmService } from '../ai/llm.service';
+import { LlmService, PROVIDER_OUTAGE_USER_MESSAGE } from '../ai/llm.service';
 import { QuotaCheckService } from '../ai/quota-check.service';
 import { getModelConfig } from '../ai/model-config';
 import { Application } from './application.entity';
@@ -314,6 +314,35 @@ describe('JobPostingService', () => {
     // 저장은 없지만 lock 은 finally 로 원복
     expect(saveCalls()).toHaveLength(0);
     expect(releaseCalls()).toHaveLength(1);
+  });
+
+  it('① blocked_consent → CONSENT_REQUIRED + 동의 문구 (generic ERROR 로 뭉개지 않음)', async () => {
+    llm.call.mockResolvedValueOnce({
+      status: 'blocked_consent',
+      text: null,
+      errorMessage: 'AI 사용 동의가 필요합니다.',
+      callLogId: 'log-consent',
+    } as never);
+    const r = await service.parse(USER_ID, APP_ID, parseDto());
+    if (!('blocked' in r)) throw new Error('expected blocked result');
+    expect(r.code).toBe('CONSENT_REQUIRED');
+    expect(r.reason).toContain('동의');
+    expect(saveCalls()).toHaveLength(0);
+    expect(releaseCalls()).toHaveLength(1);
+  });
+
+  it('④ blocked_consent 외 provider_outage 는 ERROR + 장애 문구 회귀 유지', async () => {
+    llm.call.mockResolvedValueOnce({
+      status: 'error',
+      text: null,
+      errorMessage: '500 upstream',
+      errorKind: 'provider_outage',
+      callLogId: 'log-outage',
+    } as never);
+    const r = await service.parse(USER_ID, APP_ID, parseDto());
+    if (!('blocked' in r)) throw new Error('expected blocked result');
+    expect(r.code).toBe('ERROR');
+    expect(r.reason).toBe(PROVIDER_OUTAGE_USER_MESSAGE);
   });
 
   // ── parsing lock (재진입 진행 상태) ──
