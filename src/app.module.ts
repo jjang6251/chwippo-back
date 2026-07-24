@@ -2,7 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { CfThrottlerGuard } from './common/guards/cf-throttler.guard';
 import type Redis from 'ioredis';
 import { envValidationSchema } from './config/env.validation';
 import { RedisModule } from './common/redis.module';
@@ -77,7 +78,7 @@ import { HealthController } from './health/health.controller';
   ],
   controllers: [HealthController],
   providers: [
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: CfThrottlerGuard },
     { provide: APP_GUARD, useClass: SuspendedGuard }, // PR_B2 Phase 1 — Q25 SuspendedModal bypass 방어
   ],
 })
