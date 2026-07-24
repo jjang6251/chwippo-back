@@ -1,8 +1,10 @@
 import { createHash } from 'crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import type Redis from 'ioredis';
+import { REDIS_CLIENT } from '../common/redis.provider';
 import { User } from '../users/user.entity';
 import {
   LlmCallLog,
@@ -159,7 +161,8 @@ export class LlmService {
 
   /**
    * 웨이브 C — per (userId, feature) in-flight lock. value = 시작 timestamp(ms).
-   * 프로세스 내 Map (Railway 단일 인스턴스 전제 — 스케일아웃 시 DB advisory lock 으로 승격).
+   * 프로세스 내 Map. REDIS_URL 미설정(단일 레플리카 dev·CI) 또는 Redis 런타임 에러 시의
+   * 폴백 경로. Redis 있으면 SET NX PX 로 레플리카 간 공유 lock 을 우선 사용한다.
    */
   private readonly inFlight = new Map<string, number>();
 
@@ -175,6 +178,10 @@ export class LlmService {
     private readonly costGuard: CostGuardService, // AI cost guard — per-user/per-feature daily USD cap
     // 제공사 장애 감시 — error audit 직후 hook (provider_outage 분류일 때만, best-effort)
     private readonly outageAlert: ProviderOutageAlertService,
+    // 웨이브 C 승격 — 레플리카 간 공유 in-flight lock. REDIS_URL 미설정 시 null → Map 폴백.
+    @Optional()
+    @Inject(REDIS_CLIENT)
+    private readonly redis: Redis | null = null,
   ) {
     this.providers = {
       openai: this.openai,
@@ -207,14 +214,14 @@ export class LlmService {
     if (!useLock) {
       return this.callGuarded(input);
     }
-    if (!this.tryAcquireInFlight(input.userId, input.feature)) {
+    if (!(await this.tryAcquireInFlight(input.userId, input.feature))) {
       const cfg = getModelConfig(input.feature, this.config);
       return this.saveInFlightBlocked(input, cfg.model, cfg.provider);
     }
     try {
       return await this.callGuarded(input);
     } finally {
-      this.releaseInFlight(input.userId, input.feature);
+      await this.releaseInFlight(input.userId, input.feature);
     }
   }
 
@@ -755,7 +762,10 @@ export class LlmService {
     // 웨이브 C — in-flight lock (코인 차감 feature. coverletter_chat 이 stream 경로).
     // stream 계약은 blocked 봉투 대신 error event → ALREADY_RUNNING 도 error event + audit row.
     const useLock = await this.coinService.chargesCoins(input.feature);
-    if (useLock && !this.tryAcquireInFlight(input.userId, input.feature)) {
+    if (
+      useLock &&
+      !(await this.tryAcquireInFlight(input.userId, input.feature))
+    ) {
       const cfg = getModelConfig(input.feature, this.config);
       await this.saveInFlightBlocked(input, cfg.model, cfg.provider);
       yield {
@@ -767,7 +777,7 @@ export class LlmService {
     try {
       yield* this.callStreamGuarded<T>(input);
     } finally {
-      if (useLock) this.releaseInFlight(input.userId, input.feature);
+      if (useLock) await this.releaseInFlight(input.userId, input.feature);
     }
   }
 
@@ -996,12 +1006,40 @@ export class LlmService {
     return `${userId}:${feature}`;
   }
 
+  private redisLockKey(key: string): string {
+    return `llm:inflight:${key}`;
+  }
+
   /**
-   * 획득 성공 시 true, 이미 진행 중(stale 아님)이면 false.
-   * 없거나 stale(TTL 초과) 항목은 회수 후 획득 (lazy eviction).
+   * 획득 성공 시 true, 이미 진행 중이면 false.
+   *
+   * - Redis 있으면: `SET key ts NX PX <TTL 2분>` — 레플리카 간 공유 lock. NX 실패=진행 중.
+   *   TTL(PX)이 stale 회수를 대신함 (finally 누락·크래시 시 2분 후 자동 만료).
+   * - Redis 에러 시: **in-memory Map 폴백** (fail-open 아님 — 최소 같은 레플리카 내 이중 진입 차단).
+   * - Redis 미설정(null): 기존 Map 경로 그대로. 없거나 stale(TTL 초과)면 회수 후 획득(lazy eviction).
    */
-  private tryAcquireInFlight(userId: string, feature: LlmFeature): boolean {
+  private async tryAcquireInFlight(
+    userId: string,
+    feature: LlmFeature,
+  ): Promise<boolean> {
     const key = this.inFlightKey(userId, feature);
+    if (this.redis) {
+      try {
+        const res = await this.redis.set(
+          this.redisLockKey(key),
+          String(Date.now()),
+          'PX',
+          IN_FLIGHT_TTL_MS,
+          'NX',
+        );
+        return res === 'OK'; // 'OK'=획득, null=이미 잠김
+      } catch (err) {
+        this.logger.warn(
+          `in-flight lock 획득 Redis 오류 — in-memory Map 폴백: ${(err as Error).message}`,
+        );
+        // fall through → Map 경로
+      }
+    }
     const startedAt = this.inFlight.get(key);
     const now = Date.now();
     if (startedAt !== undefined && now - startedAt < IN_FLIGHT_TTL_MS) {
@@ -1011,8 +1049,25 @@ export class LlmService {
     return true;
   }
 
-  private releaseInFlight(userId: string, feature: LlmFeature): void {
-    this.inFlight.delete(this.inFlightKey(userId, feature));
+  /**
+   * lock 해제. Map 항목은 항상 제거(폴백으로 획득했을 수 있어 무해하게 정리),
+   * Redis 있으면 공유 lock 도 DEL. Redis DEL 실패해도 PX TTL 로 2분 후 자동 만료된다.
+   */
+  private async releaseInFlight(
+    userId: string,
+    feature: LlmFeature,
+  ): Promise<void> {
+    const key = this.inFlightKey(userId, feature);
+    this.inFlight.delete(key);
+    if (this.redis) {
+      try {
+        await this.redis.del(this.redisLockKey(key));
+      } catch (err) {
+        this.logger.warn(
+          `in-flight lock 해제 Redis 오류 (PX TTL 로 자동 만료됨): ${(err as Error).message}`,
+        );
+      }
+    }
   }
 
   /**

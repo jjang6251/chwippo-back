@@ -14,6 +14,14 @@ export const envValidationSchema = Joi.object({
   // 코드에서 `=== 'true'` 비교 — 오타(True/1/yes 등)가 silent false 되지 않도록 화이트리스트
   DB_SSL: Joi.string().valid('true', 'false').default('false'),
 
+  // 멀티 레플리카 공유 상태(Throttler·in-flight lock)용 Redis. **옵셔널** —
+  // 미설정(로컬 dev·CI) 시 프로세스 메모리 경로로 동작(단일 레플리카 전제). required 금지.
+  // Railway 멀티 레플리카 운영에만 주입 (예: redis://default:***@host:6379).
+  REDIS_URL: Joi.string()
+    .uri({ scheme: ['redis', 'rediss'] })
+    .allow('')
+    .optional(),
+
   JWT_SECRET: Joi.string().required(),
   JWT_EXPIRES_IN: Joi.string().default('1h'),
   JWT_REFRESH_SECRET: Joi.string().required(),
