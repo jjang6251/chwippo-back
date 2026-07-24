@@ -34,6 +34,10 @@ export const redisClientProvider: Provider = {
       maxRetriesPerRequest: 1, // 명령이 무한 대기하지 않게 (보수적)
       enableOfflineQueue: false, // 끊긴 동안 명령 큐잉 X → 즉시 reject → fail-open/폴백
       retryStrategy: (times) => Math.min(times * 200, 2000), // 재연결 백오프 (상한 2s)
+      // Railway 내부망(redis.railway.internal)은 IPv6 전용 — ioredis 기본(IPv4만)이면
+      // ENOTFOUND 로 전 명령 실패 → fail-open 상시 발동 (2026-07-24 운영 실측 사고).
+      // family 0 = IPv4/IPv6 듀얼 스택 조회. 로컬(localhost)에는 무해.
+      family: 0,
     });
     client.on('error', (err) => {
       logger.warn(`Redis 연결 오류 (fail-open·폴백 동작): ${err.message}`);
