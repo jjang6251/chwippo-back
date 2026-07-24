@@ -15,6 +15,7 @@ import { Reflector } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
+import { RedisThrottlerStorage } from '../src/common/redis-throttler.storage';
 import cookieParser from 'cookie-parser';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
@@ -104,10 +105,15 @@ describe('Reviewer login (e2e)', () => {
     await cleanReviewerUser(app);
   });
 
-  beforeEach(() => {
-    // 각 테스트마다 스로틀 카운트 리셋 (5/min 이 함수 검증을 방해하지 않도록)
+  beforeEach(async () => {
+    // 각 테스트마다 스로틀 카운트 리셋 (5/min 이 함수 검증을 방해하지 않도록).
+    // REDIS_URL 있는 환경(CI)은 Redis 스토리지라 in-memory 내부(Map) 대신 자체 clear() 사용.
     const storage = app.get<ThrottlerStorage>(ThrottlerStorage);
-    (storage as ThrottlerStorageService).storage.clear();
+    if (storage instanceof RedisThrottlerStorage) {
+      await storage.clear();
+    } else {
+      (storage as ThrottlerStorageService).storage.clear();
+    }
   });
 
   it('정상 자격 → 200 · accessToken · isNew · refresh_token cookie', async () => {

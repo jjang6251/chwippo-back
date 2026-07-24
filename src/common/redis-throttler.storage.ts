@@ -121,6 +121,17 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
       };
     }
   }
+
+  /**
+   * 이 스토리지가 만든 카운터·블록 키 전량 삭제 (e2e 테스트 간 리셋용 —
+   * built-in in-memory 스토리지의 `storage.clear()` 대응. 운영 코드 경로에선 미사용).
+   */
+  async clear(): Promise<void> {
+    const keys = await this.redis.keys('throttle:*');
+    const blockKeys = await this.redis.keys('throttle-block:*');
+    const all = [...keys, ...blockKeys];
+    if (all.length > 0) await this.redis.del(...all);
+  }
 }
 
 /** 전역 rate-limit 설정 — 모든 라우트 공통 (60초·100요청). */
