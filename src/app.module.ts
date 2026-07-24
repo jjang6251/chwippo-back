@@ -3,7 +3,11 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import type Redis from 'ioredis';
 import { envValidationSchema } from './config/env.validation';
+import { RedisModule } from './common/redis.module';
+import { REDIS_CLIENT } from './common/redis.provider';
+import { buildThrottlerOptions } from './common/redis-throttler.storage';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { ApplicationsModule } from './applications/applications.module';
@@ -37,7 +41,14 @@ import { HealthController } from './health/health.controller';
       isGlobal: true,
       validationSchema: envValidationSchema,
     }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    // REDIS_CLIENT(ioredis | null) 전역 제공 — Throttler·in-flight lock 공유 스토리지.
+    RedisModule,
+    // Throttler — REDIS_URL 있으면 Redis 공유 스토리지(레플리카 간 한도 공유),
+    // 없으면 기본 in-memory (단일 레플리카 dev·CI). Redis 런타임 에러는 fail-open.
+    ThrottlerModule.forRootAsync({
+      inject: [REDIS_CLIENT],
+      useFactory: (redis: Redis | null) => buildThrottlerOptions(redis),
+    }),
     // F6 PR 2 Phase 5.4 — ThresholdCheckService cron (10분)
     ScheduleModule.forRoot(),
     NotifierModule,
