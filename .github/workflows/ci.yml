@@ -26,6 +26,17 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # 실 Redis 연동 검증용 (Throttler Lua 스크립트·SET NX PX 인자 순서 — mock 사각 방어)
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       NODE_ENV: test
       # CI 전용 더미 값 — 실제 시크릿 아님
@@ -35,6 +46,8 @@ jobs:
       DB_PASSWORD: postgres
       DB_DATABASE: chwippo_test
       DB_SSL: 'false'
+      # 실 Redis 연동 검증용 — redis-integration.spec.ts 가 이 값이 있을 때만 실행 (없으면 skip)
+      REDIS_URL: redis://localhost:6379
       JWT_SECRET: ci-test-jwt-secret
       JWT_EXPIRES_IN: 1h
       JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret
