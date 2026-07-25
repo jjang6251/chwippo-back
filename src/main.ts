@@ -17,9 +17,11 @@ async function bootstrap() {
     bodyParser: false,
   });
 
-  // Cloudflare → Railway/EC2 proxy chain에서 client IP 식별 (ThrottlerGuard용)
-  // prod chain 확정 후 hop 수 조정 가능 (현재 1 hop 가정)
-  app.set('trust proxy', 1);
+  // Cloudflare → Railway proxy chain에서 client IP 식별 (ThrottlerGuard용).
+  // 2026-07-24 운영 실측으로 chain 확정: [<클라 위조 가능 XFF>, 방문자IP(CF 기록), CF이그레스IP(Railway 기록)]
+  // — 1 hop 신뢰 시 req.ip = CF 이그레스(연결마다 변동) → 스로틀 키 분산으로 rate limit 무력.
+  // 2 hop = CF가 기록한 방문자 IP 채택. 그 왼쪽(클라이언트 지참 XFF)은 신뢰 안 함 (스푸핑 차단).
+  app.set('trust proxy', 2);
 
   app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
