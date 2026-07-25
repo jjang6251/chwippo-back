@@ -28,3 +28,6 @@ logs
 
 # Coverage reports
 coverage/
+
+# Redis 로컬 덤프 (개발 중 redis-server 실행 시 생성 — 레포에 포함 금지)
+*.rdb
