@@ -838,6 +838,7 @@ export class AdminUsersService {
       inquiries,
       coinBalance,
       auditLogs,
+      applications,
     ] = await Promise.all([
       this.appRepo.count({
         where: { userId: targetUserId, deletedAt: IsNull() as never },
@@ -876,6 +877,36 @@ export class AdminUsersService {
         order: { createdAt: 'DESC' },
         take: 50,
       }),
+      // 운영 조회용 지원 카드 목록 — **회사·직무·진행 상태만**.
+      // 메모·자소서 답변 등 사용자가 쓴 본문은 의도적으로 제외한다
+      // (그건 방침 §7 "데이터 이동 요청" 경로인 export 로만 열람).
+      // 현재 스텝 = order_index 정렬 후 current_step_index 번째 (LATERAL 로 카드당 1행).
+      this.dataSource.query<
+        Array<{
+          id: string;
+          company_name: string;
+          job_title: string | null;
+          status: string;
+          is_sample: boolean;
+          created_at: Date;
+          current_step_name: string | null;
+          current_step_date: Date | null;
+        }>
+      >(
+        `SELECT a.id, a.company_name, a.job_title, a.status, a.is_sample, a.created_at,
+                s.name AS current_step_name, s.scheduled_date AS current_step_date
+           FROM applications a
+           LEFT JOIN LATERAL (
+             SELECT name, scheduled_date
+               FROM application_steps
+              WHERE application_id = a.id
+              ORDER BY order_index
+             OFFSET a.current_step_index LIMIT 1
+           ) s ON TRUE
+          WHERE a.user_id = $1 AND a.deleted_at IS NULL
+          ORDER BY a.created_at DESC`,
+        [targetUserId],
+      ),
     ]);
 
     const cl = coverletterQuestionStats[0] ?? {
@@ -896,6 +927,16 @@ export class AdminUsersService {
         : null,
       inquiries,
       auditLogs,
+      applications: applications.map((a) => ({
+        id: a.id,
+        companyName: a.company_name,
+        jobTitle: a.job_title,
+        status: a.status,
+        isSample: a.is_sample,
+        createdAt: a.created_at,
+        currentStepName: a.current_step_name,
+        currentStepDate: a.current_step_date,
+      })),
       activityStats: {
         applicationCount,
         coverletterQuestionTotal: parseInt(cl.total, 10),
