@@ -1,3 +1,7 @@
+// ⚠️ 반드시 첫 줄 — OpenTelemetry 계측이 다른 모듈보다 먼저 로드돼야 HTTP·DB 훅이 걸린다.
+// SENTRY_DSN 미설정 시 no-op.
+import './instrument';
+
 import { BadRequestException, Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
