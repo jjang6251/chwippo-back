@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import * as Sentry from '@sentry/nestjs';
 
 const MAX_EXTERNAL_MESSAGE_LEN = 200;
 
@@ -68,10 +69,26 @@ export class AllExceptionsFilter implements ExceptionFilter {
       this.logger.error(exception);
       // 쿼리스트링 제외 — path 만 기록 (OAuth code·state 등이 Discord 로 새지 않도록)
       this.monitor?.record(request.path);
+      this.captureToSentry(exception, request.path);
     }
 
     response
       .status(status)
       .json({ message, statusCode: status, path: request.url });
+  }
+
+  /**
+   * 5xx 만 Sentry 로 전송한다. 4xx(사용자 입력 실수·권한 없음)는 노이즈이자 quota 낭비.
+   *
+   * **관측이 서비스를 죽이면 안 된다** — 이 필터는 모든 API 응답이 지나는 길이라
+   * Sentry 전송이 throw 하면 전면 장애가 된다. 반드시 삼켜야 한다.
+   * DSN 미설정이면 captureException 은 조용히 무시되므로 별도 가드 불필요.
+   */
+  private captureToSentry(exception: unknown, path: string): void {
+    try {
+      Sentry.captureException(exception, { tags: { path } });
+    } catch (err) {
+      this.logger.warn(`Sentry 전송 실패 (무시): ${String(err)}`);
+    }
   }
 }

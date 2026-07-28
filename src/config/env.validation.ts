@@ -118,4 +118,9 @@ export const envValidationSchema = Joi.object({
 
   // 5xx 스파이크 알림 임계치 (10분 window · 초과 시 critical)
   HTTP_5XX_ALERT_THRESHOLD: Joi.number().integer().min(1).default(20),
+
+  // Sentry 에러 추적. **옵셔널** — 미설정(로컬 dev·CI·테스트) 시 완전 no-op.
+  // required 금지: 부팅이 깨지고 CI env 도 따라 갱신해야 한다 (REDIS_URL 과 같은 패턴).
+  // ⚠️ 운영 주입은 개인정보처리방침 시행일(2026-08-04) 이후 — 방침보다 먼저 켜면 고지 없는 수집.
+  SENTRY_DSN: Joi.string().uri().allow('').optional(),
 });
