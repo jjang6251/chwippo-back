@@ -3,6 +3,8 @@
  *
  * PATCH/DELETE/warn/export — RolesGuard·self-protection·audit·NotFound 검증.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
@@ -265,6 +267,206 @@ describe('Admin user management (e2e, H-10·H-11·H-12)', () => {
         .post(`/admin/users/${target.id}/export`)
         .set(bearer(userToken))
         .expect(403);
+    });
+  });
+
+  /**
+   * GET /admin/users/:id/detail — 지원 카드 목록.
+   *
+   * 현재 스텝을 LATERAL + OFFSET current_step_index 로 뽑는 SQL 이라
+   * **mock 유닛 spec 으로는 검증 불가** — 실 DB e2e 로만 판정된다.
+   *
+   * 시나리오:
+   *  1. 카드 0개 → 빈 배열 (에러 아님)
+   *  2. 카드 있음 → 회사·직무·상태 + 현재 스텝명·예정일
+   *  3. current_step_index 가 0 이 아닐 때 그 번째 스텝을 집는다 (OFFSET 검증)
+   *  4. 스텝 0개 카드 → currentStep* 는 null (LEFT JOIN 이라 카드 자체는 나옴)
+   *  5. soft delete 카드는 제외
+   *  6. **사용자 작성 본문(메모)은 응답에 없다** — 운영 조회용 최소 필드
+   *  7. role=user → 403
+   */
+  describe('GET /admin/users/:id/detail — 지원 카드', () => {
+    async function seedApplication(
+      userId: string,
+      over: {
+        company?: string;
+        stepIndex?: number;
+        steps?: { name: string; date: string | null }[];
+        deleted?: boolean;
+        memo?: string;
+      } = {},
+    ): Promise<string> {
+      const ds = app.get(DataSource);
+      const [row] = await ds.query<Array<{ id: string }>>(
+        `INSERT INTO applications
+           (user_id, company_name, job_title, status, current_step_index, memo, deleted_at)
+         VALUES ($1, $2, '백엔드 개발자', 'IN_PROGRESS', $3, $4, $5)
+         RETURNING id`,
+        [
+          userId,
+          over.company ?? '테스트회사',
+          over.stepIndex ?? 0,
+          over.memo ?? null,
+          over.deleted ? new Date() : null,
+        ],
+      );
+      const steps = over.steps ?? [];
+      for (const [i, s] of steps.entries()) {
+        await ds.query(
+          `INSERT INTO application_steps (application_id, order_index, name, scheduled_date)
+           VALUES ($1, $2, $3, $4)`,
+          [row.id, i, s.name, s.date],
+        );
+      }
+      return row.id;
+    }
+
+    const detail = (token: string, id: string) =>
+      request(app.getHttpServer())
+        .get(`/admin/users/${id}/detail`)
+        .set(bearer(token))
+        .expect(200);
+
+    it('1. 카드 0개 → 빈 배열', async () => {
+      const { user: target } = await signInAsUser(app);
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+      expect(res.body.data.applications).toEqual([]);
+      expect(res.body.data.activityStats.applicationCount).toBe(0);
+    });
+
+    it('2·6. 회사·직무·상태·현재 스텝을 주고, 사용자 메모는 주지 않는다', async () => {
+      const { user: target } = await signInAsUser(app);
+      await seedApplication(target.id, {
+        company: '카카오',
+        memo: '여기 꼭 붙고 싶다 — 사용자 작성 본문',
+        steps: [{ name: '서류', date: '2026-08-10T09:00:00Z' }],
+      });
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+
+      const [card] = res.body.data.applications;
+      expect(card.companyName).toBe('카카오');
+      expect(card.jobTitle).toBe('백엔드 개발자');
+      expect(card.status).toBe('IN_PROGRESS');
+      expect(card.currentStepName).toBe('서류');
+      expect(card.currentStepDate).toBeTruthy();
+      // 운영 조회용 최소 필드 — 사용자가 쓴 본문은 export 경로로만
+      expect(card).not.toHaveProperty('memo');
+      expect(JSON.stringify(res.body.data.applications)).not.toContain(
+        '꼭 붙고 싶다',
+      );
+    });
+
+    it('3. current_step_index 가 1 이면 두 번째 스텝을 집는다 (OFFSET)', async () => {
+      const { user: target } = await signInAsUser(app);
+      await seedApplication(target.id, {
+        stepIndex: 1,
+        steps: [
+          { name: '서류', date: null },
+          { name: '1차 면접', date: '2026-09-01T02:00:00Z' },
+          { name: '2차 면접', date: null },
+        ],
+      });
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+      expect(res.body.data.applications[0].currentStepName).toBe('1차 면접');
+    });
+
+    it('4. 스텝 0개 카드도 목록에 나오고 currentStep 은 null', async () => {
+      const { user: target } = await signInAsUser(app);
+      await seedApplication(target.id, { company: '스텝없음', steps: [] });
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+      expect(res.body.data.applications).toHaveLength(1);
+      expect(res.body.data.applications[0].currentStepName).toBeNull();
+      expect(res.body.data.applications[0].currentStepDate).toBeNull();
+    });
+
+    it('5. soft delete 카드는 제외', async () => {
+      const { user: target } = await signInAsUser(app);
+      await seedApplication(target.id, { company: '살아있음' });
+      await seedApplication(target.id, { company: '삭제됨', deleted: true });
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+      expect(res.body.data.applications).toHaveLength(1);
+      expect(res.body.data.applications[0].companyName).toBe('살아있음');
+    });
+
+    it('7. role=user → 403', async () => {
+      const { user: target } = await signInAsUser(app);
+      const { accessToken: userToken } = await signInAsUser(app);
+      return request(app.getHttpServer())
+        .get(`/admin/users/${target.id}/detail`)
+        .set(bearer(userToken))
+        .expect(403);
+    });
+  });
+
+  /**
+   * 권한 가드 전수 스윕 — `/admin/users` **모든** 라우트가 미인증 401 · 일반 user 403 인지.
+   *
+   * 개별 테스트가 일부 라우트만 덮고 있어, 새 라우트를 추가하면서 클래스 레벨
+   * `@UseGuards(RolesGuard) @Roles('admin')` 밖에 두는 실수를 잡지 못했다.
+   * 이 목록은 컨트롤러의 라우트와 1:1 이어야 하며, 라우트를 추가하면 여기도 추가한다
+   * (아래 "라우트 수 일치" 테스트가 누락을 강제한다).
+   */
+  describe('권한 가드 전수 스윕 (OWASP API1/API5 · CWE-285)', () => {
+    const ROUTES: [string, string][] = [
+      ['get', ''],
+      ['get', '/:id'],
+      ['patch', '/:id'],
+      ['delete', '/:id'],
+      ['post', '/:id/warn'],
+      ['post', '/:id/export'],
+      ['post', '/:id/coins/grant'],
+      ['post', '/:id/coins/revoke'],
+      ['patch', '/:id/suspend'],
+      ['delete', '/:id/suspend'],
+      ['get', '/:id/detail'],
+      ['patch', '/:id/tier'],
+    ];
+
+    /** GET/DELETE 에 body 를 붙이면 ECONNRESET — 쓰기 메서드에만 payload */
+    async function call(method: string, path: string, token?: string) {
+      const req = request(app.getHttpServer())[
+        method as 'get' | 'post' | 'patch' | 'delete'
+      ](`/admin/users${path}`);
+      if (token) req.set(bearer(token));
+      if (method === 'post' || method === 'patch') req.send({});
+      return req;
+    }
+
+    /** 순차 실행 — 동일 app 인스턴스에 12개를 동시에 쏘면 커넥션이 끊긴다 */
+    async function sweep(token: string | undefined, id: string) {
+      const out: string[] = [];
+      for (const [m, p] of ROUTES) {
+        const res = await call(m, p.replace(':id', id), token);
+        out.push(`${m.toUpperCase()} ${p} → ${res.status}`);
+      }
+      return out;
+    }
+
+    it('미인증 → 전 라우트 401 (인증 우회 0)', async () => {
+      const results = await sweep(undefined, 'some-id');
+      // 401 이 아닌 라우트가 있으면 어떤 라우트인지 실패 메시지에 그대로 보인다
+      expect(results.filter((r) => !r.endsWith('→ 401'))).toEqual([]);
+    });
+
+    it('일반 user 토큰 → 전 라우트 403 (권한 상승 0)', async () => {
+      const { user: target } = await signInAsUser(app);
+      const { accessToken: userToken } = await signInAsUser(app);
+      const results = await sweep(userToken, target.id);
+      expect(results.filter((r) => !r.endsWith('→ 403'))).toEqual([]);
+    });
+
+    it('라우트 수 일치 — 컨트롤러에 라우트를 추가하면 이 스윕도 갱신해야 한다', () => {
+      const src = readFileSync(
+        join(__dirname, '../src/admin/admin-users.controller.ts'),
+        'utf-8',
+      );
+      const declared = (src.match(/@(Get|Post|Patch|Delete)\(/g) ?? []).length;
+      expect(ROUTES).toHaveLength(declared);
     });
   });
 });
