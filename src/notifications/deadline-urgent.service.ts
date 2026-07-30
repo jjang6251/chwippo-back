@@ -137,6 +137,15 @@ export class DeadlineUrgentService {
           body,
           deepLink: `/board/${rep.applicationId}`,
           eventCount: remaining.length,
+          // 인앱 구조화 표시 — 여러 곳이 오늘 마감이면 줄마다 해당 카드로 이동
+          payload: {
+            events: remaining.map((step) => ({
+              subject: step.application.companyName,
+              label: '서류 마감',
+              dday: 0,
+              deepLink: `/board/${step.applicationId}`,
+            })),
+          },
         },
         now,
       );

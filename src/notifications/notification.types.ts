@@ -17,6 +17,38 @@ export type NotificationType =
   | 'admin';
 
 /**
+ * 인앱 알림의 구조화 이벤트 (payload.events).
+ *
+ * 왜 필요한가 — 기존엔 `body` 문자열 한 덩어리("카카오 서류 마감 · D-3\n네이버 1차 면접 · 오늘")
+ * 만 있어서 프론트가 **회사명·D-day 를 강조할 수도, 줄마다 링크를 걸 수도 없었다**.
+ * 알림 3건이 묶인 브리핑에서 두 번째 회사를 눌러도 첫 번째로 이동하는 문제가 있었다.
+ *
+ * ⚠️ `title`·`body` 는 **그대로 유지**한다 — 푸시 문구가 같은 소스를 쓰고,
+ * 이 payload 가 없는 과거 알림도 계속 렌더돼야 하므로 프론트가 둘 다 처리한다.
+ */
+export interface NotificationEvent {
+  /** 회사명 · 시험명 등 주체 (강조 표시 대상) */
+  subject: string;
+  /** "서류 마감" · "1차 면접" 등 (subject 없이 단독으로 쓰이기도 함) */
+  label: string;
+  /** 오늘=0 · 미래 양수. null = 날짜 개념 없는 항목(할 일 등) */
+  dday: number | null;
+  /** 이 줄을 눌렀을 때 갈 곳. null = 이동 없음 */
+  deepLink: string | null;
+}
+
+/**
+ * 브리핑 payload 형태.
+ * `todos` 는 events 와 분리 — 할 일은 일정이 아니고 이동할 카드도 없다.
+ */
+export interface BriefingPayload {
+  eventCount: number;
+  events: NotificationEvent[];
+  /** 오늘 미완료 할 일 내용 목록 (표시용) */
+  todos: string[];
+}
+
+/**
  * type 단위 "하루 1회" dedup 대상 — admin 은 여러 번 발송 가능하므로 제외.
  * imminent 도 제외 — 하루에 이벤트별 다건 허용, per-(refId, 날짜) dedup 은
  * ImminentReminderService 가 notifications.payload.refId 로 서비스 레벨 처리.

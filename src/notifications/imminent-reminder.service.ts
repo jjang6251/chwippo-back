@@ -175,7 +175,19 @@ export class ImminentReminderService {
             title: '⏰ 2시간 뒤',
             body,
             deepLink: c.deepLink,
-            payload: { refId: c.refId, kind: c.kind },
+            payload: {
+              refId: c.refId,
+              kind: c.kind,
+              // 인앱 구조화 표시 (단건이라 배열 길이 1)
+              events: [
+                {
+                  subject: c.label,
+                  label: hhmm,
+                  dday: 0,
+                  deepLink: c.deepLink,
+                },
+              ],
+            },
             eventCount: 1,
           },
           now,
