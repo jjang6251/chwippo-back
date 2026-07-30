@@ -839,6 +839,7 @@ export class AdminUsersService {
       coinBalance,
       auditLogs,
       applications,
+      visitStats,
     ] = await Promise.all([
       this.appRepo.count({
         where: { userId: targetUserId, deletedAt: IsNull() as never },
@@ -907,6 +908,31 @@ export class AdminUsersService {
           ORDER BY a.created_at DESC`,
         [targetUserId],
       ),
+      /*
+        방문 이력 — `lastActiveAt` 은 마지막 한 점만 덮어쓰는 컬럼이라
+        "얼마나 꾸준히 오나"를 못 답한다. 그건 A8 이 이미 쌓고 있던 user_daily_visits 가 답한다
+        (지금까지 리텐션·DAU 계산에만 쓰이고 화면에는 안 나왔다).
+
+        `visit_date` 는 KST 날짜 문자열로 넣는 **date 컬럼**이라 timestamptz 이중 변환 함정이 없다.
+        비교 기준도 단일 hop `(NOW() AT TIME ZONE 'Asia/Seoul')::date` 로 KST 날짜끼리 맞춘다.
+        `> today - 30` = today-29 ~ today = 30일 (오늘 포함).
+
+        first_visit 을 같이 주는 이유 — 이 테이블은 2026-07-07 부터 쌓였다. 그 전 가입자는
+        이력이 없어서 총계가 "가입 후 N일"이 아니라 "집계 시작 후 N일"이다. 화면에서
+        집계 시작일을 같이 보여줘야 숫자를 오해하지 않는다.
+      */
+      this.dataSource.query<
+        Array<{ total: string; last30: string; first_visit: string | null }>
+      >(
+        `SELECT COUNT(*)::text AS total,
+                COUNT(*) FILTER (
+                  WHERE visit_date > ((NOW() AT TIME ZONE 'Asia/Seoul')::date - 30)
+                )::text AS last30,
+                MIN(visit_date)::text AS first_visit
+           FROM user_daily_visits
+          WHERE user_id = $1`,
+        [targetUserId],
+      ),
     ]);
 
     const cl = coverletterQuestionStats[0] ?? {
@@ -914,6 +940,7 @@ export class AdminUsersService {
       companies: '0',
       answered: '0',
     };
+    const vs = visitStats[0] ?? { total: '0', last30: '0', first_visit: null };
 
     return {
       basic: omitSensitive(user),
@@ -944,6 +971,12 @@ export class AdminUsersService {
         coverletterAnswered: parseInt(cl.answered, 10),
         interviewPrepCount: parseInt(interviewPrepCount[0]?.count ?? '0', 10),
         activityLogCount: parseInt(activityLogCount[0]?.count ?? '0', 10),
+      },
+      visitStats: {
+        totalDays: parseInt(vs.total, 10),
+        last30Days: parseInt(vs.last30, 10),
+        /** 집계 시작일 (YYYY-MM-DD, KST). 이 테이블 도입 이전 가입자는 총계가 부분값이다 */
+        firstVisitDate: vs.first_visit,
       },
     };
   }
