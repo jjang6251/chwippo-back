@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { UnauthorizedException } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { JwtStrategy } from './jwt.strategy';
+import { JwtStrategy, LAST_ACTIVE_THROTTLE_MS } from './jwt.strategy';
 import { User } from '../../users/user.entity';
 
 function makeUser(overrides: Partial<User> = {}): User {
@@ -133,7 +133,7 @@ describe('JwtStrategy', () => {
       expect(params[1]).toMatch(/^\d{4}-\d{2}-\d{2}$/); // KST YYYY-MM-DD
     });
 
-    it('lastActiveAt 이 KST 오늘이면 → 갱신·insert 모두 안 탐', async () => {
+    it('직전 요청(1분 미만) → 갱신·insert 모두 안 탐', async () => {
       userRepo.findOne.mockResolvedValue(
         makeUser({ lastActiveAt: new Date() }),
       );
@@ -156,6 +156,140 @@ describe('JwtStrategy', () => {
       });
 
       expect(result).toMatchObject({ id: 'user-uuid' });
+    });
+  });
+
+  /**
+   * ① lastActiveAt 정확도 — 하루 1회 → 1분 throttle.
+   *
+   * 전에는 저장값이 **그날 첫 접속 시각**이라 admin 이 보는 "마지막 접속" 이 최대 하루 과거였다
+   * (2026-07-30 실측: 화면 17:15 / 실제 사용 22:38).
+   *
+   * 경우의 수:
+   *  1. 임계 초과 → 갱신 O, 값이 현재 시각
+   *  2. 경계 정확히 60초 → 갱신 O (>= 이므로)
+   *  3. 경계 59초 → 갱신 X
+   *  4. lastActiveAt null (신규 유저) → 갱신 O
+   *  5. 갱신 실패해도 인증 성공 (best-effort)
+   *  6. 🔴 같은 KST 날짜인데 임계 초과 → 갱신 O · 방문 insert **X** (분리 검증)
+   */
+  describe('마지막 접속 시각 throttle', () => {
+    const managerQuery = () =>
+      (userRepo.manager as unknown as { query: jest.Mock }).query;
+
+    // KST 정오로 고정 — 실행 시각이 자정 근처면 "같은 날" 판정이 흔들려 flaky 해진다
+    const NOW = new Date('2026-07-30T03:00:00.000Z'); // = 12:00 KST
+
+    beforeEach(() => {
+      jest.useFakeTimers().setSystemTime(NOW);
+    });
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('1. 임계 초과 → lastActiveAt 을 현재 시각으로 갱신', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date(NOW.getTime() - 5 * 60_000) }),
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).toHaveBeenCalledTimes(1);
+      const [, patch] = userRepo.update.mock.calls[0] as [
+        string,
+        { lastActiveAt: Date },
+      ];
+      expect(patch.lastActiveAt.getTime()).toBe(NOW.getTime());
+    });
+
+    it('2. 경계 — 정확히 임계값이면 갱신한다 (>=)', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({
+          lastActiveAt: new Date(NOW.getTime() - LAST_ACTIVE_THROTTLE_MS),
+        }),
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('3. 경계 — 임계값 1ms 전이면 갱신하지 않는다', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({
+          lastActiveAt: new Date(NOW.getTime() - LAST_ACTIVE_THROTTLE_MS + 1),
+        }),
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('4. lastActiveAt 이 null (첫 접속) → 갱신 + 방문 insert', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser({ lastActiveAt: null }));
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).toHaveBeenCalledTimes(1);
+      expect(managerQuery()).toHaveBeenCalledTimes(1);
+    });
+
+    it('5. 갱신 실패해도 인증(validate)은 성공한다 — best-effort', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date(NOW.getTime() - 5 * 60_000) }),
+      );
+      userRepo.update.mockRejectedValue(new Error('DB down'));
+
+      const result = await strategy.validate({
+        sub: 'user-uuid',
+        role: 'user',
+      });
+
+      expect(result).toMatchObject({ id: 'user-uuid' });
+    });
+
+    it('6. 🔴 같은 KST 날짜 + 임계 초과 → 갱신은 하지만 방문 insert 는 안 한다', async () => {
+      // 이게 분리의 이유다. 묶여 있으면 no-op INSERT 가 분당 한 번씩 날아간다.
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date(NOW.getTime() - 2 * 60_000) }), // 11:58 KST, 같은 날
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).toHaveBeenCalledTimes(1);
+      expect(managerQuery()).not.toHaveBeenCalled();
+    });
+
+    it('7. KST 날짜가 바뀌면 → 갱신 + 방문 insert 둘 다, 날짜는 KST 기준', async () => {
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date('2026-07-29T03:00:00.000Z') }),
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      expect(userRepo.update).toHaveBeenCalledTimes(1);
+      const [, params] = managerQuery().mock.calls[0] as [
+        string,
+        [string, string],
+      ];
+      expect(params[1]).toBe('2026-07-30'); // UTC 로는 07-30 03:00 → KST 도 07-30
+    });
+
+    it('8. UTC 와 KST 날짜가 갈리는 시각에도 KST 날짜로 기록한다', async () => {
+      // UTC 2026-07-30 16:00 = KST 2026-07-31 01:00 → 방문일은 07-31 이어야 한다
+      jest.setSystemTime(new Date('2026-07-30T16:00:00.000Z'));
+      userRepo.findOne.mockResolvedValue(
+        makeUser({ lastActiveAt: new Date('2026-07-30T03:00:00.000Z') }),
+      );
+
+      await strategy.validate({ sub: 'user-uuid', role: 'user' });
+
+      const [, params] = managerQuery().mock.calls[0] as [
+        string,
+        [string, string],
+      ];
+      expect(params[1]).toBe('2026-07-31');
     });
   });
 });

@@ -393,6 +393,95 @@ describe('Admin user management (e2e, H-10·H-11·H-12)', () => {
       expect(res.body.data.applications[0].companyName).toBe('살아있음');
     });
 
+    /**
+     * 방문일수 (visitStats) — `user_daily_visits` 집계.
+     *
+     * "최근 30일" 판정이 **KST 날짜 산술**이라 mock 유닛 spec 으로는 검증 불가하다.
+     * 실 DB 에서 `(NOW() AT TIME ZONE 'Asia/Seoul')::date` 와 비교돼야 의미가 있다.
+     *
+     * 시나리오:
+     *  8.  방문 0건 → 0·0·null (에러 아님)
+     *  9.  🔴 경계 — today-29 는 최근 30일에 포함, today-30 은 제외
+     *  10. firstVisitDate = 가장 오래된 방문일 (가입일 아님 — 집계 시작 이전 가입자 오해 방지)
+     *  11. 다른 사용자 방문은 섞이지 않는다
+     */
+    async function seedVisits(userId: string, daysAgoList: number[]) {
+      const ds = app.get(DataSource);
+      for (const d of daysAgoList) {
+        await ds.query(
+          `INSERT INTO user_daily_visits (user_id, visit_date)
+           VALUES ($1, (NOW() AT TIME ZONE 'Asia/Seoul')::date - $2::int)
+           ON CONFLICT DO NOTHING`,
+          [userId, d],
+        );
+      }
+    }
+
+    it('8. 방문 기록 0건 → 0·0·null', async () => {
+      const { user: target } = await signInAsUser(app);
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+      // 로그인(토큰 발급)만으로는 방문이 안 남는다 — JwtStrategy 를 타는 인증 요청이 있어야 기록된다.
+      // 즉 "가입만 하고 안 들어온 사용자" 상태이고, 이때 firstVisitDate 는 null 이어야 한다
+      // (0 이나 '' 로 뭉개면 프론트가 "1970-01-01 부터 집계" 로 그린다)
+      expect(res.body.data.visitStats).toEqual({
+        totalDays: 0,
+        last30Days: 0,
+        firstVisitDate: null,
+      });
+    });
+
+    it('9. 🔴 경계 — today-29 는 최근 30일 포함, today-30 은 제외', async () => {
+      const { user: target } = await signInAsUser(app);
+      const ds = app.get(DataSource);
+      // 로그인이 남긴 오늘 방문을 지우고 경계 2건만 남긴다
+      await ds.query(`DELETE FROM user_daily_visits WHERE user_id = $1`, [
+        target.id,
+      ]);
+      await seedVisits(target.id, [29, 30]);
+
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+
+      expect(res.body.data.visitStats.totalDays).toBe(2);
+      expect(res.body.data.visitStats.last30Days).toBe(1); // 29 만 포함
+    });
+
+    it('10. firstVisitDate = 가장 오래된 방문일 (가입일 아님)', async () => {
+      const { user: target } = await signInAsUser(app);
+      const ds = app.get(DataSource);
+      await ds.query(`DELETE FROM user_daily_visits WHERE user_id = $1`, [
+        target.id,
+      ]);
+      await seedVisits(target.id, [100, 3]);
+
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+
+      const [expected] = await ds.query<Array<{ d: string }>>(
+        `SELECT ((NOW() AT TIME ZONE 'Asia/Seoul')::date - 100)::text AS d`,
+      );
+      expect(res.body.data.visitStats.firstVisitDate).toBe(expected.d);
+      expect(res.body.data.visitStats.totalDays).toBe(2);
+      expect(res.body.data.visitStats.last30Days).toBe(1); // 3 만
+    });
+
+    it('11. 다른 사용자 방문은 섞이지 않는다', async () => {
+      const { user: target } = await signInAsUser(app);
+      const { user: other } = await signInAsUser(app);
+      const ds = app.get(DataSource);
+      await ds.query(`DELETE FROM user_daily_visits WHERE user_id = ANY($1)`, [
+        [target.id, other.id],
+      ]);
+      await seedVisits(target.id, [1]);
+      await seedVisits(other.id, [1, 2, 3]);
+
+      const { accessToken } = await signInAsAdmin(app);
+      const res = await detail(accessToken, target.id);
+
+      expect(res.body.data.visitStats.totalDays).toBe(1);
+    });
+
     it('7. role=user → 403', async () => {
       const { user: target } = await signInAsUser(app);
       const { accessToken: userToken } = await signInAsUser(app);
