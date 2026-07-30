@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { BriefingService } from './briefing.service';
 import { DeadlineUrgentService } from './deadline-urgent.service';
 import { ImminentReminderService } from './imminent-reminder.service';
+import { NotificationRetentionService } from './notification-retention.service';
 import { BRIEFING_HOURS, type BriefingHour } from './notification.types';
 
 /**
@@ -23,7 +24,22 @@ export class NotificationCron {
     private readonly briefingService: BriefingService,
     private readonly deadlineUrgentService: DeadlineUrgentService,
     private readonly imminentReminderService: ImminentReminderService,
+    private readonly retentionService: NotificationRetentionService,
   ) {}
+
+  /**
+   * 알림 보관 기간 정리 — 매일 04:10 KST.
+   * 04:00 백업 cron 직후, 07시 브리핑 전. 발송 cron 과 겹치지 않는 조용한 시간대.
+   * 실패해도 발송에 영향이 없도록 예외를 삼킨다 (다음 날 재시도).
+   */
+  @Cron('10 4 * * *', { timeZone: 'Asia/Seoul' })
+  async runRetentionPurge(): Promise<void> {
+    try {
+      await this.retentionService.purge();
+    } catch (e) {
+      this.logger.error(`[NotificationCron] 보관 정리 실패: ${String(e)}`);
+    }
+  }
 
   @Cron('0 7 * * *', { timeZone: 'Asia/Seoul' })
   async runBriefing07(): Promise<void> {

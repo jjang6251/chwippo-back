@@ -20,7 +20,12 @@ const MAX_BRIEFING_TODOS = 3;
 interface BriefingEvent {
   kind: 'deadline' | 'interview' | 'exam' | 'resultDate';
   dday: number;
-  label: string; // 표시용 (예 "카카오 서류 마감")
+  label: string; // 푸시 문구용 합성 문자열 (예 "카카오 서류 마감")
+  /** 인앱 구조화 표시용 — 회사명·시험명 (강조 대상). label 과 중복 저장은 의도적:
+   *  푸시는 한 줄 문자열이 필요하고, 인앱은 분리된 필드가 필요하다 */
+  subject: string;
+  /** 인앱 구조화 표시용 — subject 를 뺀 나머지 (예 "서류 마감") */
+  detail: string;
   deepLink: string | null;
 }
 
@@ -115,14 +120,13 @@ export class BriefingService {
       if (dday === undefined) continue;
       // 첫 스텝(orderIndex 0)=서류 마감 · '결과·발표' 스텝=resultDate · 그 외=면접/전형
       const kind = classifyBriefingEventKind(step.orderIndex, step.name);
-      const label =
-        kind === 'deadline'
-          ? `${app.companyName} 서류 마감`
-          : `${app.companyName} ${step.name}`;
+      const detail = kind === 'deadline' ? '서류 마감' : step.name;
       this.pushEvent(eventsByUser, app.userId, {
         kind,
         dday,
-        label,
+        label: `${app.companyName} ${detail}`,
+        subject: app.companyName,
+        detail,
         deepLink: `/board/${step.applicationId}`,
       });
     }
@@ -142,6 +146,8 @@ export class BriefingService {
         kind: 'exam',
         dday,
         label: exam.name,
+        subject: exam.name,
+        detail: '시험',
         deepLink: '/calendar',
       });
     }
@@ -198,7 +204,21 @@ export class BriefingService {
           title,
           body,
           deepLink,
-          payload: { eventCount: events.length },
+          payload: {
+            eventCount: events.length,
+            // 인앱 구조화 표시용 — 회사명·D-day 강조 + 줄마다 딥링크.
+            // 할 일은 카드가 아니라 링크가 없으므로 events 에 넣지 않는다 (body 문자열에만).
+            events: sortedEvents.map((e) => ({
+              subject: e.subject,
+              label: e.detail,
+              dday: e.dday,
+              deepLink: e.deepLink,
+            })),
+            // 🔴 할 일은 events(일정)와 성격이 달라 따로 담는다.
+            // 이걸 빼면 구조화 렌더에서 **body 에만 있던 할 일이 화면에서 사라진다**
+            // (푸시엔 있고 앱엔 없는 상태 — 2026-07-30 발견).
+            todos: todos.map((t) => t.content),
+          },
           eventCount: events.length,
         },
         now,

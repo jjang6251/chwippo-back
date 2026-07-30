@@ -62,6 +62,22 @@ function makeNote(overrides: Partial<DailyNote> = {}): DailyNote {
   };
 }
 
+/** payload 를 구조화 이벤트 형태로 좁혀 읽기 (strict 널 체크 통과용) */
+function payloadOf(content: { payload?: Record<string, unknown> | null }): {
+  eventCount?: number;
+  events?: Array<{
+    subject: string;
+    label: string;
+    dday: number;
+    deepLink: string | null;
+  }>;
+  refId?: string;
+  kind?: string;
+} {
+  expect(content.payload).toBeDefined();
+  return content.payload as never;
+}
+
 describe('BriefingService — 잘못된 알람 방지 필터', () => {
   let service: BriefingService;
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
@@ -257,7 +273,17 @@ describe('BriefingService — 잘못된 알람 방지 필터', () => {
     await service.sendDailyBriefings(NOW);
     expect(dispatch.dispatch).toHaveBeenCalledTimes(1);
     const [, , content] = dispatch.dispatch.mock.calls[0];
-    expect(content.payload).toEqual({ eventCount: 2 });
+    expect(payloadOf(content).eventCount).toBe(2);
+    // 인앱 구조화 — 회사명·단계가 분리되고 줄마다 딥링크가 붙는다 (D-day 오름차순)
+    expect(payloadOf(content).events).toEqual([
+      {
+        subject: '카카오',
+        label: '서류 마감',
+        dday: 0,
+        deepLink: '/board/app-1',
+      },
+      { subject: '네이버', label: '면접', dday: 1, deepLink: '/board/app-2' },
+    ]);
   });
 
   // ── F4 — 오늘 할 일 합류 ──────────────────────────────────────────
@@ -278,7 +304,10 @@ describe('BriefingService — 잘못된 알람 방지 필터', () => {
       expect(content.body).toContain('이력서 마무리');
       expect(content.body).toContain('포트폴리오 정리');
       // eventCount(마스킹 요약)는 이벤트만 카운트 — 할 일 미포함
-      expect(content.payload).toEqual({ eventCount: 1 });
+      expect(payloadOf(content).eventCount).toBe(1);
+      // 할 일은 이동할 카드가 없으므로 events 에 넣지 않는다 (body 문자열에만 합류)
+      expect(payloadOf(content).events).toHaveLength(1);
+      expect(payloadOf(content).events?.[0].subject).toBe('카카오');
     });
 
     it('미완료 4건 → 3건 cap ("오늘 할 일 3개", 4번째 미노출)', async () => {
@@ -408,7 +437,8 @@ describe('BriefingService — 잘못된 알람 방지 필터', () => {
       const [, , content] = dispatch.dispatch.mock.calls[0];
       expect(content.body).toContain('서류 마감');
       expect(content.body).not.toContain('1차 면접');
-      expect(content.payload).toEqual({ eventCount: 1 }); // 면접 빠져 1건
+      expect(payloadOf(content).eventCount).toBe(1); // 면접 빠져 1건
+      expect(payloadOf(content).events).toHaveLength(1);
     });
 
     it('deadline OFF + 마감 단독 → 침묵 (dispatch 없음)', async () => {

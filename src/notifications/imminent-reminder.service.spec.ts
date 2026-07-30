@@ -69,6 +69,22 @@ function makeUser(id: string, config: AlarmConfigUpdate | null): User {
   } as User;
 }
 
+/** payload 를 구조화 이벤트 형태로 좁혀 읽기 (strict 널 체크 통과용) */
+function payloadOf(content: { payload?: Record<string, unknown> | null }): {
+  eventCount?: number;
+  events?: Array<{
+    subject: string;
+    label: string;
+    dday: number;
+    deepLink: string | null;
+  }>;
+  refId?: string;
+  kind?: string;
+} {
+  expect(content.payload).toBeDefined();
+  return content.payload as never;
+}
+
 describe('ImminentReminderService — ② 2시간 전 리마인드', () => {
   let service: ImminentReminderService;
   let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
@@ -288,7 +304,7 @@ describe('ImminentReminderService — ② 2시간 전 리마인드', () => {
         // NOW = KST 12:00 · 이벤트 = 2h 뒤 = KST 14:00
         body: '카카오 1차 면접 14:00 (판교)',
         deepLink: '/board/app-1',
-        payload: { refId: 's1', kind: 'interview' },
+        payload: expect.objectContaining({ refId: 's1', kind: 'interview' }),
       }),
       NOW,
     );
@@ -304,7 +320,11 @@ describe('ImminentReminderService — ② 2시간 전 리마인드', () => {
     const [, , content] = dispatch.dispatch.mock.calls[0];
     expect(content.body).toBe('TOEIC 14:10');
     expect(content.deepLink).toBe('/calendar');
-    expect(content.payload).toEqual({ refId: 'e1', kind: 'exam' });
+    // dedup 키(refId·kind)는 그대로 — 이 값이 바뀌면 중복 방지가 깨진다
+    expect(payloadOf(content)).toMatchObject({ refId: 'e1', kind: 'exam' });
+    // 인앱 구조화 — 단건이라 events 길이 1
+    expect(payloadOf(content).events).toHaveLength(1);
+    expect(payloadOf(content).events?.[0].deepLink).toBe('/calendar');
   });
 
   it('한 사용자 다건 이벤트 → 각각 개별 dispatch (하루 다건 허용)', async () => {
