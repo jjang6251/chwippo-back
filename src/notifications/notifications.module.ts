@@ -16,6 +16,7 @@ import { BriefingService } from './briefing.service';
 import { DeadlineUrgentService } from './deadline-urgent.service';
 import { ImminentReminderService } from './imminent-reminder.service';
 import { NotificationCron } from './notification.cron';
+import { NotificationRetentionService } from './notification-retention.service';
 import { NotificationsController } from './notifications.controller';
 import { AlarmConfigController } from './alarm-config.controller';
 import { AdminNotifyService } from './admin-notify.service';
@@ -39,6 +40,7 @@ import { AdminNotifyService } from './admin-notify.service';
   ],
   controllers: [NotificationsController, AlarmConfigController],
   providers: [
+    NotificationRetentionService,
     NotificationsService,
     AlarmConfigService,
     PushService,
