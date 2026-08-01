@@ -106,7 +106,11 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
     defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 16_000,
-    maxOutputTokens: 2_000,
+    // D0 (2026-08-01) 2,000 → 6,000. 출력 = 자소서 본문 그 자체라 charLimit 에 정비례한다.
+    //   프롬프트가 "charLimit 의 92% 이상" 을 지시하므로: charLimit × 0.92 × (자당 토큰 ~1.5)
+    //   → 2,000자 문항 = 2,760 토큰 / 4,000자 문항 = 5,520 토큰. 6,000 이면 charLimit 4,000자까지 커버.
+    //   (자당 토큰 비율은 미실측 보수값 1.5 — count_tokens 실측 후 재조정)
+    maxOutputTokens: 6_000,
     temperature: 0.5,
   },
   coverletter_feedback: {
@@ -114,7 +118,13 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
     defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 16_000,
-    maxOutputTokens: 1_500,
+    // 🔴 D0 (2026-08-01 실사고 직접 원인) 1,500 → 6,000.
+    //   1,500 은 스키마가 요구하는 최대 출력보다 **작았다** — 잘려서 `suggestions` 가 통째로 누락되고,
+    //   그 값이 검증 없이 저장돼 프론트 크래시로 이어졌다.
+    //   스키마 최대: issues 6개(quote+advice ~180자) + suggestions 2개(~200자) + strengths·summary·JSON 구조
+    //   ≈ 2,070자 ≈ 3,100 토큰. 6,000 이면 최대치의 약 2배 여유 — 자소서 길이와 무관하게 안전하다.
+    //   (출력이 스키마로 상한이 잡혀 있어 입력 길이에 비례하지 않는다)
+    maxOutputTokens: 6_000,
     temperature: 0.3,
   },
   coverletter_recommend: {
@@ -132,7 +142,16 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 16_000,
     // main 20개 × (질문 ~80자 + 답변 ~300자 = ~380자) + 일부 followup 1개 = ~8000자 JSON 필요
-    maxOutputTokens: 7_000,
+    //
+    // D0 (2026-08-01) 7,000 → 12,000. **잘림이 추정이 아니라 실측으로 확인됐다** —
+    // dev llm_call_logs 기준 ok 6건 중 4건이 5,000+ 이고 1건은 `completion_tokens` 가
+    // 정확히 7,000(=cap). cap 과 정확히 일치하는 건 한도에 걸려 강제 종료됐다는 뜻이라,
+    // 사용자는 질문 20개를 요청하고 일부만 받고 있었다.
+    //   - 위 주석의 요구량 ~8,000자는 JSON 구조 오버헤드까지 더하면 상한이 8,600 토큰 근처.
+    //   - 12,000 은 그 위 여유분. claude-haiku-4-5 의 max_tokens=64,000 이라 안전.
+    //   - 출력은 **실제 생성분만 과금**되므로 cap 상향 자체의 비용 증가는 없다.
+    // 근본 해결은 prep v2 의 "질문 only + on-demand 답변" (출력 79% 감소). 그때 재조정할 것.
+    maxOutputTokens: 12_000,
     temperature: 0.5,
   },
   interview_prep_followup: {
@@ -150,8 +169,12 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
     defaultModel: 'claude-haiku-4-5',
     maxInputTokens: 16_000,
-    // reply (~500자) + suggestedUpdates 4개 (각 1000자, 자소서 4문항 동시 채움) ≈ 5000자 JSON 필요
-    maxOutputTokens: 5_000,
+    // D0 (2026-08-01) 5,000 → 8,000 + 스키마 `suggestedUpdates maxItems: 2` 로 상한 고정.
+    //   기존 주석은 "5000자 JSON 필요 → maxTokens 5000" 이었는데 **자(char)와 토큰을 1:1 로 놓은 계산 오류**다.
+    //   한국어는 자당 ~1.5 토큰이고 JSON 구조(clId UUID 36자 × N + 키)까지 붙어 4문항이면 이미 초과했다.
+    //   문항 수에 비례해 무한정 커지는 걸 막으려면 한도를 키우는 게 아니라 **개수를 스키마로 고정**해야 한다:
+    //   2문항 × 1,500자 = 3,000자 ≈ 4,500 토큰 + reply(~750) + 구조(~240) ≈ 5,500 → 8,000 이면 충분.
+    maxOutputTokens: 8_000,
     temperature: 0.5,
   },
   // 공고 요건 파싱 — note_summary 와 같은 light 모델(gpt-4o-mini). 붙여넣은 공고(최대 10K자 ≈ input 8K cap)

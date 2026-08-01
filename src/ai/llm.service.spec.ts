@@ -96,6 +96,7 @@ describe('LlmService', () => {
     feature: 'note_summary',
     provider: 'openai',
     model: 'gpt-4o-mini',
+    finishReason: null, // D0 — 신규 컬럼. 잘림 검증 spec 은 override 로 'length' 주입
     promptTokens: 0,
     completionTokens: 0,
     cacheCreationTokens: 0,
@@ -705,6 +706,180 @@ describe('LlmService', () => {
       });
       expect(r.status).toBe('error');
       expect(anthropic.callJson).toHaveBeenCalledTimes(2);
+    });
+
+    /**
+     * D0 (2026-08-01 실사고) — 6.5 `validateResult` **배선** 검증.
+     *
+     * caller 쪽 spec 은 콜백을 단독 호출해 판정 로직만 본다. 그것만으로는
+     * "LlmService 가 그 콜백을 실제로 부르고, 실패로 승격시키고, **코인을 차감하지 않는지**"가
+     * 검증되지 않는다 — 이번 사고의 핵심이 바로 그 금전 경로라 여기서 고정한다.
+     */
+    describe('D0 — validateResult 배선 · finishReason 전파', () => {
+      const okResponse = {
+        text: '',
+        json: { score: 7 },
+        promptTokens: 50,
+        completionTokens: 20,
+        finishReason: 'tool_use' as const,
+      };
+
+      it('🔴 사유를 반환하면 재시도 후 status=error + **코인 미차감**', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: 'coverletter_feedback',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => 'empty result',
+        });
+
+        expect(r.status).toBe('error');
+        // 형식은 맞으니 provider 는 성공 — 재시도 1회까지 소진 후 실패
+        expect(anthropic.callJson).toHaveBeenCalledTimes(2);
+        expect(coinServiceMock.charge).not.toHaveBeenCalled();
+      });
+
+      it('사유가 audit errorMessage 에 남는다 (사후 원인 추적)', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        await service.call({
+          userId: 'u-1',
+          feature: 'coverletter_feedback',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => 'issues·summary 가 모두 비어 있음',
+        });
+
+        const errRow = logRepo.save.mock.calls
+          .map((c) => c[0] as Partial<LlmCallLog>)
+          .find((row) => row.status === 'error');
+        expect(errRow?.errorMessage).toContain(
+          'issues·summary 가 모두 비어 있음',
+        );
+      });
+
+      it('1차 거부 → 2차 통과면 ok + retry_parsing row (차감은 1회)', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+        let called = 0;
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: 'coverletter_feedback',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => (++called === 1 ? 'first reject' : null),
+        });
+
+        expect(r.status).toBe('ok');
+        const statuses = logRepo.save.mock.calls.map(
+          (c) => (c[0] as Partial<LlmCallLog>).status,
+        );
+        expect(statuses).toContain('retry_parsing');
+        expect(coinServiceMock.charge).toHaveBeenCalledTimes(1);
+      });
+
+      it('null 을 반환하면 그대로 통과 + 차감 실행', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: 'coverletter_feedback',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => null,
+        });
+
+        expect(r.status).toBe('ok');
+        expect(anthropic.callJson).toHaveBeenCalledTimes(1);
+        expect(coinServiceMock.charge).toHaveBeenCalledTimes(1);
+      });
+
+      it('미지정이면 검증 자체가 없다 — 기존 caller 동작 무변경', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: 'coverletter_feedback',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+        });
+
+        expect(r.status).toBe('ok');
+        expect(coinServiceMock.charge).toHaveBeenCalledTimes(1);
+      });
+
+      it('PII 스크럽 **전** 원본 json 을 받는다 (스크럽이 내용 유무 판단을 바꾸지 않게)', async () => {
+        anthropic.callJson.mockResolvedValue({
+          ...okResponse,
+          json: { score: 7, note: '010-1234-5678' },
+        });
+        const seen: unknown[] = [];
+
+        await service.call({
+          userId: 'u-1',
+          feature: 'coverletter_feedback',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: (json) => {
+            seen.push(json);
+            return null;
+          },
+        });
+
+        expect(seen[0]).toEqual({ score: 7, note: '010-1234-5678' });
+      });
+
+      it('complete() 경로(json 없음)에서는 호출되지 않는다', async () => {
+        openai.complete.mockResolvedValue({
+          text: 'plain',
+          promptTokens: 5,
+          completionTokens: 5,
+          finishReason: 'stop',
+        });
+        const validateResult = jest.fn().mockReturnValue('should not run');
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: 'note_summary',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          validateResult,
+        });
+
+        expect(r.status).toBe('ok');
+        expect(validateResult).not.toHaveBeenCalled();
+      });
+
+      it("finishReason='length' 가 반환값과 audit row 에 전파된다 (잘림 관측)", async () => {
+        anthropic.callJson.mockResolvedValue({
+          ...okResponse,
+          finishReason: 'length' as const,
+        });
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: 'coverletter_feedback',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+        });
+
+        if (r.status !== 'ok') throw new Error('expected ok');
+        expect(r.finishReason).toBe('length');
+
+        const okRow = logRepo.save.mock.calls
+          .map((c) => c[0] as Partial<LlmCallLog>)
+          .find((row) => row.status === 'ok');
+        expect(okRow?.finishReason).toBe('length');
+      });
     });
 
     it('jsonSchema 없으면 complete() 사용 (callJson 미호출)', async () => {

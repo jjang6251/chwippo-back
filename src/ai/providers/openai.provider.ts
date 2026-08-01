@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import type { LlmProviderName } from '../entities/llm-call-log.entity';
+import { findSchemaViolation } from './json-schema-guard';
 import {
   LlmJsonParseError,
   LlmProvider,
@@ -93,9 +94,26 @@ export class OpenAIProvider implements LlmProvider {
         {
           promptTokens: res.promptTokens,
           completionTokens: res.completionTokens,
+          finishReason: res.finishReason, // D0 — 'length' 면 잘림이 실패 원인
         },
       );
     }
+    // D0 — 필수 필드 검증. `strict: true` 로도 잘림(finish_reason='length')은 못 막는다.
+    //   throw → LlmService 재시도(attempts<2) → 2회 실패 시 status='error' → 코인 미차감.
+    const violation = findSchemaViolation(json, req.jsonSchema.schema);
+    if (violation) {
+      throw new LlmJsonParseError(
+        this.name,
+        res.text,
+        `schema violation — ${violation}`,
+        {
+          promptTokens: res.promptTokens,
+          completionTokens: res.completionTokens,
+          finishReason: res.finishReason, // D0 — 'length' 면 잘림이 실패 원인
+        },
+      );
+    }
+
     return { ...res, json };
   }
 

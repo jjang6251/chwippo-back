@@ -54,6 +54,12 @@ export interface CoverletterFeedbackResult {
     suggestions: Array<{ target: string; improved: string }>;
     summary: string;
   };
+  /**
+   * D0 — 출력 한도에 걸려 결과가 **일부만** 생성됐다는 뜻 (`finish_reason='length'`).
+   * 필수 필드는 다 있지만 지적사항이 도중에 끊겼을 수 있다. 프론트가 사용자에게 안내한다.
+   * 코인은 정상 차감된다 — 부분 결과도 가치가 있고, 환불 경로를 만들지 않기로 했다.
+   */
+  truncated?: boolean;
   meta?: { callLogId: string | null };
 }
 
@@ -113,6 +119,61 @@ const FEEDBACK_SCHEMA = {
     },
   },
 };
+
+type Feedback = NonNullable<CoverletterFeedbackResult['feedback']>;
+
+const ISSUE_KINDS: readonly string[] = [
+  'ai_tone',
+  'structure',
+  'question_mismatch',
+  'company_mismatch',
+  'over_limit',
+  'vague',
+];
+
+function isFeedbackIssue(v: unknown): v is FeedbackIssue {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.kind === 'string' &&
+    ISSUE_KINDS.includes(o.kind) && // enum 밖 kind 는 hallucination — 버린다
+    typeof o.quote === 'string' &&
+    typeof o.advice === 'string'
+  );
+}
+
+function isSuggestion(v: unknown): v is { target: string; improved: string } {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.target === 'string' && typeof o.improved === 'string';
+}
+
+/**
+ * D0 (2026-08-01 실사고) — LLM 응답 정규화 **2차 방어**.
+ *
+ * provider 의 `json-schema-guard` 가 1차로 `required`·`type` 을 막지만 여기서 한 번 더 형태를 맞춘다:
+ * - guard 를 우회하는 경로(모델 교체·스키마 수정 누락)가 생겨도 **DB 에 깨진 값이 저장되지 않는다**
+ * - 프론트가 `?? []` 로 방어하더라도, 저장 자체를 막는 게 근본이다
+ *
+ * 잘못된 타입은 버리고 기본값으로 대체한다. **여기서 throw 하지 않는다** — 유효성 판정은
+ * `validateResult` 담당이고, 이 함수는 "형태 맞추기"만 한다 (책임 분리).
+ */
+function normalizeFeedback(raw: unknown): Feedback {
+  const obj = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  return {
+    strengths: Array.isArray(obj.strengths)
+      ? obj.strengths.filter((s): s is string => typeof s === 'string')
+      : [],
+    issues: Array.isArray(obj.issues) ? obj.issues.filter(isFeedbackIssue) : [],
+    suggestions: Array.isArray(obj.suggestions)
+      ? obj.suggestions.filter(isSuggestion)
+      : [],
+    summary: typeof obj.summary === 'string' ? obj.summary : '',
+  };
+}
 
 const SYSTEM_PROMPT = `너는 한국 취준생의 자소서를 제출 직전에 점검하는 코치다.
 
@@ -274,6 +335,15 @@ export class AiCoverletterFeedbackService {
       resourceType: 'application_coverletter',
       resourceId: coverletterId,
       jsonSchema: FEEDBACK_SCHEMA,
+      // D0 — 형식은 맞는데 내용이 빈 응답을 실패로 승격 → 재시도 → 2회 실패 시 코인 미차감.
+      //   issues 가 비어도 summary 가 있으면 "지적할 것 없음"이라는 **정당한 결과**다.
+      //   둘 다 비었을 때만 점검으로서 가치가 없다고 본다.
+      validateResult: (json) => {
+        const fb = normalizeFeedback(json);
+        return fb.issues.length === 0 && fb.summary.trim().length === 0
+          ? 'issues and summary are both empty'
+          : null;
+      },
     });
 
     if (result.status !== 'ok') {
@@ -288,7 +358,10 @@ export class AiCoverletterFeedbackService {
       };
     }
 
-    const feedback = result.json as CoverletterFeedbackResult['feedback'];
+    // D0 — 무검증 캐스팅(`as`) 제거. 저장·반환 전에 형태를 정규화한다.
+    //   여기까지 왔다면 provider guard + validateResult 를 통과한 응답이지만,
+    //   저장되는 값은 항상 정규화된 형태임을 보장한다 (프론트 계약 고정).
+    const feedback = normalizeFeedback(result.json);
 
     // 결과 영속화 — 모달 닫힘·새로고침 유실 방지. 저장 실패해도 응답은 정상 반환
     // (결과 유실보다 저장 실패가 낫다). blocked/error 는 위에서 return 되므로 여기 도달 X
@@ -309,6 +382,7 @@ export class AiCoverletterFeedbackService {
     return {
       status: 'ok',
       feedback,
+      truncated: result.finishReason === 'length',
       meta: { callLogId: result.callLogId ?? null },
     };
   }
