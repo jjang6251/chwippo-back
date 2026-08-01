@@ -151,6 +151,23 @@ export class LlmCallLog {
   @Column({ type: 'int', default: 1 })
   attempts: number;
 
+  /**
+   * D0 (2026-08-01 자소서 점검 크래시) — provider 가 응답을 왜 끝냈는지.
+   *
+   * `'length'` = **출력 토큰 한도에 걸려 잘림**. 지금까지 provider 가 계산만 하고 버려서
+   * 잘림이 로그에 전혀 남지 않았고, 그래서 이번 사고를 사용자 신고 전까지 아무도 몰랐다.
+   *
+   * NULL = 이 컬럼 도입 이전 row, 또는 blocked_* 처럼 provider 미호출 경로.
+   * 인덱스는 두지 않는다 — 집계는 기존 `(feature, created_at)` 인덱스로 충분.
+   */
+  @Column({
+    name: 'finish_reason',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  finishReason: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

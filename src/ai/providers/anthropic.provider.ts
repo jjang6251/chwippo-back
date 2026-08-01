@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { parse as parsePartialJson, Allow } from 'partial-json';
 import type { LlmProviderName } from '../entities/llm-call-log.entity';
+import { findSchemaViolation } from './json-schema-guard';
 import {
   LlmJsonParseError,
   LlmProvider,
@@ -157,15 +158,35 @@ export class AnthropicProvider implements LlmProvider {
           cacheCreationTokens: billed.cacheCreationTokens,
           cacheReadTokens: billed.cacheReadTokens,
           webSearchCount: billed.webSearchCount,
+          finishReason: billed.finishReason, // D0 — 'length' 면 잘림이 실패 원인
         },
       );
     }
 
-    const json = toolUseBlock.input as T;
-    return {
-      ...this.toResponse(message),
-      json,
-    };
+    // D0 — 필수 필드 검증. 출력 잘림으로 필드가 빠진 객체가 그대로 통과하던 경로 차단.
+    //   throw → LlmService 재시도(attempts<2) → 2회 실패 시 status='error' → 코인 미차감.
+    const billed = this.toResponse(message);
+    const violation = findSchemaViolation(
+      toolUseBlock.input,
+      req.jsonSchema.schema,
+    );
+    if (violation) {
+      throw new LlmJsonParseError(
+        this.name,
+        JSON.stringify(toolUseBlock.input),
+        `schema violation — ${violation}`,
+        {
+          promptTokens: billed.promptTokens,
+          completionTokens: billed.completionTokens,
+          cacheCreationTokens: billed.cacheCreationTokens,
+          cacheReadTokens: billed.cacheReadTokens,
+          webSearchCount: billed.webSearchCount,
+          finishReason: billed.finishReason, // D0 — 'length' 면 잘림이 실패 원인
+        },
+      );
+    }
+
+    return { ...billed, json: toolUseBlock.input as T };
   }
 
   /**
@@ -246,13 +267,37 @@ export class AnthropicProvider implements LlmProvider {
           cacheCreationTokens: billed.cacheCreationTokens,
           cacheReadTokens: billed.cacheReadTokens,
           webSearchCount: billed.webSearchCount,
+          finishReason: billed.finishReason, // D0 — 'length' 면 잘림이 실패 원인
         },
       );
     }
+    // D0 — streaming 도 동일 검증. partial parse 로 화면에 흘러간 뒤라도
+    //   최종 결과가 스키마를 어기면 저장·차감으로 넘기지 않는다.
+    const finalBilled = this.toResponse(finalMessage);
+    const violation = findSchemaViolation(
+      toolUseBlock.input,
+      req.jsonSchema.schema,
+    );
+    if (violation) {
+      throw new LlmJsonParseError(
+        this.name,
+        JSON.stringify(toolUseBlock.input),
+        `schema violation — ${violation}`,
+        {
+          promptTokens: finalBilled.promptTokens,
+          completionTokens: finalBilled.completionTokens,
+          cacheCreationTokens: finalBilled.cacheCreationTokens,
+          cacheReadTokens: finalBilled.cacheReadTokens,
+          webSearchCount: finalBilled.webSearchCount,
+          finishReason: finalBilled.finishReason, // D0 — 'length' 면 잘림이 실패 원인
+        },
+      );
+    }
+
     yield {
       type: 'done',
       json: toolUseBlock.input as T,
-      response: this.toResponse(finalMessage),
+      response: finalBilled,
     };
   }
 

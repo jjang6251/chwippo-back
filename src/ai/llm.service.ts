@@ -22,6 +22,7 @@ import {
   LlmJsonParseError,
   LlmProvider,
   LlmProviderJsonRequest,
+  LlmProviderResponse,
 } from './providers/llm-provider.interface';
 import { OpenAIProvider } from './providers/openai.provider';
 import { AnthropicProvider } from './providers/anthropic.provider';
@@ -65,6 +66,19 @@ export interface LlmCallInput {
   preBlockedReason?: string;
   /** PR 0 — structured JSON output 필요 시 schema 전달. callJson 경로 활성화 */
   jsonSchema?: LlmProviderJsonRequest['jsonSchema'];
+  /**
+   * D0 (2026-08-01 자소서 점검 크래시) — **caller 도메인 검증**.
+   *
+   * provider 의 `json-schema-guard` 가 *형식*(required 존재·type 일치)을 본다면, 이 콜백은
+   * caller 가 *내용*을 본다 (예: 점검 결과인데 `issues` 도 `summary` 도 비어 있음).
+   *
+   * 위반 사유 문자열을 반환하면 `LlmJsonParseError` 로 승격되어 **기존 재시도(attempts<2)**
+   * 경로를 그대로 탄다. 2회 모두 실패하면 `status='error'` 가 되고, **코인 차감은
+   * `status='ok'` 경로에서만 일어나므로 자동으로 차감되지 않는다** — 환불 경로가 필요 없다.
+   *
+   * 유효하면 `null` 을 반환한다. 순수 함수여야 하며 부수효과를 넣지 말 것 (재시도 시 재실행됨).
+   */
+  validateResult?: (json: unknown) => string | null;
 }
 
 export interface LlmCallOk {
@@ -87,6 +101,13 @@ export interface LlmCallOk {
   webSearchCount?: number;
   /** PR_B1 — 차감된 코인 (0 = 차감 X — charges_coins=false 또는 COIN_SYSTEM_ENABLED=false) */
   coinCost?: number;
+  /**
+   * D0 — **`'length'` 면 출력 토큰 한도에 걸려 응답이 잘렸다**는 뜻.
+   *
+   * 필수 필드는 다 있어 검증을 통과했지만 배열이 짧게 끝났을 수 있다 (예: 지적사항 6개 → 3개).
+   * caller 가 사용자에게 "일부만 생성됐다"고 알릴 근거. 코인은 정상 차감된다 (부분 결과도 가치가 있음).
+   */
+  finishReason?: LlmProviderResponse['finishReason'];
 }
 
 /**
@@ -396,6 +417,8 @@ export class LlmService {
           cacheReadTokens?: number;
           webSearchCount?: number;
           json?: unknown;
+          /** D0 — 'length' 면 출력 잘림. audit 에 기록해 사후 관측 */
+          finishReason: LlmProviderResponse['finishReason'];
         };
         if (input.jsonSchema) {
           result = await provider.callJson({
@@ -416,6 +439,28 @@ export class LlmService {
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
           });
+        }
+
+        // ── 6.5. D0 — caller 도메인 검증 (provider 형식 검증의 다음 단계) ──
+        //   provider 는 required·type 을, 여기서는 caller 가 "내용이 쓸모 있는가"를 본다.
+        //   throw → 기존 재시도(attempts<2) → 2회 실패 시 status='error' → **charge 미실행**.
+        //   PII 스크럽 *전* 원본으로 검증한다 (스크럽이 내용 유무 판단을 바꾸지 않도록).
+        if (input.validateResult && result.json !== undefined) {
+          const invalidReason = input.validateResult(result.json);
+          if (invalidReason) {
+            throw new LlmJsonParseError(
+              cfg.provider,
+              JSON.stringify(result.json).slice(0, 500),
+              `result rejected by caller — ${invalidReason}`,
+              {
+                promptTokens: result.promptTokens,
+                completionTokens: result.completionTokens,
+                cacheCreationTokens: result.cacheCreationTokens,
+                cacheReadTokens: result.cacheReadTokens,
+                webSearchCount: result.webSearchCount,
+              },
+            );
+          }
         }
 
         // ── 7. 응답 PII 역방향 스크럼 (hallucination 차단) ──
@@ -475,6 +520,8 @@ export class LlmService {
             latencyMs: 0,
             outputRedacted: false,
             attempts: 1,
+            // D0 — parse 실패의 원인 구분. 'length' 면 잘림, 그 외면 모델 오작동.
+            finishReason: failedUsage?.finishReason,
           });
         }
 
@@ -510,6 +557,9 @@ export class LlmService {
           latencyMs,
           outputRedacted,
           attempts,
+          // D0 — 성공했어도 'length' 면 **부분 잘림**이다. 필수 필드는 다 있어 통과했지만
+          //   issues 가 6개 대신 3개로 끝났을 수 있다. 사용자 안내·빈도 관측의 근거.
+          finishReason: result.finishReason,
         });
 
         return {
@@ -522,6 +572,7 @@ export class LlmService {
           cacheReadTokens: result.cacheReadTokens,
           webSearchCount: result.webSearchCount,
           coinCost: chargeResult.coinCost,
+          finishReason: result.finishReason, // D0 — caller 가 잘림 안내에 사용
           costUsd,
           latencyMs,
           callLogId: log.id,
@@ -594,6 +645,8 @@ export class LlmService {
                 promptTokens: number;
                 completionTokens: number;
                 json?: unknown;
+                /** D0 — 폴백 응답의 잘림도 동일하게 관측 */
+                finishReason: LlmProviderResponse['finishReason'];
               };
               if (input.jsonSchema) {
                 fbResult = await fbProvider.callJson({
@@ -655,6 +708,7 @@ export class LlmService {
                 latencyMs: fbLatency,
                 outputRedacted: fbOutputRedacted,
                 attempts: attempts + 1,
+                finishReason: fbResult.finishReason, // D0 — 폴백 응답의 잘림도 관측
                 coinCost: fbChargeResult.coinCost.toString(),
                 costBreakdown: fbChargeResult.breakdown,
               });
@@ -714,6 +768,8 @@ export class LlmService {
           latencyMs: Date.now() - startedAt,
           outputRedacted: false,
           attempts,
+          // D0 — 재시도까지 실패한 최종 행. 'length' 면 **한도 부족이 근본 원인**이라는 신호다.
+          finishReason: parseUsage?.finishReason,
         });
         // 1차 오류(err) 기준 분류 — fallback 까지 실패해도 err 는 1차 오류 그대로다.
         const errorKind = this.classifyErrorKind(err);
@@ -939,6 +995,7 @@ export class LlmService {
             latencyMs,
             outputRedacted,
             attempts: 1,
+            finishReason: event.response.finishReason, // D0 — 스트림 부분 잘림 관측
           });
           yield {
             type: 'done',
@@ -981,6 +1038,7 @@ export class LlmService {
                   cacheCreationTokens: streamParseUsage.cacheCreationTokens,
                   cacheReadTokens: streamParseUsage.cacheReadTokens,
                   webSearchCount: streamParseUsage.webSearchCount,
+                  // D0 참고 — finishReason 은 cost 계산에 안 쓰이고 아래 saveAudit 에서 별도 기록
                 },
               ),
             )
@@ -988,6 +1046,7 @@ export class LlmService {
         latencyMs: Date.now() - startedAt,
         outputRedacted: false,
         attempts: 1,
+        finishReason: streamParseUsage?.finishReason, // D0 — 스트림 잘림 관측
       });
       // 스트림 경로도 error audit 직후 hook (coverletter_chat 이 주력 스트림 UX).
       const errorKind = this.classifyErrorKind(err);
@@ -1316,6 +1375,8 @@ export class LlmService {
     coinCost?: string;
     /** PR_B1 — cost USD 분해 5 키 (input/output/cache_creation/cache_read/web_search) */
     costBreakdown?: Record<string, number>;
+    /** D0 — provider 종료 사유. 'length' = 출력 잘림. provider 미호출 경로는 undefined */
+    finishReason?: LlmProviderResponse['finishReason'];
   }): Promise<LlmCallLog> {
     return this.logRepo.save(
       this.logRepo.create({
@@ -1340,6 +1401,7 @@ export class LlmService {
         promptExcerpt: args.promptExcerpt,
         outputRedacted: args.outputRedacted,
         attempts: args.attempts,
+        finishReason: args.finishReason ?? null,
       }),
     );
   }

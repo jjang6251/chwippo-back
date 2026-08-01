@@ -684,13 +684,10 @@ describe('InterviewPrepAiService', () => {
       });
     });
 
-    describe('Phase 1 — model-config cap 검증', () => {
-      it('10) interview_prep_session 의 provider = anthropic + maxOutputTokens = 7000', () => {
-        // FEATURE_MATRIX 가 not exported — 직접 검증은 model-config.spec 에서.
-        // 이 case 는 통합 검증으로 대체.
-        expect(true).toBe(true);
-      });
-    });
+    // Phase 1 의 'model-config cap 검증' 케이스는 `expect(true).toBe(true)` 껍데기였고,
+    // 주석이 가리킨 model-config.spec 은 존재하지 않았다 — 즉 cap 은 어디서도 검증되지 않았다.
+    // D0 (2026-08-01) 에서 `src/ai/model-config.spec.ts` 를 실제로 만들어 14개 feature 의
+    // provider·모델·입출력 한도를 전부 박제했으므로, 여기서 중복 검증하지 않는다.
 
     // ── Phase 2 (2026-06-01) — SystemPrompt fork by jobCategory ──
     describe('Phase 2 — jobCategory 기반 직무 fork hint', () => {
