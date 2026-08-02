@@ -22,8 +22,11 @@ import { TierConfigAdminController } from './tier-config-admin.controller';
 import { TierConfigAdminService } from './tier-config-admin.service';
 import { TierConfig } from '../ai/entities/tier-config.entity';
 import { FeatureCoinMetaAdminController } from './feature-coin-meta-admin.controller';
+import { FeatureModelAdminController } from './feature-model-admin.controller';
+import { FeatureModelAdminService } from './feature-model-admin.service';
 import { FeatureCoinMetaAdminService } from './feature-coin-meta-admin.service';
 import { FeatureCoinMeta } from '../ai/entities/feature-coin-meta.entity';
+import { FeatureModelConfig } from '../ai/entities/feature-model-config.entity';
 import { AdminInquiriesController } from './admin-inquiries.controller';
 import { AdminInquiriesService } from './admin-inquiries.service';
 import { AdminAuditLogsController } from './admin-audit-logs.controller';
@@ -63,6 +66,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
       UserCoinBalance,
       TierConfig,
       FeatureCoinMeta,
+      FeatureModelConfig, // G-1 — 모델 전환 admin
       Inquiry,
       CompanyResearchCache,
       Application,
@@ -89,7 +93,8 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     SystemStatusController,
     AiUsageController, // PR_B2 Phase 2
     TierConfigAdminController, // PR_B2 Phase 3
-    FeatureCoinMetaAdminController, // PR_B2 Phase 3
+    FeatureCoinMetaAdminController,
+    FeatureModelAdminController, // PR_B2 Phase 3
     AdminInquiriesController, // PR_B2 Phase 4
     AdminAuditLogsController, // PR_B2 Phase 4
     AdminNotificationsController, // PR_B2 Phase 4
@@ -108,7 +113,8 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     UnsuspendCron, // PR_B2 Phase 1
     AiUsageService, // PR_B2 Phase 2
     TierConfigAdminService, // PR_B2 Phase 3
-    FeatureCoinMetaAdminService, // PR_B2 Phase 3
+    FeatureCoinMetaAdminService,
+    FeatureModelAdminService, // PR_B2 Phase 3
     AdminInquiriesService, // PR_B2 Phase 4
     AdminAuditLogsService, // PR_B2 Phase 4
     CompanyResearchStatusService, // feature-research-admin

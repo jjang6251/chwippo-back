@@ -9,7 +9,10 @@ import { REDIS_CLIENT } from '../common/redis.provider';
 import { User } from '../users/user.entity';
 import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
+import { getModelConfig } from './model-config';
+import { ModelConfigService } from './model-config.service';
 import { LlmCallLog } from './entities/llm-call-log.entity';
+import type { LlmFeature } from './entities/llm-call-log.entity';
 import {
   CURRENT_AI_CONSENT_VERSION,
   LlmService,
@@ -140,6 +143,14 @@ describe('LlmService — Redis in-flight lock', () => {
       { provide: CoinService, useValue: coinService },
       { provide: CostGuardService, useValue: costGuard },
       { provide: ProviderOutageAlertService, useValue: outageAlert },
+      // G-1 — 모델 해석 서비스 분리. DB 행 없는 상태(= env 폴백) 재현
+      {
+        provide: ModelConfigService,
+        useValue: {
+          resolve: (f: LlmFeature) =>
+            Promise.resolve(getModelConfig(f, config)),
+        },
+      },
     ];
     if (withRedis) providers.push({ provide: REDIS_CLIENT, useValue: redis });
 

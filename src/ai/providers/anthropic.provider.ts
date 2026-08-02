@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 import { parse as parsePartialJson, Allow } from 'partial-json';
 import type { LlmProviderName } from '../entities/llm-call-log.entity';
+import { temperatureArg } from '../model-registry';
 import { findSchemaViolation } from './json-schema-guard';
 import {
   LlmJsonParseError,
@@ -102,7 +103,7 @@ export class AnthropicProvider implements LlmProvider {
       system: this.buildSystemBlocks(req),
       messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
-      temperature: req.temperature,
+      ...temperatureArg(req.model, req.temperature),
     });
     return this.toResponse(message);
   }
@@ -135,7 +136,7 @@ export class AnthropicProvider implements LlmProvider {
       system: this.buildSystemBlocks(req),
       messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
-      temperature: req.temperature,
+      ...temperatureArg(req.model, req.temperature),
       tools,
       tool_choice: { type: 'tool', name: toolName },
     });
@@ -228,7 +229,7 @@ export class AnthropicProvider implements LlmProvider {
       system: this.buildSystemBlocks(req),
       messages: [{ role: 'user', content: this.buildUserContent(req) }],
       max_tokens: req.maxTokens,
-      temperature: req.temperature,
+      ...temperatureArg(req.model, req.temperature),
       tools,
       tool_choice: { type: 'tool', name: toolName },
     });

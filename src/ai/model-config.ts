@@ -29,6 +29,14 @@ export interface ModelConfig {
    * 동일 prompt 그대로 호출. 429 · 400 schema · blocked_* 는 fallback 미적용.
    * fallback 사용 시 model 은 fallback provider 의 default (gpt-4o-mini / claude-haiku-4-5).
    */
+  /**
+   * G-1 — 이 feature 가 **스트리밍을 필수로 요구**하는가.
+   *
+   * `LlmService.callStream` 을 쓰는 feature 는 스트리밍 미지원 모델로 바꾸면
+   * **기능이 통째로 죽는다**(명시적 error event). admin 저장 시 이 플래그로 차단한다.
+   * "경고만 하고 허용" 은 안 된다 — 관리자가 무시하면 사용자가 즉시 깨진 화면을 본다.
+   */
+  requiresStreaming?: boolean;
   fallbackProvider?: LlmProviderName;
   fallbackModelEnvKey?: string;
   fallbackDefaultModel?: string;
@@ -165,6 +173,8 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
   // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn + structured output)
   // 메시지 이력 6개 truncate, 컨텍스트 = 회사조사 + N문항 + source_refs + 메시지 이력
   coverletter_chat: {
+    // SSE 스트리밍으로 답변을 흘려보낸다 (LlmService.callStream)
+    requiresStreaming: true,
     provider: 'anthropic',
     modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
     defaultModel: 'claude-haiku-4-5',

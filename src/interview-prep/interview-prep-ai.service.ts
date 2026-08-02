@@ -111,7 +111,8 @@ export const INTERVIEW_CATEGORIES = [
   'reverse_question', // 역질문
 ] as const;
 
-const SESSION_JSON_SCHEMA = {
+/** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const SESSION_JSON_SCHEMA = {
   name: 'interview_prep_session',
   schema: {
     type: 'object',
@@ -192,7 +193,8 @@ const STAGE2_HINT = `
 - Base 카테고리 (self_intro · motivation · personality · failure · collaboration · executive · culture_fit · company_industry · reverse_question) 는 Stage 1 에서 이미 생성됨. 절대 다시 만들지 마라.
 - 직무 fork 카테고리 (jobCategory 기반, 카테고리 가이드 의 '직무 fork' 섹션 따름) + coverletter_based (자소서·활동 일지에서 깊이 있는 추궁) 합쳐 9-11개 생성.`;
 
-const FOLLOWUP_JSON_SCHEMA = {
+/** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const FOLLOWUP_JSON_SCHEMA = {
   name: 'interview_prep_followup',
   schema: {
     type: 'object',

@@ -82,7 +82,8 @@ const PARSE_SYSTEM_PROMPT = `너는 채용 공고 텍스트에서 지원자가 �
   해당 직무에 해당하는 요건만 추출한다. 무관한 직무의 요건은 버린다.`;
 
 /** callJson strict schema — parsedAt 제외 (서버 세팅). 모든 필드 required. */
-const JOB_POSTING_SCHEMA = {
+/** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const JOB_POSTING_SCHEMA = {
   name: 'jobposting_parse',
   schema: {
     type: 'object',
