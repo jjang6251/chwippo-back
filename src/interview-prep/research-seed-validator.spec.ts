@@ -1,4 +1,8 @@
-import { findExecutiveNames, verify } from '../../scripts/verify-research-seed';
+import {
+  checkSafety,
+  findExecutiveNames,
+  verifySeedDoc as verify,
+} from './research-seed-validator';
 
 /**
  * 🔴 **검증기 자체를 검증한다.**
@@ -38,6 +42,74 @@ describe('research seed 검증기', () => {
         sources,
       },
     ],
+  });
+
+  /**
+   * 🔴 **로더와 CLI 의 강도 차이를 고정한다.**
+   *
+   * 로더는 안전 백스톱이지 품질 게이트가 아니다. 완비성까지 막으면 사소한 스키마 진화
+   * 하나에 **정상 데이터 전체가 안 들어가는** 더 나쁜 실패가 된다.
+   * 이 경계가 무너지면 부팅 적재가 조용히 전멸하므로 여기서 못 박는다.
+   */
+  describe('안전(로더) vs 완비성(CLI) 경계', () => {
+    it('필드 누락은 안전 위반이 아니다 — 로더는 통과시킨다', () => {
+      // 기존 seed 픽스처가 실제로 이런 모양이다 (businessSummary 만 있음)
+      const partial = {
+        companyName: '크래프톤',
+        research: { businessSummary: '글로벌 게임사' },
+        sources: [{ url: 'https://krafton.com' }],
+      };
+      expect(checkSafety(partial)).toEqual([]);
+    });
+
+    it('그 누락을 CLI 는 잡는다', () => {
+      const { violations } = verify({
+        version: 'v',
+        ttlDays: 180,
+        companies: [
+          {
+            companyName: '크래프톤',
+            research: { businessSummary: '글로벌 게임사' },
+            sources: [{ url: 'https://krafton.com' }],
+          },
+        ],
+      });
+      expect(violations.some((v) => v.detail.includes('누락'))).toBe(true);
+    });
+
+    /** 사용자에게 도달하면 되돌릴 수 없는 것 — 로더도 반드시 막아야 한다 */
+    it.each([
+      ['개인정보', { businessSummary: '서정진 회장은 …' }, '🔴 개인정보'],
+      [
+        '크래시 유발 타입',
+        { businessSummary: '정상', recentTrends: ['1)', '2)'] },
+        '타입',
+      ],
+    ])('%s 는 로더도 막는다', (_label, research, kind) => {
+      const v = checkSafety({ companyName: 'X', research, sources: [] });
+      expect(v.some((x) => x.kind === kind)).toBe(true);
+    });
+
+    /** talentProfile 이 문자열로 오면 프론트 `.map()` 이 죽는다 */
+    it('배열이어야 할 필드가 문자열이면 로더가 막는다', () => {
+      const v = checkSafety({
+        companyName: 'X',
+        research: { talentProfile: '도전정신' },
+        sources: [],
+      });
+      expect(
+        v.some((x) => x.detail.includes('talentProfile 가 배열이 아님')),
+      ).toBe(true);
+    });
+
+    it('금지 소스는 로더도 막는다', () => {
+      const v = checkSafety({
+        companyName: 'X',
+        research: { businessSummary: '정상' },
+        sources: [{ url: 'https://www.jobkorea.co.kr/x' }],
+      });
+      expect(v.some((x) => x.kind === '🔴 금지소스')).toBe(true);
+    });
   });
 
   describe('임원 실명 탐지', () => {
