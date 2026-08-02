@@ -217,3 +217,32 @@ describe('model-config FEATURE_MATRIX', () => {
     });
   });
 });
+
+/**
+ * G-1 (2026-08-02) — 이 파일이 박제하는 건 이제 **코드 기본값(3단 중 마지막)** 이다.
+ *
+ * 실제 호출에 쓰이는 모델은 `ModelConfigService` 가 **DB → env → 여기** 순으로 정한다.
+ * 그래서 이 표가 통과해도 운영 값과 다를 수 있다 — 그 사실을 명시해 둔다.
+ * (DB·env 계층 자체의 검증은 `model-config.service.spec` 이 담당)
+ */
+describe('G-1 — 이 표의 위치', () => {
+  it('FEATURE_MATRIX 는 3단 폴백의 마지막 단이다', () => {
+    // 문서화 목적 — getModelConfig 는 DB 를 보지 않는다 (ConfigService 만 받는다)
+    expect(getModelConfig.length).toBe(2); // (feature, config)
+  });
+
+  /**
+   * 🔴 `requiresStreaming` 은 admin 저장 검증(③)의 근거다.
+   * 이게 빠지면 chat 을 스트리밍 미지원 모델로 바꿔도 저장이 통과해 기능이 죽는다.
+   */
+  it('스트리밍이 필요한 feature 가 선언돼 있다', () => {
+    const config = { get: () => undefined } as unknown as ConfigService;
+    expect(getModelConfig('coverletter_chat', config).requiresStreaming).toBe(
+      true,
+    );
+    // 나머지는 비스트리밍 — 잘못 켜두면 선택지가 근거 없이 좁아진다
+    expect(
+      getModelConfig('coverletter_feedback', config).requiresStreaming,
+    ).toBeUndefined();
+  });
+});

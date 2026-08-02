@@ -16,7 +16,9 @@ import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
-import { getFallbackConfig, getModelConfig } from './model-config';
+import { getFallbackConfig } from './model-config';
+import { ModelConfigService } from './model-config.service';
+import { getModelSpec } from './model-registry';
 import { scrubJsonOutputPii, scrubOutputPii, scrubPii } from './pii-scrubber';
 import {
   LlmJsonParseError,
@@ -199,6 +201,8 @@ export class LlmService {
     private readonly costGuard: CostGuardService, // AI cost guard — per-user/per-feature daily USD cap
     // 제공사 장애 감시 — error audit 직후 hook (provider_outage 분류일 때만, best-effort)
     private readonly outageAlert: ProviderOutageAlertService,
+    // G-1 — feature 별 모델 해석 (DB → env → 코드 기본값)
+    private readonly modelConfig: ModelConfigService,
     // 웨이브 C 승격 — 레플리카 간 공유 in-flight lock. REDIS_URL 미설정 시 null → Map 폴백.
     @Optional()
     @Inject(REDIS_CLIENT)
@@ -236,7 +240,7 @@ export class LlmService {
       return this.callGuarded(input);
     }
     if (!(await this.tryAcquireInFlight(input.userId, input.feature))) {
-      const cfg = getModelConfig(input.feature, this.config);
+      const cfg = await this.modelConfig.resolve(input.feature);
       return this.saveInFlightBlocked(input, cfg.model, cfg.provider);
     }
     try {
@@ -248,7 +252,7 @@ export class LlmService {
 
   private async callGuarded(input: LlmCallInput): Promise<LlmCallResult> {
     const startedAt = Date.now();
-    const cfg = getModelConfig(input.feature, this.config);
+    const cfg = await this.modelConfig.resolve(input.feature);
     if (cfg.provider === 'mock') {
       throw new Error(
         `getModelConfig 가 cfg.provider='mock' 반환 — FEATURE_MATRIX 점검 필요 (feature=${input.feature})`,
@@ -536,6 +540,7 @@ export class LlmService {
             cacheReadTokens: result.cacheReadTokens,
             webSearchCount: result.webSearchCount,
           },
+          cfg.model,
         );
 
         const log = await this.saveAudit({
@@ -692,6 +697,9 @@ export class LlmService {
                   outputTokens: fbResult.completionTokens,
                   // fallback (openai) 는 cache_creation·cache_read·web_search 없음
                 },
+                // 🔴 1차가 아니라 **fallback 모델**의 단가로 과금해야 한다.
+                //   provider 가 바뀌면 단가도 바뀌는데 지금까지 1차 기준으로 계산됐다.
+                fallbackCfg.model,
               );
 
               const fbLog = await this.saveAudit({
@@ -822,7 +830,7 @@ export class LlmService {
       useLock &&
       !(await this.tryAcquireInFlight(input.userId, input.feature))
     ) {
-      const cfg = getModelConfig(input.feature, this.config);
+      const cfg = await this.modelConfig.resolve(input.feature);
       await this.saveInFlightBlocked(input, cfg.model, cfg.provider);
       yield {
         type: 'error',
@@ -870,7 +878,7 @@ export class LlmService {
       input.feature,
     );
     if (streamCostGuard.blocked) {
-      const cfgForAudit = getModelConfig(input.feature, this.config);
+      const cfgForAudit = await this.modelConfig.resolve(input.feature);
       await this.saveBlocked(
         input,
         cfgForAudit.model,
@@ -886,12 +894,26 @@ export class LlmService {
       return;
     }
 
-    // 2. provider 결정 — anthropic 만 streaming 지원
-    const cfg = getModelConfig(input.feature, this.config);
-    if (cfg.provider !== 'anthropic') {
+    // 2. 모델이 스트리밍을 지원하는가 — **provider 가 아니라 모델 선언 기준**
+    //
+    // G-1 이전에는 `cfg.provider !== 'anthropic'` 로 판정했다. provider 단위로 보면
+    // "같은 회사인데 이 모델만 스트리밍이 안 되는" 경우나 "OpenAI 스트리밍을 나중에
+    // 구현한 경우" 를 표현할 수 없다. 레지스트리의 `supportsStreaming` 은
+    // **우리 어댑터 기준 end-to-end 가능 여부**라 그대로 쓰면 된다.
+    //
+    // 🔴 **조용히 비스트리밍으로 폴백하지 않는다.** 폴백하면 관리자가 모델을 잘못
+    // 골라도 아무도 모른 채 사용자 경험만 나빠진다. 여기서 명시적으로 실패시키고,
+    // 애초에 못 고르게 막는 건 admin 저장 시 검증(B-12)이 담당한다.
+    const cfg = await this.modelConfig.resolve(input.feature);
+    const streamSpec = getModelSpec(cfg.model);
+    if (!streamSpec?.supportsStreaming) {
+      this.logger.error(
+        `스트리밍 미지원 모델로 callStream 진입 (feature=${input.feature}, ` +
+          `model=${cfg.model}) — admin 모델 설정을 확인하세요.`,
+      );
       yield {
         type: 'error',
-        message: `streaming 은 anthropic 전용 (현재 ${cfg.provider})`,
+        message: `현재 설정된 모델(${cfg.model})은 실시간 응답을 지원하지 않아요.`,
       };
       return;
     }
@@ -974,6 +996,7 @@ export class LlmService {
               cacheReadTokens: event.response.cacheReadTokens,
               webSearchCount: event.response.webSearchCount,
             },
+            cfg.model,
           );
 
           const log = await this.saveAudit({
@@ -1320,7 +1343,7 @@ export class LlmService {
     resourceType?: string;
     resourceId?: string;
   }): Promise<void> {
-    const cfg = getModelConfig(args.feature, this.config);
+    const cfg = await this.modelConfig.resolve(args.feature);
     try {
       await this.saveAudit({
         input: {

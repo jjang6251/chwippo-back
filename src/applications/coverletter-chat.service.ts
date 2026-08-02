@@ -85,7 +85,8 @@ const SYSTEM_PROMPT = `당신은 자소서 작성을 도와주는 AI 어시스�
   - **문항이 3개 이상이면 앞 2개만 이번에 작성**하고 reply 끝에 "나머지 N개 문항은 '나머지 답변도 작성해줘' 로 이어서 요청해주세요" 를 반드시 안내하라. 안내가 없으면 사용자는 나머지가 왜 안 나왔는지 알 수 없다. (출력 상한으로 답변이 잘리는 것보다 의도된 분할이 낫고, 답변당 품질도 유지된다 — 스키마에서 2개로 강제됨)
   - "나머지 답변도 작성해줘" 류 후속 요청 → 아직 답변이 비어 있는 문항들만 이어서 작성.
 - "Q3 다시 써줘" → suggestedUpdates 에 Q3 1개만.
-- "검수" 또는 "어떻게 생각해" 같은 질문 → reply 만, suggestedUpdates 빈 배열 또는 생략.
+- "검수" 또는 "어떻게 생각해" 같은 질문 → reply 만 쓰고 **suggestedUpdates 는 빈 배열**.
+- **suggestedUpdates 는 항상 포함한다.** 제안할 게 없으면 생략하지 말고 빈 배열을 넣어라 (스키마 필수 필드).
 - clId 는 컨텍스트의 자소서 문항 ID (UUID) 만 사용. 번호·문자열 X.
 - newAnswer 는 charLimit 이내를 목표로. 좋은 내용을 지키려 다소 넘는 건 허용 — 사용자는 마지막에 AI 심층 점검으로 다듬는다. 단어 잘리지 않게.
 - **"추가해줘" 류 요청이라도 charLimit 초과 금지** — 현재 답변이 이미 제한에 근접·초과한 문항에 내용을 더하라는 요청이 오면, 덧붙이지 말고 기존 내용을 압축해 새 내용과 함께 **제한 안에서 재구성**하라. 제한을 지킬 수 없으면 reply 에 "제한(N자) 때문에 A 를 빼고 B 를 넣었어요" 처럼 무엇을 뺐는지 알려라.
@@ -127,7 +128,8 @@ const SYSTEM_PROMPT = `당신은 자소서 작성을 도와주는 AI 어시스�
 - "1번", "Q2", "두 번째 문항" 으로 지칭 → 컨텍스트의 ## Q1·Q2 순서로 매핑.
 - suggestedUpdates 응답에는 항상 정확한 clId (UUID) 사용.`;
 
-const CHAT_JSON_SCHEMA = {
+/** G-1 — cross-provider 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const CHAT_JSON_SCHEMA = {
   name: 'coverletter_chat_response',
   schema: {
     type: 'object',
@@ -150,7 +152,19 @@ const CHAT_JSON_SCHEMA = {
         },
       },
     },
-    required: ['reply'],
+    /**
+     * G-1 — `suggestedUpdates` 를 required 로 승격.
+     *
+     * 🔴 **OpenAI strict 는 `properties` 의 모든 키가 `required` 에 있어야 한다** (실측:
+     * `400 'required' is required to be supplied and to be an array including every key
+     * in properties`). optional 필드가 하나라도 있으면 이 feature 는 OpenAI 모델로
+     * 전환 자체가 불가능하다 — "고르면 죽는 조합" 이 된다.
+     *
+     * Anthropic tool_use 는 required 여부를 강제하지 않으므로 이 변경으로 잃는 게 없다.
+     * 대신 모델이 항상 값을 내야 하므로 프롬프트에 "제안이 없으면 빈 배열" 을 명시했다.
+     * (`maxItems` 는 OpenAI strict 에서도 통과하는 것을 실측 확인 — 유지)
+     */
+    required: ['reply', 'suggestedUpdates'],
     additionalProperties: false,
   },
 };

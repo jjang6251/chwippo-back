@@ -7,7 +7,8 @@ import { FeatureCoinMeta } from './entities/feature-coin-meta.entity';
 import { UserCoinBalance } from './entities/user-coin-balance.entity';
 import { UserPlanHistory } from './entities/user-plan-history.entity';
 import type { LlmFeature } from './entities/llm-call-log.entity';
-import { startOfNextMonthKst } from '../common/datetime';
+import { startOfNextMonthKst, todayKst } from '../common/datetime';
+import { effectivePricing, getModelSpec } from './model-registry';
 
 /**
  * PR_B1 — 통합 코인 시스템.
@@ -31,8 +32,17 @@ import { startOfNextMonthKst } from '../common/datetime';
 export class CoinService {
   private readonly logger = new Logger(CoinService.name);
 
-  // Haiku 4.5 단가 (USD per 1M tokens / per search)
-  // input × 1.25 = cache_creation, input × 0.10 = cache_read (90% 할인)
+  /**
+   * **코인 환산 기준(anchor).** 모델 단가가 아니라 "1 코인이 얼마인가" 의 정의다.
+   *
+   * `1 코인 = 기준 단가로 input 1K 토큰` → `input $1/M` 이므로 **1 코인 = $0.001**.
+   * 값 자체는 Haiku 4.5 단가와 같지만 **의미가 다르다** — 모델이 바뀌어도 이 값은
+   * 안 바뀐다. 바뀌면 코인의 화폐 가치가 통째로 흔들려 기존 잔액의 의미가 달라진다.
+   *
+   * G-1 이전에는 이 상수가 "모델 단가" 역할까지 겸했다. 그래서 모델을 올려도
+   * 차감이 그대로여서 **마진만 무너지는** 구조였다. 이제 모델 단가는
+   * `MODEL_REGISTRY` 가 갖고, 이 상수는 **환산 기준**으로만 쓴다.
+   */
   static readonly COST_PER_M = {
     input: 1.0,
     output: 5.0,
@@ -40,6 +50,9 @@ export class CoinService {
     cacheRead: 0.1,
     webSearch: 10_000, // $10 per 1000 = $0.01 per search → per 1M searches scale 일관성
   } as const;
+
+  /** 1 코인의 USD 가치 — anchor input 단가에서 파생 ($1/M ÷ 1,000 = $0.001) */
+  private static readonly USD_PER_COIN = CoinService.COST_PER_M.input / 1_000;
 
   constructor(
     @InjectRepository(TierConfig)
@@ -58,24 +71,50 @@ export class CoinService {
   // ──────────────────────────────────────────────────────────────
 
   /**
+   * G-1 — 실제 사용된 **모델의 단가**를 레지스트리에서 가져온다.
+   * 미등록이면 anchor 로 폴백하되 `llm-pricing` 이 error 로그를 남긴다.
+   */
+  private pricingFor(model: string) {
+    const spec = getModelSpec(model);
+    if (spec) return effectivePricing(spec, todayKst());
+    const c = CoinService.COST_PER_M;
+    return {
+      input: c.input,
+      output: c.output,
+      cacheWriteRatio: c.cacheCreation / c.input,
+      cacheReadRatio: c.cacheRead / c.input,
+      webSearchUsdPerCall: 0.01,
+    };
+  }
+
+  /**
    * 정확한 cost 계산 (USD).
    * 모든 token 종류 + web_search 합산. 마진 보호의 핵심.
+   *
+   * G-1 — `model` 을 **필수 인자**로 받는다. 옵셔널로 두고 Haiku 를 기본값으로 하면
+   * 호출부가 빠뜨렸을 때 조용히 틀린 단가로 계산된다 — 이번 작업이 없애려는 바로 그 패턴.
    */
-  calculateCost(input: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheCreationTokens?: number;
-    cacheReadTokens?: number;
-    webSearchCount?: number;
-  }): { totalUsd: number; breakdown: Record<string, number> } {
-    const c = CoinService.COST_PER_M;
-    const inputCost = (input.inputTokens / 1_000_000) * c.input;
-    const outputCost = (input.outputTokens / 1_000_000) * c.output;
+  calculateCost(
+    input: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens?: number;
+      cacheReadTokens?: number;
+      webSearchCount?: number;
+    },
+    model: string,
+  ): { totalUsd: number; breakdown: Record<string, number> } {
+    const p = this.pricingFor(model);
+    const inputCost = (input.inputTokens / 1_000_000) * p.input;
+    const outputCost = (input.outputTokens / 1_000_000) * p.output;
     const cacheCreationCost =
-      ((input.cacheCreationTokens ?? 0) / 1_000_000) * c.cacheCreation;
+      ((input.cacheCreationTokens ?? 0) / 1_000_000) *
+      p.input *
+      p.cacheWriteRatio;
     const cacheReadCost =
-      ((input.cacheReadTokens ?? 0) / 1_000_000) * c.cacheRead;
-    const webSearchCost = (input.webSearchCount ?? 0) * 0.01;
+      ((input.cacheReadTokens ?? 0) / 1_000_000) * p.input * p.cacheReadRatio;
+    const webSearchCost =
+      (input.webSearchCount ?? 0) * (p.webSearchUsdPerCall ?? 0);
 
     return {
       totalUsd:
@@ -107,22 +146,42 @@ export class CoinService {
    * - cache_read 1K = 0.1 코인 (90% 할인)
    * - web_search 1회 ≈ $0.01 = output 2K cost = 10 코인
    */
-  calculateCoin(input: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheCreationTokens?: number;
-    cacheReadTokens?: number;
-    webSearchCount?: number;
-  }): number {
+  calculateCoin(
+    input: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationTokens?: number;
+      cacheReadTokens?: number;
+      webSearchCount?: number;
+    },
+    model: string,
+  ): number {
+    const p = this.pricingFor(model);
+
+    // 🔴 G-1 핵심 — 모델이 비쌀수록 같은 토큰이 더 많은 코인을 먹는다.
+    //   anchor($1/M) 대비 배수. Haiku 면 1 이라 기존과 완전히 동일하다.
+    const weight = p.input / CoinService.COST_PER_M.input;
+    // output 이 input 의 몇 배인가 — Anthropic 5배 · gpt-4o 계열 4배. 모델마다 다르다
+    const outRatio = p.output / p.input;
+
     const equivalentTokens =
       input.inputTokens +
-      input.outputTokens * 5 +
-      (input.cacheCreationTokens ?? 0) * 1.25 +
-      (input.cacheReadTokens ?? 0) * 0.1 +
-      (input.webSearchCount ?? 0) * 10_000; // 1 web_search = 10 코인 = 10,000 token-equivalent
+      input.outputTokens * outRatio +
+      (input.cacheCreationTokens ?? 0) * p.cacheWriteRatio +
+      (input.cacheReadTokens ?? 0) * p.cacheReadRatio;
 
     // 0.1 단위 ceil — 1523 tokens → 1.6 코인
-    return Math.ceil(equivalentTokens / 100) / 10;
+    const tokenCoins = Math.ceil((equivalentTokens * weight) / 100) / 10;
+
+    // web_search 는 **모델과 무관하게 정액**($0.01/회)이라 weight 곱셈 밖에 둔다.
+    //   코인의 화폐 가치가 고정($0.001)이므로 정액 항목은 항상 같은 코인 수다.
+    //   (기존 공식은 10,000 token-equivalent 를 ceil 안에 넣었는데, 그 값이
+    //    100·10 으로 정확히 나누어떨어져 **밖으로 빼도 결과가 동일**하다)
+    const webSearchCoins =
+      ((input.webSearchCount ?? 0) * (p.webSearchUsdPerCall ?? 0)) /
+      CoinService.USD_PER_COIN;
+
+    return tokenCoins + webSearchCoins;
   }
 
   /**
@@ -188,12 +247,14 @@ export class CoinService {
       cacheReadTokens?: number;
       webSearchCount?: number;
     },
+    /** G-1 — 실제 호출에 쓰인 모델. 단가·코인 배율의 근거라 필수다 */
+    model: string,
   ): Promise<{
     coinCost: number;
     costUsd: number;
     breakdown: Record<string, number>;
   }> {
-    const costInfo = this.calculateCost(tokens);
+    const costInfo = this.calculateCost(tokens, model);
 
     if (process.env.COIN_SYSTEM_ENABLED === 'false') {
       return {
@@ -216,7 +277,7 @@ export class CoinService {
     const coinCost =
       meta.fixedCoinCost !== null
         ? meta.fixedCoinCost
-        : this.calculateCoin(tokens);
+        : this.calculateCoin(tokens, model);
     if (coinCost === 0) {
       return {
         coinCost: 0,

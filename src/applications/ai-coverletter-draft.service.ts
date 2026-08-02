@@ -77,7 +77,8 @@ interface AiRecommendation {
   reason: string;
 }
 
-const AI_RECOMMEND_SCHEMA = {
+/** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const AI_RECOMMEND_SCHEMA = {
   name: 'coverletter_recommend',
   schema: {
     type: 'object',

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import type { LlmProviderName } from '../entities/llm-call-log.entity';
+import { temperatureArg } from '../model-registry';
 import { findSchemaViolation } from './json-schema-guard';
 import {
   LlmJsonParseError,
@@ -47,7 +48,7 @@ export class OpenAIProvider implements LlmProvider {
         },
       ],
       max_tokens: req.maxTokens,
-      temperature: req.temperature,
+      ...temperatureArg(req.model, req.temperature),
     });
     return this.toResponse(completion);
   }
@@ -70,7 +71,7 @@ export class OpenAIProvider implements LlmProvider {
         },
       ],
       max_tokens: req.maxTokens,
-      temperature: req.temperature,
+      ...temperatureArg(req.model, req.temperature),
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -123,10 +124,32 @@ export class OpenAIProvider implements LlmProvider {
     const choice = completion.choices?.[0];
     const text = choice?.message?.content?.trim() ?? '';
     const finish = choice?.finish_reason;
+
+    /**
+     * G-1 — OpenAI 자동 프롬프트 캐싱 집계.
+     *
+     * 🔴 **토큰 회계 규약이 provider 마다 반대다.**
+     *   - Anthropic: `input_tokens` 는 캐시분을 **제외**한 값 (캐시는 별도 필드)
+     *   - OpenAI:    `prompt_tokens` 는 캐시분을 **포함**한 총량
+     *
+     * 그대로 두 값을 다 보고하면 캐시된 토큰이 **정가로 한 번 + 할인가로 또 한 번**
+     * 계산된다. 우리 비용식은 Anthropic 규약(= 서로 겹치지 않음)을 전제하므로,
+     * OpenAI 쪽에서 캐시분을 빼서 규약을 맞춘다.
+     *
+     * 이 변경 전에는 캐시 토큰이 아예 안 보여서 **정가로만 계산**되고 있었다
+     * (실제보다 비싸게 기록 → 모델 비교에서 OpenAI 가 불리했다).
+     */
+    const usage = completion.usage;
+    const cachedTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    const totalPrompt = usage?.prompt_tokens ?? 0;
+
     return {
       text,
-      promptTokens: completion.usage?.prompt_tokens ?? 0,
-      completionTokens: completion.usage?.completion_tokens ?? 0,
+      // 캐시분을 뺀 "정가로 과금되는" 입력 토큰
+      promptTokens: Math.max(0, totalPrompt - cachedTokens),
+      completionTokens: usage?.completion_tokens ?? 0,
+      // OpenAI 는 캐시 쓰기 비용이 없다 (자동·프리미엄 없음) → creation 은 항상 0
+      cacheReadTokens: cachedTokens,
       finishReason: this.mapFinishReason(finish),
     };
   }

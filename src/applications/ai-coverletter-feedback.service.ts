@@ -65,7 +65,8 @@ export interface CoverletterFeedbackResult {
 
 const MIN_ANSWER_LENGTH = 100;
 
-const FEEDBACK_SCHEMA = {
+/** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const FEEDBACK_SCHEMA = {
   name: 'coverletter_feedback',
   schema: {
     type: 'object',

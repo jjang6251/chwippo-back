@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { LlmJsonParseError } from './llm-provider.interface';
+import * as registry from '../model-registry';
 import { OpenAIProvider } from './openai.provider';
 
 // OpenAI SDK 전체 mock — constructor 내부 new OpenAI() 가 mockCreate 를 가진 stub 반환
@@ -90,6 +91,8 @@ describe('OpenAIProvider', () => {
         text: '응답 텍스트',
         promptTokens: 120,
         completionTokens: 50,
+        // G-1 — 캐시 집계 신설. 캐시가 없으면 0
+        cacheReadTokens: 0,
         finishReason: 'stop',
       });
       expect(mockCreate).toHaveBeenCalledWith({
@@ -233,6 +236,126 @@ describe('OpenAIProvider', () => {
           jsonSchema: schema,
         }),
       ).rejects.toBeInstanceOf(LlmJsonParseError);
+    });
+  });
+});
+
+/**
+ * G-1 (2026-08-02) — OpenAI 자동 프롬프트 캐싱 집계 + capability 기반 파라미터 조립.
+ */
+describe('OpenAIProvider — G-1 결합 해체', () => {
+  let provider: OpenAIProvider;
+  let create: jest.Mock;
+
+  const makeCompletion = (usage: Record<string, unknown>) => ({
+    choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+    usage,
+  });
+
+  beforeEach(() => {
+    provider = new OpenAIProvider({
+      get: () => 'test-key',
+    } as never);
+    create = jest.fn();
+    (provider as unknown as { client: unknown }).client = {
+      chat: { completions: { create } },
+    };
+  });
+
+  const REQ = {
+    model: 'gpt-4o-mini',
+    systemPrompt: 's',
+    userPrompt: 'u',
+    maxTokens: 100,
+    temperature: 0.3,
+  };
+
+  describe('🔴 캐시 토큰 회계 — provider 간 규약 통일', () => {
+    /**
+     * OpenAI `prompt_tokens` 는 캐시분을 **포함**하고, Anthropic `input_tokens` 는 **제외**한다.
+     * 빼주지 않으면 캐시된 토큰이 정가 + 할인가로 **이중 계산**된다.
+     */
+    it('cached_tokens 를 promptTokens 에서 빼서 보고한다', async () => {
+      create.mockResolvedValue(
+        makeCompletion({
+          prompt_tokens: 10_000,
+          completion_tokens: 500,
+          prompt_tokens_details: { cached_tokens: 8_000 },
+        }),
+      );
+
+      const r = await provider.complete(REQ);
+
+      expect(r.promptTokens).toBe(2_000); // 10,000 − 8,000
+      expect(r.cacheReadTokens).toBe(8_000);
+      // 두 값을 더하면 원래 총량 — 겹치지 않는다
+      expect(r.promptTokens + r.cacheReadTokens!).toBe(10_000);
+    });
+
+    it('캐시 필드가 없으면 전액이 정가 입력 (기존 동작)', async () => {
+      create.mockResolvedValue(
+        makeCompletion({ prompt_tokens: 10_000, completion_tokens: 500 }),
+      );
+
+      const r = await provider.complete(REQ);
+      expect(r.promptTokens).toBe(10_000);
+      expect(r.cacheReadTokens).toBe(0);
+    });
+
+    it('전부 캐시여도 음수가 되지 않는다', async () => {
+      create.mockResolvedValue(
+        makeCompletion({
+          prompt_tokens: 5_000,
+          completion_tokens: 0,
+          prompt_tokens_details: { cached_tokens: 5_000 },
+        }),
+      );
+
+      const r = await provider.complete(REQ);
+      expect(r.promptTokens).toBe(0);
+      expect(r.cacheReadTokens).toBe(5_000);
+    });
+  });
+
+  describe('temperature — 모델 선언에 따라 조립', () => {
+    beforeEach(() =>
+      create.mockResolvedValue(
+        makeCompletion({ prompt_tokens: 1, completion_tokens: 1 }),
+      ),
+    );
+
+    it('지원 모델이면 전송한다', async () => {
+      await provider.complete(REQ);
+      expect(create.mock.calls[0][0]).toHaveProperty('temperature', 0.3);
+    });
+
+    /**
+     * 🔴 이전에는 무조건 실어 보냈다. temperature 를 거부하는 모델을 고르면 400 —
+     * 벤치 대상이 그러면 비교 자체가 불가능해진다.
+     */
+    /**
+     * 실제 경로로 검증하려면 `supportsTemperature: false` 인 등록 모델이 필요하다.
+     * 현재 4개는 전부 true 라, 테스트 동안만 레지스트리에 넣고 정리한다.
+     * (spy 는 안 통한다 — `temperatureArg` 가 같은 모듈 안에서 `getModelSpec` 을 직접 호출)
+     */
+    const NO_TEMP = 'test-only-no-temperature';
+    afterEach(() => {
+      delete registry.MODEL_REGISTRY[NO_TEMP];
+    });
+
+    it('미지원 모델이면 인자를 아예 넣지 않는다', async () => {
+      registry.MODEL_REGISTRY[NO_TEMP] = {
+        ...registry.MODEL_REGISTRY['gpt-4o-mini'],
+        supportsTemperature: false,
+      };
+
+      await provider.complete({ ...REQ, model: NO_TEMP });
+      expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
+    });
+
+    it('미등록 모델은 기존 동작 유지 (전송) — 갑자기 달라지지 않게', async () => {
+      await provider.complete({ ...REQ, model: 'gpt-9-ultra' });
+      expect(create.mock.calls[0][0]).toHaveProperty('temperature', 0.3);
     });
   });
 });

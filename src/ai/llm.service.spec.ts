@@ -4,9 +4,12 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
-import { LlmCallLog } from './entities/llm-call-log.entity';
+import { LlmCallLog, type LlmFeature } from './entities/llm-call-log.entity';
 import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
+import { getModelConfig } from './model-config';
+import { ModelConfigService } from './model-config.service';
+import { MODEL_REGISTRY } from './model-registry';
 import {
   CURRENT_AI_CONSENT_VERSION,
   LlmService,
@@ -198,6 +201,15 @@ describe('LlmService', () => {
         { provide: CoinService, useValue: coinService },
         { provide: CostGuardService, useValue: costGuard },
         { provide: ProviderOutageAlertService, useValue: outageAlert },
+        // G-1 — 모델 해석이 서비스로 분리됐다. spec 에서는 DB 행이 없는 상태를
+        //   재현한다 → env → 코드 기본값 폴백 (= 이 spec 들의 기존 전제 그대로).
+        {
+          provide: ModelConfigService,
+          useValue: {
+            resolve: (f: LlmFeature) =>
+              Promise.resolve(getModelConfig(f, config)),
+          },
+        },
       ],
     }).compile();
 
@@ -1566,6 +1578,69 @@ describe('LlmService', () => {
         }
         return events;
       };
+
+      /**
+       * G-1 — 스트리밍 가능 여부를 **provider 가 아니라 모델 선언**으로 판정한다.
+       *
+       * 이전 판정은 `cfg.provider !== 'anthropic'` 이었다. provider 단위로는
+       * "같은 회사인데 이 모델만 안 되는" 경우나 "OpenAI 스트리밍을 나중에 구현한"
+       * 경우를 표현할 수 없다.
+       *
+       * 🔴 **조용히 비스트리밍으로 폴백하지 않는다.** 폴백하면 관리자가 모델을 잘못
+       * 골라도 아무도 모른 채 사용자 경험만 나빠진다. 애초에 못 고르게 막는 건
+       * admin 저장 시 검증이 담당하고, 여기는 마지막 방어선이다.
+       */
+      describe('G-1 — 스트리밍 미지원 모델 거부', () => {
+        /** 이 spec 의 config mock 이 ANTHROPIC_MODEL_LIGHT 로 돌려주는 모델 */
+        const RESOLVED = 'claude-haiku-4-5-20251001';
+        let original: (typeof MODEL_REGISTRY)[string];
+
+        beforeEach(() => {
+          original = MODEL_REGISTRY[RESOLVED];
+        });
+        afterEach(() => {
+          MODEL_REGISTRY[RESOLVED] = original;
+        });
+
+        it('미지원 모델이면 error event 로 명시적 거부 + provider 미호출', async () => {
+          MODEL_REGISTRY[RESOLVED] = { ...original, supportsStreaming: false };
+          anthropic.callJsonStream = jest.fn();
+
+          const events = await collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: 'coverletter_chat',
+              systemPrompt: 's',
+              userPrompt: 'u',
+              jsonSchema: schema,
+            }),
+          );
+
+          expect(events).toHaveLength(1);
+          expect(events[0].type).toBe('error');
+          expect(events[0].message).toContain('실시간 응답을 지원하지 않');
+          // 조용한 폴백 금지 — 비스트리밍으로 대신 처리하지 않는다
+          expect(anthropic.callJsonStream).not.toHaveBeenCalled();
+        });
+
+        it('레지스트리 미등록 모델도 거부한다 (능력을 모르면 시도하지 않는다)', async () => {
+          delete MODEL_REGISTRY[RESOLVED];
+          anthropic.callJsonStream = jest.fn();
+
+          const events = await collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: 'coverletter_chat',
+              systemPrompt: 's',
+              userPrompt: 'u',
+              jsonSchema: schema,
+            }),
+          );
+
+          expect(events[0].type).toBe('error');
+          expect(anthropic.callJsonStream).not.toHaveBeenCalled();
+        });
+      });
 
       it('cost guard 차단 → error event + blocked_cost_quota audit + provider 미호출', async () => {
         costGuardMock.check.mockResolvedValueOnce({

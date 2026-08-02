@@ -9,6 +9,7 @@ import { LlmCallLog } from './entities/llm-call-log.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { TierConfig } from './entities/tier-config.entity';
+import { FeatureModelConfig } from './entities/feature-model-config.entity';
 import { FeatureCoinMeta } from './entities/feature-coin-meta.entity';
 import { UserCoinBalance } from './entities/user-coin-balance.entity';
 import { UserPlanHistory } from './entities/user-plan-history.entity';
@@ -16,6 +17,8 @@ import { CoinService } from './coin.service';
 import { UserCoinService } from './user-coin.service';
 import { CoinResetCron } from './coin-reset.cron';
 import { MyCoinController } from './my-coin.controller';
+import { ModelConfigService } from './model-config.service';
+import { ModelPricingExpiryCron } from './model-pricing-expiry.cron';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
 import { NoteSummaryService } from './note-summary.service';
@@ -55,6 +58,8 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
       // PR_B1 — 코인 시스템
       TierConfig,
       FeatureCoinMeta,
+      // G-1 — feature 별 모델 설정 (admin 전환)
+      FeatureModelConfig,
       UserCoinBalance,
       UserPlanHistory,
       // AI cost guard
@@ -77,6 +82,8 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
     OpenAIProvider,
     AnthropicProvider,
     ProviderOutageAlertService, // LlmService error hook — 제공사 장애 Discord 알림
+    ModelConfigService,
+    ModelPricingExpiryCron, // G-1 — 단가 만료 사전 알림
     LlmService,
     ModerationService,
     NoteSummaryService,
