@@ -8,6 +8,7 @@ import {
   ResearchSeedDoc,
 } from './company-research-seed.service';
 import { CompanyResearchCache } from './entities/company-research-cache.entity';
+import { DiscordNotifier } from '../common/discord-notifier';
 
 /**
  * pre-seed 부팅 자동 적재 spec — 시나리오 먼저 (memory feedback_test_principle):
@@ -40,6 +41,7 @@ function makeDoc(overrides: Partial<ResearchSeedDoc> = {}): ResearchSeedDoc {
 
 describe('CompanyResearchSeedService', () => {
   let repo: jest.Mocked<Repository<CompanyResearchCache>>;
+  let discord: jest.Mocked<DiscordNotifier>;
 
   async function build(bucket: string) {
     repo = mock<Repository<CompanyResearchCache>>();
@@ -49,6 +51,8 @@ describe('CompanyResearchSeedService', () => {
     );
     repo.count.mockResolvedValue(0);
     repo.findOne.mockResolvedValue(null);
+    discord = mock<DiscordNotifier>();
+    discord.notify.mockResolvedValue('sent');
     const module = await Test.createTestingModule({
       providers: [
         CompanyResearchSeedService,
@@ -60,6 +64,7 @@ describe('CompanyResearchSeedService', () => {
           },
         },
         { provide: getRepositoryToken(CompanyResearchCache), useValue: repo },
+        { provide: DiscordNotifier, useValue: discord },
       ],
     }).compile();
     return module.get(CompanyResearchSeedService);
@@ -205,5 +210,140 @@ describe('CompanyResearchSeedService', () => {
     // 본 행 → false, 별칭 행 → true 로 갱신됐는지.
     const saved = repo.save.mock.calls.map((c) => c[0] as CompanyResearchCache);
     expect(saved.map((s) => s.isAlias)).toEqual([false, true]);
+  });
+
+  /**
+   * 🔴 **안전 백스톱** (2026-08-03) — CLI 게이트(`npm run verify:seed`)는 사람이 기억해야
+   * 돌아간다. 안 돌리고 올려도 서버가 막는지가 여기 시나리오다.
+   *
+   * 실제로 뚫린 적이 있다: 2026-07-08 `recentTrends` 배열이 R2 → 로더 → DB → 프론트
+   * `.trim()` 까지 **사용자에게 도달**했다. 그때 로더의 검증은 `version`/`companies` 두 줄뿐이었다.
+   */
+  describe('안전검사 백스톱', () => {
+    const clean = {
+      companyName: '크래프톤',
+      research: { businessSummary: '글로벌 게임사' },
+      sources: [{ url: 'https://krafton.com' }],
+    };
+
+    it.each([
+      [
+        '개인정보(임원 실명)',
+        { businessSummary: '서정진 회장은 …' },
+        [{ url: 'https://celltrion.com' }],
+      ],
+      [
+        '금지 소스',
+        { businessSummary: '정상' },
+        [{ url: 'https://www.jobkorea.co.kr/x' }],
+      ],
+      [
+        '크래시 유발 타입',
+        { businessSummary: '정상', recentTrends: ['1)', '2)'] },
+        [{ url: 'https://x.com' }],
+      ],
+    ])(
+      '11) %s 회사는 제외하고 나머지는 적재한다',
+      async (_l, research, sources) => {
+        const service = await build('backup-bucket');
+        const r = await service.applySeed(
+          makeDoc({
+            companies: [{ companyName: '더러움', research, sources }, clean],
+          }),
+        );
+        expect(r.skippedUnsafe).toBe(1);
+        expect(r.inserted).toBe(1); // 깨끗한 1건은 들어간다
+        const saved = repo.save.mock.calls.map(
+          (c) => c[0] as CompanyResearchCache,
+        );
+        expect(saved.map((s) => s.companyName)).toEqual(['크래프톤']);
+      },
+    );
+
+    it('12) 제외가 생기면 critical 채널로 알린다', async () => {
+      const service = await build('backup-bucket');
+      await service.applySeed(
+        makeDoc({
+          companies: [
+            {
+              companyName: '셀트리온',
+              research: { businessSummary: '서정진 회장은 …' },
+            },
+            clean,
+          ],
+        }),
+      );
+      expect(discord.notify).toHaveBeenCalledTimes(1);
+      const [embed, channel] = discord.notify.mock.calls[0];
+      expect(channel).toBe('critical');
+      expect(JSON.stringify(embed)).toContain('셀트리온');
+    });
+
+    it('13) 위반이 없으면 알리지 않는다 (알람 피로 방지)', async () => {
+      const service = await build('backup-bucket');
+      const r = await service.applySeed(makeDoc({ companies: [clean] }));
+      expect(r.skippedUnsafe).toBe(0);
+      expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 조기 skip 기준을 **통과한 회사**로 계산하지 않으면, 제외된 회사 때문에
+     * `already` 가 전체 이름 수에 영원히 못 미쳐 **매 부팅마다 전량 재저장**된다.
+     */
+    it('14) 제외가 있어도 나머지가 적재 완료면 조기 skip 한다', async () => {
+      const service = await build('backup-bucket');
+      repo.count.mockResolvedValue(1); // 통과 회사 1개가 이미 적재됨
+      const r = await service.applySeed(
+        makeDoc({
+          companies: [
+            {
+              companyName: '더러움',
+              research: { businessSummary: '정의선 회장은' },
+            },
+            clean,
+          ],
+        }),
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+      expect(r.inserted).toBe(0);
+      expect(r.skippedUnsafe).toBe(1);
+    });
+
+    /** 전량 제외인데 조기 skip 하면 알림도 못 띄우고 조용히 끝난다 */
+    it('15) 전량 제외면 조기 skip 하지 않고 알린다', async () => {
+      const service = await build('backup-bucket');
+      repo.count.mockResolvedValue(0);
+      const r = await service.applySeed(
+        makeDoc({
+          companies: [
+            {
+              companyName: 'A',
+              research: { businessSummary: '정의선 회장은' },
+            },
+          ],
+        }),
+      );
+      expect(r.skippedUnsafe).toBe(1);
+      expect(r.inserted).toBe(0);
+      expect(discord.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it('16) 알림이 실패해도 적재 결과에 영향 없다 (best-effort)', async () => {
+      const service = await build('backup-bucket');
+      discord.notify.mockRejectedValue(new Error('webhook down'));
+      const r = await service.applySeed(
+        makeDoc({
+          companies: [
+            {
+              companyName: 'A',
+              research: { businessSummary: '정의선 회장은' },
+            },
+            clean,
+          ],
+        }),
+      );
+      expect(r.inserted).toBe(1);
+      expect(r.skippedUnsafe).toBe(1);
+    });
   });
 });
