@@ -226,13 +226,17 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     },
     maxOutputTokens: 128_000,
     contextWindow: 1_050_000,
-    supportsTemperature: true,
+    // 🔴 **false 다** (실측 2026-08-03). 파라미터를 받긴 하지만 **기본값 1 외에는 400** —
+    //   `Unsupported value: 'temperature' does not support 0.3 ... Only the default (1)`.
+    //   우리 8개 feature 가 전부 temperature 를 지정하므로, true 로 두면 **전 호출이 400** 이다.
+    //   false = "보내지 않는다" 이고 그게 이 모델에서 유일하게 유효한 동작이다.
+    supportsTemperature: false,
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     // 추론 모델 — `reasoning_effort` 를 받는다. max_completion_tokens 가 작으면
     // 추론 토큰만 쓰고 본문 없이 400 이 난다 (실측: max_completion_tokens=1 → 400).
     reasoning: { mode: 'effort' },
-    supportsStreaming: false, // openai.provider 에 callJsonStream 미구현
+    supportsStreaming: true, // openai.provider.callJsonStream 구현됨 (2026-08-03)
     koreanTokensPerChar: 0.546, // 실측 — Anthropic(1.02) 의 절반
   },
 
@@ -247,11 +251,11 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     },
     maxOutputTokens: 128_000,
     contextWindow: 1_050_000,
-    supportsTemperature: true,
+    supportsTemperature: false, // terra 와 동일 — 기본값 1 외 400 (실측)
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     reasoning: { mode: 'effort' },
-    supportsStreaming: false,
+    supportsStreaming: true,
     koreanTokensPerChar: 0.546,
   },
 
@@ -270,9 +274,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     reasoning: null,
-    // 🔴 openai.provider 에 callJsonStream 이 없다. API 가 지원해도 우리는 못 쓴다.
-    //   이 값이 false 라서 admin 이 chat 을 이 모델로 바꿀 때 경고가 뜬다.
-    supportsStreaming: false,
+    supportsStreaming: true, // 2026-08-03 openai.provider 에 callJsonStream 구현
     koreanTokensPerChar: 0.548, // 실측 2026-08-03
   },
 
@@ -291,7 +293,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     reasoning: null,
-    supportsStreaming: false,
+    supportsStreaming: true,
     koreanTokensPerChar: null,
   },
 };

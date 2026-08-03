@@ -202,9 +202,30 @@ describe('MODEL_REGISTRY', () => {
      * openai.provider 에 `callJsonStream` 이 없다. API 스펙이 아니라
      * **우리 어댑터 기준**이라는 걸 고정한다 — 소비자가 알고 싶은 건 실제 가능 여부다.
      */
-    it('스트리밍은 어댑터 구현 기준 — OpenAI 는 false', () => {
-      expect(getModelSpec('claude-haiku-4-5')!.supportsStreaming).toBe(true);
-      expect(getModelSpec('gpt-4o-mini')!.supportsStreaming).toBe(false);
+    /**
+     * 2026-08-03 OpenAI 어댑터에 `callJsonStream` 이 구현되면서 **전 모델 true** 가 됐다.
+     * 이 필드가 "API 스펙" 이 아니라 **우리 어댑터 구현 기준**이라는 게 요점이므로,
+     * 값을 박제하는 대신 **어댑터에 구현이 있으면 true** 라는 관계를 고정한다.
+     */
+    it('스트리밍 선언은 어댑터 구현과 일치한다', () => {
+      const IMPLEMENTED: Record<string, boolean> = {
+        anthropic: true, // anthropic.provider.callJsonStream
+        openai: true, // openai.provider.callJsonStream (2026-08-03)
+      };
+      for (const [id, spec] of Object.entries(MODEL_REGISTRY)) {
+        expect(`${id}:${spec.supportsStreaming}`).toBe(
+          `${id}:${IMPLEMENTED[spec.provider]}`,
+        );
+      }
+    });
+
+    /**
+     * 🔴 `coverletter_chat` 이 스트리밍 필수다. 이 값이 어긋나면
+     * **관리자가 고를 수 있는데 런타임에 죽는** 모델이 생긴다.
+     */
+    it('스트리밍 필수 feature 의 기본 모델은 스트리밍을 지원한다', () => {
+      const chat = getModelConfig('coverletter_chat', new ConfigService());
+      expect(getModelSpec(chat.model)?.supportsStreaming).toBe(true);
     });
 
     /**

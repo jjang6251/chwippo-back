@@ -101,7 +101,7 @@ describe('OpenAIProvider', () => {
           { role: 'system', content: 'sys' },
           { role: 'user', content: 'user' },
         ],
-        max_tokens: 300,
+        max_completion_tokens: 300,
         temperature: 0.5,
       });
     });
@@ -236,6 +236,230 @@ describe('OpenAIProvider', () => {
           jsonSchema: schema,
         }),
       ).rejects.toBeInstanceOf(LlmJsonParseError);
+    });
+  });
+
+  /**
+   * 🔴 **스트리밍 — Anthropic 과 다른 함정이 하나 있다.**
+   *
+   * OpenAI 는 `stream_options.include_usage` 를 안 붙이면 **usage 가 아예 안 온다**
+   * (실측 2026-08-03: 붙임 → 수신 / 안 붙임 → 전 이벤트에 부재).
+   * Anthropic 은 `finalMessage().usage` 가 항상 있어 이 함정이 없다.
+   *
+   * 빠뜨리면 토큰 0 → **비용 0 · 코인 미차감**. 에러도 안 나고 응답도 정상이라
+   * **아무도 모른 채 과금만 사라진다.** 그래서 요청 인자 자체를 spec 으로 박는다.
+   */
+  /**
+   * 🔴 **`max_tokens` 는 gpt-5.6 에서 400 이다** (실측 2026-08-03:
+   * `Unsupported parameter: 'max_tokens' is not supported with this model`).
+   * gpt-4o 계열은 둘 다 되므로 **새 이름 하나로 통일**했다 — 세 경로가 갈리면
+   * "비스트리밍만 되고 스트리밍은 죽는" 식으로 어긋난다.
+   */
+  describe('출력 한도 파라미터 — 전 경로 통일', () => {
+    const okCompletion = {
+      choices: [{ message: { content: '{"r":"x"}' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    };
+    const SCHEMA_MIN = {
+      name: 'a',
+      schema: {
+        type: 'object',
+        properties: { r: { type: 'string' } },
+        required: ['r'],
+        additionalProperties: false,
+      },
+    };
+
+    it.each([
+      [
+        'complete',
+        (p: OpenAIProvider) =>
+          p.complete({
+            model: 'gpt-4o-mini',
+            systemPrompt: 's',
+            userPrompt: 'u',
+            maxTokens: 777,
+            temperature: 0.3,
+          }),
+      ],
+      [
+        'callJson',
+        (p: OpenAIProvider) =>
+          p.callJson({
+            model: 'gpt-4o-mini',
+            systemPrompt: 's',
+            userPrompt: 'u',
+            maxTokens: 777,
+            temperature: 0.3,
+            jsonSchema: SCHEMA_MIN,
+          }),
+      ],
+    ])(
+      '%s 는 max_completion_tokens 를 쓴다 (max_tokens 금지)',
+      async (_l, call) => {
+        mockCreate.mockResolvedValue(okCompletion);
+        await call(makeProvider());
+        const arg = mockCreate.mock.calls[0][0] as Record<string, unknown>;
+        expect(arg.max_completion_tokens).toBe(777);
+        expect(arg).not.toHaveProperty('max_tokens');
+      },
+    );
+  });
+
+  describe('callJsonStream()', () => {
+    const SCHEMA = {
+      name: 'chat',
+      schema: {
+        type: 'object',
+        properties: { reply: { type: 'string' } },
+        required: ['reply'],
+        additionalProperties: false,
+      },
+    };
+    const REQ_JSON = {
+      model: 'gpt-4o-mini',
+      systemPrompt: 'sys',
+      userPrompt: 'user',
+      maxTokens: 500,
+      temperature: 0.3,
+      jsonSchema: SCHEMA,
+    };
+
+    /** delta 조각 + 마지막 usage chunk 로 SSE 를 흉내낸다 */
+    const streamOf = (chunks: string[], usage?: unknown) => ({
+      async *[Symbol.asyncIterator]() {
+        for (const c of chunks) {
+          yield { choices: [{ delta: { content: c } }] };
+        }
+        yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+        if (usage !== undefined) yield { choices: [], usage };
+      },
+    });
+
+    const USAGE = {
+      prompt_tokens: 100,
+      completion_tokens: 20,
+      prompt_tokens_details: { cached_tokens: 40 },
+    };
+
+    const collect = async (gen: AsyncGenerator<unknown>) => {
+      const out: Array<Record<string, unknown>> = [];
+      for await (const e of gen) out.push(e as Record<string, unknown>);
+      return out;
+    };
+
+    it('🔴 stream_options.include_usage 를 반드시 보낸다 (없으면 과금 0)', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"reply":"hi"}'], USAGE));
+      await collect(makeProvider().callJsonStream(REQ_JSON));
+      const arg = mockCreate.mock.calls[0][0] as Record<string, unknown>;
+      expect(arg.stream).toBe(true);
+      expect(arg.stream_options).toEqual({ include_usage: true });
+    });
+
+    /**
+     * cap 이 안 실리면 SDK default 까지 출력돼 **비용 surprise** 가 난다.
+     * temperature 는 모델 선언에 따라 조립되므로(`temperatureArg`) 비스트리밍과
+     * **같은 규칙**이어야 한다 — 경로마다 다르면 같은 feature 가 다르게 동작한다.
+     */
+    it('maxTokens·temperature 를 비스트리밍과 같은 규칙으로 전달한다', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"reply":"x"}'], USAGE));
+      await collect(makeProvider().callJsonStream(REQ_JSON));
+      const arg = mockCreate.mock.calls[0][0] as Record<string, unknown>;
+      expect(arg.max_completion_tokens).toBe(REQ_JSON.maxTokens);
+      expect(arg.temperature).toBe(REQ_JSON.temperature);
+      expect(arg.model).toBe(REQ_JSON.model);
+      // strict 스키마도 비스트리밍과 동일하게 실려야 한다
+      expect(arg.response_format).toMatchObject({
+        type: 'json_schema',
+        json_schema: { strict: true, name: SCHEMA.name },
+      });
+    });
+
+    /**
+     * 🔴 **gpt-5.6 은 temperature 를 기본값 1 외에는 400 으로 거부한다** (실측 2026-08-03).
+     * 우리 8개 feature 가 전부 temperature 를 지정하므로, 보내면 **전 호출이 죽는다.**
+     * 레지스트리가 `supportsTemperature: false` 로 선언해 아예 안 실리는지 고정한다.
+     */
+    it('gpt-5.6 에는 temperature 를 아예 싣지 않는다', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"reply":"x"}'], USAGE));
+      await collect(
+        makeProvider().callJsonStream({ ...REQ_JSON, model: 'gpt-5.6-terra' }),
+      );
+      const arg = mockCreate.mock.calls[0][0] as Record<string, unknown>;
+      expect(arg).not.toHaveProperty('temperature');
+      expect(arg.model).toBe('gpt-5.6-terra');
+    });
+
+    /** 🔴 사용자 입력이 system 으로 승격되면 프롬프트 인젝션 + cap 우회가 동시에 열린다 */
+    it('사용자 입력은 user 역할로만 간다 (cachedContext 도 user 앞부분)', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"reply":"x"}'], USAGE));
+      await collect(
+        makeProvider().callJsonStream({
+          ...REQ_JSON,
+          cachedContext: 'CACHED',
+        }),
+      );
+      const arg = mockCreate.mock.calls[0][0] as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      expect(arg.messages[0]).toEqual({ role: 'system', content: 'sys' });
+      expect(arg.messages[0].content).not.toContain('user');
+      expect(arg.messages[1].role).toBe('user');
+      expect(arg.messages[1].content).toBe('CACHED\n\nuser');
+    });
+
+    it('partial 을 조각마다 흘리고 마지막에 done 을 준다', async () => {
+      mockCreate.mockResolvedValue(
+        streamOf(['{"rep', 'ly":"안', '녕"}'], USAGE),
+      );
+      const events = await collect(makeProvider().callJsonStream(REQ_JSON));
+      const done = events.at(-1)!;
+      expect(done.type).toBe('done');
+      expect(done.json).toEqual({ reply: '안녕' });
+      // 중간 조각들이 partial 로 나갔는지 (파싱 가능한 시점부터)
+      expect(events.filter((e) => e.type === 'partial').length).toBeGreaterThan(
+        0,
+      );
+    });
+
+    /** 비스트리밍 경로와 **같은 규약** — 캐시분을 뺀 값이 정가 과금 대상이다 */
+    it('캐시 토큰을 prompt 에서 빼서 보고한다 (Anthropic 규약 정렬)', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"reply":"x"}'], USAGE));
+      const events = await collect(makeProvider().callJsonStream(REQ_JSON));
+      const res = (events.at(-1) as { response: Record<string, number> })
+        .response;
+      expect(res.promptTokens).toBe(60); // 100 - 40
+      expect(res.cacheReadTokens).toBe(40);
+      expect(res.completionTokens).toBe(20);
+    });
+
+    /** partial 로 화면에 흘러간 뒤라도 최종이 스키마를 어기면 저장·차감으로 못 넘긴다 */
+    it('최종 결과가 스키마를 어기면 throw (부분 표시와 무관)', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"wrong":"field"}'], USAGE));
+      await expect(
+        collect(makeProvider().callJsonStream(REQ_JSON)),
+      ).rejects.toThrow(/schema violation/);
+    });
+
+    it('JSON 이 깨져 있으면 throw + 실측 usage 동봉 (과금은 이미 발생)', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"reply":'], USAGE));
+      await expect(
+        collect(makeProvider().callJsonStream(REQ_JSON)),
+      ).rejects.toMatchObject({ usage: { promptTokens: 60 } });
+    });
+
+    it('usage chunk 가 없어도 크래시하지 않는다 (토큰 0 으로 보고)', async () => {
+      mockCreate.mockResolvedValue(streamOf(['{"reply":"x"}']));
+      const events = await collect(makeProvider().callJsonStream(REQ_JSON));
+      const res = (events.at(-1) as { response: Record<string, number> })
+        .response;
+      expect(res.promptTokens).toBe(0);
+    });
+
+    it('API key 없으면 즉시 실패', async () => {
+      await expect(collect(noKey().callJsonStream(REQ_JSON))).rejects.toThrow(
+        /OPENAI_API_KEY/,
+      );
     });
   });
 });

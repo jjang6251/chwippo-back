@@ -13,11 +13,22 @@ describe('ModelConfigService', () => {
   let repo: { findOne: jest.Mock };
   let service: ModelConfigService;
 
-  /** env 가 anthropic·openai LIGHT 모델을 주는 현재 운영 상태 */
+  /**
+   * env 가 모델을 주는 현재 운영 상태.
+   *
+   * ⚠️ 이 spec 의 주제는 **3단 해석(DB → env → 코드 기본값)** 이지 특정 모델이 아니다.
+   * 그런데 대상 feature(`coverletter_feedback`)의 env 키·기대 모델이 곳곳에 박혀 있어,
+   * Phase 1 에서 그 feature 가 Terra 로 옮겨가자 5개가 한 번에 깨졌다.
+   * 값을 한곳에 모아 다음 전환 때 여기만 고치게 한다.
+   */
+  const ENV_KEY = 'OPENAI_MODEL_COVERLETTER';
+  const ENV_MODEL = 'gpt-4o'; // env 가 코드 기본값을 덮는지 보려면 **다른 값**이어야 한다
+  const CODE_DEFAULT = 'gpt-5.6-terra'; // FEATURE_MATRIX.defaultModel
+
   const configWithEnv = {
     get: (k: string) =>
-      k === 'ANTHROPIC_MODEL_LIGHT'
-        ? 'claude-haiku-4-5-20251001'
+      k === ENV_KEY
+        ? ENV_MODEL
         : k === 'OPENAI_MODEL_LIGHT'
           ? 'gpt-4o-mini'
           : undefined,
@@ -79,8 +90,8 @@ describe('ModelConfigService', () => {
       expect(repo.findOne).toHaveBeenCalledWith({
         where: { feature: 'coverletter_feedback' },
       });
-      expect(cfg.model).toBe('claude-haiku-4-5-20251001');
-      expect(cfg.provider).toBe('anthropic');
+      expect(cfg.model).toBe(ENV_MODEL);
+      expect(cfg.provider).toBe('openai');
     });
 
     /**
@@ -99,7 +110,7 @@ describe('ModelConfigService', () => {
 
       repo.findOne.mockResolvedValue(null); // 행 삭제
       expect((await service.resolve('coverletter_feedback')).model).toBe(
-        'claude-haiku-4-5-20251001',
+        ENV_MODEL,
       );
     });
   });
@@ -109,8 +120,8 @@ describe('ModelConfigService', () => {
       service = make(configEmpty);
 
       const cfg = await service.resolve('coverletter_feedback');
-      expect(cfg.model).toBe('claude-haiku-4-5');
-      expect(cfg.provider).toBe('anthropic');
+      expect(cfg.model).toBe(CODE_DEFAULT);
+      expect(cfg.provider).toBe('openai');
     });
   });
 
@@ -131,7 +142,7 @@ describe('ModelConfigService', () => {
 
       const cfg = await service.resolve('coverletter_feedback');
 
-      expect(cfg.model).toBe('claude-haiku-4-5-20251001'); // env 로 진행
+      expect(cfg.model).toBe(ENV_MODEL); // env 로 진행
       expect(spy).toHaveBeenCalledTimes(1);
       expect(spy.mock.calls[0][0]).toContain('coverletter_feedback');
     });
@@ -148,7 +159,7 @@ describe('ModelConfigService', () => {
 
       const cfg = await service.resolve('coverletter_feedback');
 
-      expect(cfg.model).toBe('claude-haiku-4-5-20251001');
+      expect(cfg.model).toBe(ENV_MODEL);
       expect(spy.mock.calls[0][0]).toContain('connection lost');
     });
   });

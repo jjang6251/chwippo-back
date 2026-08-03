@@ -36,14 +36,14 @@ describe('model-config FEATURE_MATRIX', () => {
       maxOut: 300,
     },
     coverletter_draft_v2: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      provider: 'openai',
+      model: 'gpt-5.6-terra',
       maxIn: 16_000,
-      maxOut: 6_000,
+      maxOut: 8_000,
     },
     coverletter_feedback: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      provider: 'openai',
+      model: 'gpt-5.6-terra',
       maxIn: 16_000,
       maxOut: 6_000,
     },
@@ -67,8 +67,8 @@ describe('model-config FEATURE_MATRIX', () => {
       maxOut: 800,
     },
     coverletter_chat: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      provider: 'openai',
+      model: 'gpt-5.6-terra',
       maxIn: 16_000,
       maxOut: 8_000,
     },
@@ -168,14 +168,18 @@ describe('model-config FEATURE_MATRIX', () => {
     it('modelEnvKey 가 설정돼 있으면 defaultModel 대신 그 값을 쓴다', () => {
       const overridden = {
         get: (k: string) =>
-          k === 'ANTHROPIC_MODEL_LIGHT' ? 'claude-sonnet-5' : undefined,
+          k === 'OPENAI_MODEL_COVERLETTER' ? 'gpt-4o' : undefined,
       } as unknown as ConfigService;
 
       expect(getModelConfig('coverletter_feedback', overridden).model).toBe(
-        'claude-sonnet-5',
+        'gpt-4o',
       );
-      // openai feature 는 영향 없음
+      // 🔴 자소서 전용 키라 **다른 openai feature 는 영향받지 않는다** —
+      //   LIGHT 를 공유하면 "자소서만 상위 체급" 이 다시 불가능해진다 (G-1 이전 상태)
       expect(getModelConfig('note_summary', overridden).model).toBe(
+        'gpt-4o-mini',
+      );
+      expect(getModelConfig('jobposting_parse', overridden).model).toBe(
         'gpt-4o-mini',
       );
     });

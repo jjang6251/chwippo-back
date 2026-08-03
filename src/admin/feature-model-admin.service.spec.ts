@@ -13,6 +13,24 @@ import { FeatureModelAdminService } from './feature-model-admin.service';
  * 검증 3종: ① 화이트리스트 ② 출력 한도 ③ 스트리밍 요구
  * (스키마 strict 호환은 `model-registry.spec` 이 **빌드 시점에** 강제 — 런타임 중복 X)
  */
+/**
+ * 🔴 **스트리밍 미지원 모델을 주입해서 쓴다.**
+ *
+ * 2026-08-03 OpenAI 어댑터에 스트리밍이 구현되면서 **등록 모델 전부 `supportsStreaming: true`**
+ * 가 됐고, "실제로 false 인 모델" 에 기대던 테스트 2개가 깨졌다. 검증 로직은 여전히 옳은데
+ * 시험할 대상이 사라진 것이다 — 레지스트리 내용에 의존한 테스트의 전형적 취약점이다.
+ * (같은 이유로 단가 만료 cron spec 도 실제 모델을 치워두고 돈다)
+ */
+const NO_STREAM = 'test-only-no-stream-model';
+
+function registerNoStreamModel(): void {
+  MODEL_REGISTRY[NO_STREAM] = {
+    ...MODEL_REGISTRY['gpt-4o-mini'],
+    label: '스트리밍 미지원 테스트 모델',
+    supportsStreaming: false,
+  };
+}
+
 describe('FeatureModelAdminService', () => {
   let repo: { find: jest.Mock };
   let manager: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
@@ -98,6 +116,7 @@ describe('FeatureModelAdminService', () => {
      * 깨진 화면을 본다.
      */
     it('스트리밍 필수 feature 를 미지원 모델로 바꾸면 400', async () => {
+      registerNoStreamModel();
       manager.findOne.mockResolvedValue({
         feature: 'coverletter_chat',
         provider: 'anthropic',
@@ -105,12 +124,14 @@ describe('FeatureModelAdminService', () => {
         updatedBy: null,
       });
 
-      await expect(
-        service.updateModel(ADMIN, 'coverletter_chat', {
-          model: 'gpt-4o-mini', // supportsStreaming: false
-        }),
-      ).rejects.toThrow(/실시간 응답/);
-      expect(manager.save).not.toHaveBeenCalled();
+      try {
+        await expect(
+          service.updateModel(ADMIN, 'coverletter_chat', { model: NO_STREAM }),
+        ).rejects.toThrow(/실시간 응답/);
+        expect(manager.save).not.toHaveBeenCalled();
+      } finally {
+        delete MODEL_REGISTRY[NO_STREAM];
+      }
     });
 
     it('스트리밍이 필요 없는 feature 는 같은 모델로 바꿔도 통과', async () => {
@@ -192,12 +213,17 @@ describe('FeatureModelAdminService', () => {
 
     /** 못 고르는 모델을 목록에서 지우지 않고 **이유와 함께** 준다 — 화면이 회색 처리 + 사유 표시 */
     it('선택 불가 모델은 사유를 준다 (숨기지 않음)', async () => {
-      const [row] = await service.listAll();
-      const blocked = row.selectable.find((m) => m.id === 'gpt-4o-mini')!;
-      expect(blocked.blockedReason).toMatch(/실시간 응답/);
+      registerNoStreamModel();
+      try {
+        const [row] = await service.listAll();
+        const blocked = row.selectable.find((m) => m.id === NO_STREAM)!;
+        expect(blocked.blockedReason).toMatch(/실시간 응답/);
 
-      const ok = row.selectable.find((m) => m.id === HAIKU)!;
-      expect(ok.blockedReason).toBeNull();
+        const ok = row.selectable.find((m) => m.id === HAIKU)!;
+        expect(ok.blockedReason).toBeNull();
+      } finally {
+        delete MODEL_REGISTRY[NO_STREAM];
+      }
     });
 
     it('스트리밍 요구 여부를 노출한다', async () => {
