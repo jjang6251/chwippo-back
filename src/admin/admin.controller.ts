@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { UserPlatformService } from './user-platform.service';
 import { AdminService } from './admin.service';
 import { AdminAuditService } from './admin-audit.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
@@ -35,11 +36,21 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly inquiriesService: InquiriesService,
     private readonly auditService: AdminAuditService,
+    private readonly userPlatform: UserPlatformService,
   ) {}
 
   @Get('stats')
   getStats() {
     return this.adminService.getStats();
+  }
+
+  /**
+   * 사용 환경 분포 — 웹만 / 앱만 / 둘 다 / 미접속.
+   * 4분류는 **서로 배타적**이라 합계가 `total` 과 정확히 맞는다 (`user-platform.ts` spec 참조).
+   */
+  @Get('platform-distribution')
+  getPlatformDistribution() {
+    return this.userPlatform.getDistribution();
   }
 
   @Get('analytics')

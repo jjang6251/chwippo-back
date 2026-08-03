@@ -11,6 +11,7 @@ import { Test } from '@nestjs/testing';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminAuditService } from './admin-audit.service';
+import { UserPlatformService } from './user-platform.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 
 // jose(ESM)는 jest(CJS) 런타임에서 로드 불가 — import 체인(AdminService → UsersService →
@@ -41,6 +42,10 @@ describe('AdminController — audit 호출', () => {
         { provide: AdminService, useValue: adminService },
         { provide: InquiriesService, useValue: inquiriesService },
         { provide: AdminAuditService, useValue: auditService },
+        {
+          provide: UserPlatformService,
+          useValue: { getDistribution: jest.fn() },
+        },
       ],
     }).compile();
     controller = module.get(AdminController);

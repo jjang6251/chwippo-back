@@ -23,6 +23,7 @@ import { CoverletterCustom } from '../myinfo/entities/coverletter-custom.entity'
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { AdminNotifyService } from '../notifications/admin-notify.service';
 import { DiscordNotifier } from '../common/discord-notifier';
+import { UserPlatformService } from './user-platform.service';
 
 const mockDiscord = {
   notify: jest.fn().mockResolvedValue('sent'),
@@ -170,6 +171,10 @@ describe('AdminUsersService — Phase 1.5 spec 매트릭스', () => {
           },
         },
         { provide: DiscordNotifier, useValue: mockDiscord },
+        {
+          provide: UserPlatformService,
+          useValue: { getMany: jest.fn().mockResolvedValue(new Map()) },
+        },
       ],
     }).compile();
 

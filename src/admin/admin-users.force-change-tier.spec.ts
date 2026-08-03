@@ -8,6 +8,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { AdminUsersService } from './admin-users.service';
+import { UserPlatformService } from './user-platform.service';
 import { AdminAuditService } from './admin-audit.service';
 import { User } from '../users/user.entity';
 import { Application } from '../applications/application.entity';
@@ -162,6 +163,10 @@ describe('AdminUsersService.forceChangeTier', () => {
         {
           provide: DiscordNotifier,
           useValue: { notify: jest.fn().mockResolvedValue('sent') },
+        },
+        {
+          provide: UserPlatformService,
+          useValue: { getMany: jest.fn().mockResolvedValue(new Map()) },
         },
       ],
     }).compile();
