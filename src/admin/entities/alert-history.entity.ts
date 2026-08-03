@@ -18,7 +18,12 @@ export type AlertType =
   // 웨이브 D — 사용자별 24h 코인차감 feature 호출 수 임계 초과 (쿨다운·한도 제거 대신 감시)
   | 'abnormal_coin_usage'
   // AI 제공사 장애 관측 — 실 호출 error 급증 감지 (LlmService error audit hook)
-  | 'provider_outage';
+  | 'provider_outage'
+  // G-8 (2026-08-03) — 예방(QA)과 짝이 되는 탐지. 배포 후는 QA 가 못 본다.
+  /** `finish_reason='length'` — 출력이 잘렸는데 **성공으로 기록**된 호출 */
+  | 'output_truncation'
+  /** **코인은 나갔는데 결과가 실패** — 돈만 잃는 가장 나쁜 실패 */
+  | 'charged_failure';
 
 export type WebhookStatus =
   | 'sent'
