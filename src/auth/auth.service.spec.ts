@@ -46,6 +46,7 @@ describe('AuthService', () => {
   let txSessionRepo: jest.Mocked<Repository<RefreshSession>>;
   let txTokenRepo: jest.Mocked<Repository<RefreshToken>>;
   let txUserRepo: jest.Mocked<Repository<User>>;
+  let dataSource: jest.Mocked<DataSource>;
 
   const makeUser = (overrides: Partial<User> = {}): User =>
     ({
@@ -69,6 +70,7 @@ describe('AuthService', () => {
     const mockConfig = mock<ConfigService>();
     const mockDiscord = { notify: jest.fn().mockResolvedValue('sent') };
     const mockDataSource = mock<DataSource>();
+    dataSource = mockDataSource;
     manager = mock<EntityManager>();
     txSessionRepo = mock<Repository<RefreshSession>>();
     txTokenRepo = mock<Repository<RefreshToken>>();
@@ -372,6 +374,69 @@ describe('AuthService', () => {
       txSessionRepo.insert.mockResolvedValue({} as never);
       txTokenRepo.insert.mockResolvedValue({} as never);
       txUserRepo.update.mockResolvedValue({} as never);
+    });
+
+    /**
+     * 사용 환경 스탬프 — 어느 엔드포인트로 들어왔는지를 `users` 에 기록한다.
+     * (UA 추측은 앱 사용자를 하나도 못 잡았다 — 네이티브 SDK 는 WebView 를 안 거친다.)
+     */
+    describe('사용 환경 스탬프', () => {
+      beforeEach(() => {
+        // 토큰 해시가 실제로 계산되므로 sign 반환값이 있어야 한다
+        jwtService.sign.mockReturnValue('t');
+      });
+
+      it("platform='app' → first_app_login_at 을 최초 1회만 기록", async () => {
+        dataSource.query.mockResolvedValue([] as never);
+        await service.issueTokens(makeUser(), null, 'app');
+
+        expect(dataSource.query).toHaveBeenCalledWith(
+          expect.stringContaining('first_app_login_at'),
+          expect.arrayContaining([expect.any(String)]),
+        );
+        // 덮어쓰기 방지 — 이미 값이 있으면 UPDATE 대상이 아니다
+        expect(dataSource.query).toHaveBeenCalledWith(
+          expect.stringContaining('IS NULL'),
+          expect.anything(),
+        );
+      });
+
+      it("platform='web' → first_web_login_at 을 기록", async () => {
+        dataSource.query.mockResolvedValue([] as never);
+        await service.issueTokens(makeUser(), null, 'web');
+        expect(dataSource.query).toHaveBeenCalledWith(
+          expect.stringContaining('first_web_login_at'),
+          expect.anything(),
+        );
+      });
+
+      /** reviewer-login 은 platform 을 안 넘긴다 — 심사용 계정이 통계를 오염시키면 안 된다 */
+      it('platform 미지정이면 아무것도 기록하지 않는다', async () => {
+        await service.issueTokens(makeUser(), null);
+        expect(dataSource.query).not.toHaveBeenCalled();
+      });
+
+      /**
+       * 🔴 **이 테스트가 이번 QA 에서 잡은 결함의 회귀 방어다.**
+       *
+       * 처음엔 스탬프를 **로그인 트랜잭션 안**에 넣었다. 그러면 이 UPDATE 하나가 실패할 때
+       * **로그인 전체가 롤백돼 사용자가 못 들어온다.** 이건 운영 통계지 인증의 일부가 아니다.
+       * (Postgres 는 트랜잭션 내 에러 후 후속 문장을 거부하므로 안에서 try/catch 해도 못 막는다.)
+       */
+      it('🔴 스탬프가 실패해도 로그인은 성공한다 (best-effort)', async () => {
+        dataSource.query.mockRejectedValue(new Error('column does not exist'));
+        jwtService.sign
+          .mockReset()
+          .mockReturnValueOnce('access-token')
+          .mockReturnValueOnce('refresh-token');
+
+        const result = await service.issueTokens(makeUser(), null, 'app');
+
+        expect(result).toEqual({
+          accessToken: 'access-token',
+          refreshToken: 'refresh-token',
+        });
+      });
     });
 
     it('access(1h)·refresh(60d) 둘 다 발급 · refresh 에 sid claim 포함', async () => {

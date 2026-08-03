@@ -65,6 +65,19 @@ export class User {
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
+  /**
+   * 사용 환경 판정 — **로그인 경로 사실** 기반 (2026-08-04, UA 추측에서 교체).
+   *
+   * 🔴 네이티브 SDK 로그인(`/auth/{provider}/native`)은 **WebView 를 안 거쳐** UA 에 앱 표식이 없다.
+   * 그래서 UA 로 판정하면 **앱 사용자가 전부 웹으로 분류된다** (직전 구현의 실제 결함).
+   * 세션이 아니라 users 에 두는 이유 — 세션은 최대 180일 유지되고 cleanup cron 이 지운다.
+   */
+  @Column({ name: 'first_app_login_at', type: 'timestamptz', nullable: true })
+  firstAppLoginAt: Date | null;
+
+  @Column({ name: 'first_web_login_at', type: 'timestamptz', nullable: true })
+  firstWebLoginAt: Date | null;
+
   @Column({ name: 'last_active_at', type: 'timestamptz', nullable: true })
   lastActiveAt: Date | null;
 
