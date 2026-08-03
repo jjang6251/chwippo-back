@@ -9,6 +9,7 @@ import { User } from '../users/user.entity';
 import {
   LlmCallLog,
   LlmCallStatus,
+  ActiveLlmFeature,
   LlmFeature,
   LlmProviderName,
 } from './entities/llm-call-log.entity';
@@ -48,7 +49,11 @@ export const PROVIDER_OUTAGE_USER_MESSAGE =
 
 export interface LlmCallInput {
   userId: string;
-  feature: LlmFeature;
+  /**
+   * 🔴 `ActiveLlmFeature` — **퇴역 feature 로는 호출이 컴파일되지 않는다.**
+   * (감사 이력용 `LlmFeature` 와 구분: 저장은 넓게, 호출은 좁게)
+   */
+  feature: ActiveLlmFeature;
   /** @deprecated PR 0 — getModelConfig(feature) 로 자동 결정. 무시됨 */
   modelTier?: LlmModelTier;
   systemPrompt: string;
@@ -1338,7 +1343,8 @@ export class LlmService {
    */
   async auditCacheHitCharge(args: {
     userId: string;
-    feature: LlmFeature;
+    /** 캐시 히트 과금도 **살아있는 feature** 에만 발생한다 */
+    feature: ActiveLlmFeature;
     coinCost: string;
     resourceType?: string;
     resourceId?: string;

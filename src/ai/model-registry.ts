@@ -113,10 +113,17 @@ export interface ModelSpec {
 /** Anthropic 프롬프트 캐시 배율 — 5m TTL write 1.25× · read 0.1× */
 const ANTHROPIC_CACHE = { cacheWriteRatio: 1.25, cacheReadRatio: 0.1 };
 /**
- * OpenAI 자동 프롬프트 캐싱 — 쓰기 프리미엄 없음(1.0), 캐시된 input 50% 할인(0.5).
+ * OpenAI gpt-4o 계열 자동 프롬프트 캐싱 — 쓰기 프리미엄 없음(1.0), 캐시된 input 50% 할인(0.5).
  * Anthropic 과 달리 명시적 파라미터가 없고 prefix 가 맞으면 자동 적용된다.
+ * (실측 2026-08-03: 4o $2.50→$1.25 · 4o-mini $0.15→$0.075 = 정확히 0.5)
  */
-const OPENAI_CACHE = { cacheWriteRatio: 1.0, cacheReadRatio: 0.5 };
+const OPENAI_4O_CACHE = { cacheWriteRatio: 1.0, cacheReadRatio: 0.5 };
+/**
+ * 🔴 **gpt-5.6 계열은 0.1 이다** (실측 2026-08-03: terra $2→$0.20 · luna $0.20→$0.02).
+ * "OpenAI = 0.5" 로 뭉뚱그리면 캐시 원가가 **5배 과다 계상**돼 모델 비교가 왜곡된다.
+ * 캐시 배율은 provider 가 아니라 **모델**의 속성이다.
+ */
+const OPENAI_GPT56_CACHE = { cacheWriteRatio: 1.0, cacheReadRatio: 0.1 };
 
 /** Anthropic web_search — $10 / 1,000회 */
 const ANTHROPIC_WEB_SEARCH_USD = 0.01;
@@ -153,7 +160,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     // 🔴 `max_tokens > budget_tokens` 가 강제된다 — 어댑터가 이걸 어기면 400.
     reasoning: { mode: 'thinking_budget' },
     supportsStreaming: true, // anthropic.provider 에 callJsonStream 구현됨
-    koreanTokensPerChar: null,
+    koreanTokensPerChar: 1.011, // 실측 2026-08-03 (한국어 736자 표본)
   },
 
   'claude-sonnet-4-6': {
@@ -177,13 +184,84 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     koreanTokensPerChar: null,
   },
 
+  'claude-sonnet-5': {
+    provider: 'anthropic',
+    label: 'Claude Sonnet 5',
+    pricing: {
+      // 🔴 인트로 단가. 2026-08-31 이 지나면 next 로 자동 전환된다 —
+      //   사람이 날짜를 기억하지 않아도 되게 (만료 7일 전 cron 이 Discord 로 알린다).
+      input: 2.0,
+      output: 10.0,
+      ...ANTHROPIC_CACHE,
+      webSearchUsdPerCall: ANTHROPIC_WEB_SEARCH_USD,
+      validUntil: '2026-08-31',
+      next: { input: 3.0, output: 15.0 },
+    },
+    // 실측 2026-08-03: max_tokens 999999 → 400 "> 128000, which is the maximum".
+    // (웹 비교 글들이 64,000 이라고 적고 있으나 실제 API 응답은 128,000)
+    maxOutputTokens: 128_000,
+    contextWindow: 1_000_000,
+    supportsTemperature: true,
+    structuredOutputMode: 'tool_use',
+    supportsPromptCache: true,
+    // 실측 `GET /v1/models/claude-sonnet-5`:
+    //   thinking.types → enabled **false** · adaptive **true** (Haiku 와 정반대)
+    //   effort → low·medium·high·xhigh·max 전부 지원
+    reasoning: { mode: 'thinking_adaptive' },
+    supportsStreaming: true,
+    // 실측 2026-08-03 (한국어 736자 자소서 표본, count_tokens).
+    // 📌 문서상 "Claude 4.7 이후 토크나이저가 30% 더 쓴다" 는 **영어 기준**이다 —
+    //    한국어는 Haiku 4.5(1.011) 대비 0.8% 차이라 사실상 동일했다. 추정 금지의 사례.
+    koreanTokensPerChar: 1.019,
+  },
+
+  'gpt-5.6-terra': {
+    provider: 'openai',
+    label: 'GPT-5.6 Terra',
+    pricing: {
+      input: 2.0,
+      output: 12.0,
+      ...OPENAI_GPT56_CACHE,
+      webSearchUsdPerCall: null,
+    },
+    maxOutputTokens: 128_000,
+    contextWindow: 1_050_000,
+    supportsTemperature: true,
+    structuredOutputMode: 'json_schema_strict',
+    supportsPromptCache: true,
+    // 추론 모델 — `reasoning_effort` 를 받는다. max_completion_tokens 가 작으면
+    // 추론 토큰만 쓰고 본문 없이 400 이 난다 (실측: max_completion_tokens=1 → 400).
+    reasoning: { mode: 'effort' },
+    supportsStreaming: false, // openai.provider 에 callJsonStream 미구현
+    koreanTokensPerChar: 0.546, // 실측 — Anthropic(1.02) 의 절반
+  },
+
+  'gpt-5.6-luna': {
+    provider: 'openai',
+    label: 'GPT-5.6 Luna',
+    pricing: {
+      input: 0.2,
+      output: 1.2,
+      ...OPENAI_GPT56_CACHE,
+      webSearchUsdPerCall: null,
+    },
+    maxOutputTokens: 128_000,
+    contextWindow: 1_050_000,
+    supportsTemperature: true,
+    structuredOutputMode: 'json_schema_strict',
+    supportsPromptCache: true,
+    reasoning: { mode: 'effort' },
+    supportsStreaming: false,
+    koreanTokensPerChar: 0.546,
+  },
+
   'gpt-4o-mini': {
     provider: 'openai',
     label: 'GPT-4o mini',
     pricing: {
       input: 0.15,
       output: 0.6,
-      ...OPENAI_CACHE,
+      ...OPENAI_4O_CACHE,
       webSearchUsdPerCall: null,
     },
     maxOutputTokens: 16_384,
@@ -195,7 +273,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     // 🔴 openai.provider 에 callJsonStream 이 없다. API 가 지원해도 우리는 못 쓴다.
     //   이 값이 false 라서 admin 이 chat 을 이 모델로 바꿀 때 경고가 뜬다.
     supportsStreaming: false,
-    koreanTokensPerChar: null,
+    koreanTokensPerChar: 0.548, // 실측 2026-08-03
   },
 
   'gpt-4o': {
@@ -204,7 +282,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     pricing: {
       input: 2.5,
       output: 10.0,
-      ...OPENAI_CACHE,
+      ...OPENAI_4O_CACHE,
       webSearchUsdPerCall: null,
     },
     maxOutputTokens: 16_384,

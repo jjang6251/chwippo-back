@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import type {
+  ActiveLlmFeature,
   LlmFeature,
   LlmProviderName,
 } from './entities/llm-call-log.entity';
@@ -46,7 +47,7 @@ export interface ModelConfig {
  * Phase 1 (2026-05 ~ F7 직전) feature 매핑.
  * 매핑 누락 시 default = light + log warn (getModelConfig 안에서 처리).
  */
-const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
+const FEATURE_MATRIX: Record<ActiveLlmFeature, ModelConfig> = {
   // ── F5 기존 ──
   note_summary: {
     provider: 'openai',
@@ -56,55 +57,7 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
     maxOutputTokens: 300,
     temperature: 0.3,
   },
-  auto_tag: {
-    provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_LIGHT',
-    defaultModel: 'gpt-4o-mini',
-    maxInputTokens: 4_000,
-    maxOutputTokens: 200,
-    temperature: 0.1,
-  },
-  score: {
-    provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_LIGHT',
-    defaultModel: 'gpt-4o-mini',
-    maxInputTokens: 4_000,
-    maxOutputTokens: 100,
-    temperature: 0.1,
-  },
-  analysis: {
-    provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_LIGHT',
-    defaultModel: 'gpt-4o-mini',
-    maxInputTokens: 8_000,
-    maxOutputTokens: 500,
-    temperature: 0.3,
-  },
   // 기존 단발 호출 (F2 이전) — 호환 유지 (deprecated, PR 1 의 v2 로 교체 예정)
-  coverletter: {
-    provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_LIGHT',
-    defaultModel: 'gpt-4o-mini',
-    maxInputTokens: 8_000,
-    maxOutputTokens: 1_500,
-    temperature: 0.5,
-  },
-  interview: {
-    provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_LIGHT',
-    defaultModel: 'gpt-4o-mini',
-    maxInputTokens: 8_000,
-    maxOutputTokens: 1_500,
-    temperature: 0.5,
-  },
-  interview_followup: {
-    provider: 'openai',
-    modelEnvKey: 'OPENAI_MODEL_LIGHT',
-    defaultModel: 'gpt-4o-mini',
-    maxInputTokens: 4_000,
-    maxOutputTokens: 500,
-    temperature: 0.5,
-  },
 
   // ── PR 0 신규 (F6 PR 1·2 에서 사용) ──
   // F6 PR 2 — **모든 feature light 모델 강제** (memory `feedback_admin_quota_control` 비용 통제).
@@ -199,11 +152,22 @@ const FEATURE_MATRIX: Record<LlmFeature, ModelConfig> = {
   },
 };
 
+/**
+ * 조회용 넓은 뷰. `feature` 는 **퇴역 값일 수 있다** (DB 행·과거 로그에서 흘러온 경우).
+ * `as` 캐스팅이 아니라 **할당**이다 — `Record<Active,T>` 는 `Partial<Record<All,T>>` 의 하위 타입.
+ */
+const MATRIX_LOOKUP: Partial<Record<LlmFeature, ModelConfig>> = FEATURE_MATRIX;
+
+/**
+ * 🔴 인자가 `LlmFeature`(넓은 쪽)인 이유 — DB `feature_model_config` 행이나 과거
+ * `llm_call_logs` 행에서 퇴역 값이 들어올 수 있다. **호출 게이트는 `LlmService.call` 의
+ * `ActiveLlmFeature` 가 맡는다** (거기서 컴파일 단계로 막힌다).
+ */
 export function getModelConfig(
   feature: LlmFeature,
   config: ConfigService,
 ): ModelConfig & { model: string } {
-  const cfg = FEATURE_MATRIX[feature];
+  const cfg = MATRIX_LOOKUP[feature];
   if (!cfg) {
     // 매핑 누락 시 default = OpenAI mini + 경고 (PR 0 plan)
     const fallback = FEATURE_MATRIX.note_summary;

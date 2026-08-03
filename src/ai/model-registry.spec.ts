@@ -207,10 +207,49 @@ describe('MODEL_REGISTRY', () => {
       expect(getModelSpec('gpt-4o-mini')!.supportsStreaming).toBe(false);
     });
 
-    it('한국어 토큰 비율은 실측 전이라 전부 null (추정값 금지)', () => {
-      for (const spec of Object.values(MODEL_REGISTRY)) {
-        expect(spec.koreanTokensPerChar).toBeNull();
+    /**
+     * 🔴 **추정값 금지** — 값이 있으면 실측한 것이어야 한다.
+     *
+     * 코드가 출처를 검증할 수는 없으므로, 대신 **실측한 모델 목록을 여기 고정**한다.
+     * 목록에 없는데 값이 채워지면 = 누군가 추정값을 넣었다는 뜻이라 테스트가 깨진다.
+     * (2026-08-03 실측: 한국어 736자 자소서 표본 · Anthropic `count_tokens` ·
+     *  OpenAI 실호출 `usage.prompt_tokens`)
+     */
+    const MEASURED_KO: Record<string, number> = {
+      'claude-haiku-4-5-20251001': 1.011,
+      'claude-sonnet-5': 1.019,
+      'gpt-5.6-terra': 0.546,
+      'gpt-5.6-luna': 0.546,
+      'gpt-4o-mini': 0.548,
+    };
+
+    it('한국어 토큰 비율 — 실측한 모델만 값이 있다', () => {
+      for (const [id, spec] of Object.entries(MODEL_REGISTRY)) {
+        expect(spec.koreanTokensPerChar).toBe(MEASURED_KO[id] ?? null);
       }
+    });
+
+    /**
+     * 🔴 이 격차가 **모델 선정을 뒤집은 실측**이다.
+     * 표시 단가로는 Sonnet 5 인트로($2)가 Terra($2)와 같지만, Anthropic 이 같은
+     * 한국어에 토큰을 1.8배 써서 **실제 청구는 Terra 가 훨씬 싸다.**
+     * 이 관계가 깨지면 원가 비교 전제가 무너지므로 고정한다.
+     */
+    it('한국어는 Anthropic 이 OpenAI 보다 토큰을 훨씬 많이 쓴다', () => {
+      const anthropic = MODEL_REGISTRY['claude-sonnet-5'].koreanTokensPerChar!;
+      const openai = MODEL_REGISTRY['gpt-5.6-terra'].koreanTokensPerChar!;
+      expect(anthropic / openai).toBeGreaterThan(1.5);
+    });
+
+    /**
+     * 문서상 "Claude 4.7 이후 토크나이저는 30% 더 쓴다" 는 **영어 기준**이었다.
+     * 한국어 실측은 0.8% 차이 — 문서 문장을 그대로 곱했으면 원가를 30% 과다 계상했다.
+     */
+    it('Claude 신·구 토크나이저는 한국어에선 차이가 미미하다', () => {
+      const sonnet5 = MODEL_REGISTRY['claude-sonnet-5'].koreanTokensPerChar!;
+      const haiku45 =
+        MODEL_REGISTRY['claude-haiku-4-5-20251001'].koreanTokensPerChar!;
+      expect(Math.abs(sonnet5 / haiku45 - 1)).toBeLessThan(0.05);
     });
   });
 
