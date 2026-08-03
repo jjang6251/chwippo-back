@@ -98,6 +98,12 @@ export const envValidationSchema = Joi.object({
   }),
   OPENAI_MODEL_LIGHT: Joi.string().default('gpt-4o-mini'),
   OPENAI_MODEL_HEAVY: Joi.string().default('gpt-4o'),
+  /**
+   * Phase 1 (2026-08-03) — 자소서 3종 전용. LIGHT 와 분리한 이유는
+   * "자소서만 상위 체급" 이 G-1 이전에 물리적으로 불가능했던 바로 그 문제라서다.
+   * (DB `feature_model_config` 가 이보다 우선 — 여기는 3단 해석의 중간 층)
+   */
+  OPENAI_MODEL_COVERLETTER: Joi.string().default('gpt-5.6-terra'),
 
   // Anthropic (PR 0 — 자소서 등 한국어 중심 feature 용)
   // dev 에선 optional (key 없으면 isAvailable=false 로 fallback). prod 도 optional —

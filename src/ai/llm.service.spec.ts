@@ -37,6 +37,18 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
  * - audit 행 신규 필드 (provider, promptHash, promptExcerpt, attempts, outputRedacted)
  * - preBlocked 분기 (consent 보다 우선)
  */
+/**
+ * 🔴 **anthropic 경로 테스트용 feature.**
+ *
+ * 이전엔 `coverletter_draft_v2` 를 "anthropic feature" 대용으로 14곳에 흩뿌려 썼는데,
+ * Phase 1 에서 그 feature 가 Terra(openai)로 옮겨가자 **30개 테스트가 한 번에 깨졌다.**
+ * 테스트가 "이 feature 는 anthropic 이다" 라는 **바뀔 수 있는 사실**에 결합돼 있었던 것 —
+ * 단가 만료 cron·admin 스트리밍 spec 과 같은 취약점이다.
+ *
+ * 상수 한 줄로 모아, 다음에 모델이 또 바뀌면 **여기만 고치면 된다.**
+ */
+const ANTHROPIC_FEATURE = 'interview_prep_session' as const;
+
 describe('LlmService', () => {
   let service: LlmService;
   let logRepo: jest.Mocked<Repository<LlmCallLog>>;
@@ -371,7 +383,7 @@ describe('LlmService', () => {
       });
       await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -424,7 +436,7 @@ describe('LlmService', () => {
       anthropic.isAvailable = false;
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -529,7 +541,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: {
@@ -668,7 +680,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -711,7 +723,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -741,7 +753,7 @@ describe('LlmService', () => {
 
         const r = await service.call({
           userId: 'u-1',
-          feature: 'coverletter_feedback',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,
@@ -759,7 +771,7 @@ describe('LlmService', () => {
 
         await service.call({
           userId: 'u-1',
-          feature: 'coverletter_feedback',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,
@@ -780,7 +792,7 @@ describe('LlmService', () => {
 
         const r = await service.call({
           userId: 'u-1',
-          feature: 'coverletter_feedback',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,
@@ -800,7 +812,7 @@ describe('LlmService', () => {
 
         const r = await service.call({
           userId: 'u-1',
-          feature: 'coverletter_feedback',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,
@@ -817,7 +829,7 @@ describe('LlmService', () => {
 
         const r = await service.call({
           userId: 'u-1',
-          feature: 'coverletter_feedback',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,
@@ -836,7 +848,7 @@ describe('LlmService', () => {
 
         await service.call({
           userId: 'u-1',
-          feature: 'coverletter_feedback',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,
@@ -878,7 +890,7 @@ describe('LlmService', () => {
 
         const r = await service.call({
           userId: 'u-1',
-          feature: 'coverletter_feedback',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,
@@ -1140,7 +1152,7 @@ describe('LlmService', () => {
       anthropic.isAvailable = false; // coverletter_chat = anthropic provider
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_chat',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: {
@@ -1200,7 +1212,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2', // anthropic feature
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1227,7 +1239,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1239,7 +1251,7 @@ describe('LlmService', () => {
       setupRecoverable(429);
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1251,7 +1263,7 @@ describe('LlmService', () => {
       setupRecoverable(400);
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1266,7 +1278,7 @@ describe('LlmService', () => {
       openai.complete.mockRejectedValue(openaiErr);
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1278,7 +1290,7 @@ describe('LlmService', () => {
       openai.isAvailable = false;
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1327,7 +1339,7 @@ describe('LlmService', () => {
       openai.complete = jest.fn().mockRejectedValue(withStatus(503));
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2', // anthropic 1차, openai fallback
+        feature: ANTHROPIC_FEATURE, // anthropic 1차, openai fallback
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1354,7 +1366,7 @@ describe('LlmService', () => {
       anthropic.complete = jest.fn().mockRejectedValue(withStatus(400));
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1369,7 +1381,7 @@ describe('LlmService', () => {
       anthropic.complete = jest.fn().mockRejectedValue(withStatus(429));
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1409,7 +1421,7 @@ describe('LlmService', () => {
         );
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1430,7 +1442,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1467,7 +1479,7 @@ describe('LlmService', () => {
       );
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1500,7 +1512,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1527,7 +1539,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2', // fallback 매핑이 있는 anthropic feature
+        feature: ANTHROPIC_FEATURE, // fallback 매핑이 있는 anthropic feature
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1557,7 +1569,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1599,6 +1611,84 @@ describe('LlmService', () => {
        * **admin 이 모델을 OpenAI 로 바꿔도 스트리밍만 Anthropic 으로 나가는** 결함이 된다.
        * 설정과 실제 호출이 어긋나는데 아무 신호가 없다 — 그래서 여기서 고정한다.
        */
+      /**
+       * 🔴 **가용성도 실제로 쓸 provider 기준이어야 한다** (2026-08-03).
+       *
+       * 이전엔 `this.anthropic.isAvailable` 을 provider 와 무관하게 확인했다 —
+       * 스트리밍이 Anthropic 전용이던 시절의 잔재다. Phase 1 에서 자소서 대화가
+       * OpenAI 로 옮겨오면서 **ANTHROPIC_API_KEY 가 없으면 OpenAI 로 도는 기능까지
+       * "ANTHROPIC_API_KEY 미설정" 으로 죽는** 상태가 됐다.
+       */
+      describe('provider 가용성', () => {
+        const streamOk = () =>
+          jest.fn(async function* () {
+            yield {
+              type: 'done',
+              json: { reply: 'ok' },
+              response: {
+                text: '{"reply":"ok"}',
+                promptTokens: 10,
+                completionTokens: 5,
+                finishReason: 'stop',
+              },
+            };
+          });
+        const runStream = (feature: string) =>
+          collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: feature as never,
+              systemPrompt: 'sys',
+              userPrompt: 'user',
+              jsonSchema: {
+                name: 'x',
+                schema: {
+                  type: 'object',
+                  properties: { reply: { type: 'string' } },
+                  required: ['reply'],
+                  additionalProperties: false,
+                },
+              },
+            }),
+          );
+
+        it('anthropic 키가 없어도 openai feature 는 정상 스트림', async () => {
+          anthropic.isAvailable = false;
+          openai.callJsonStream = streamOk();
+
+          const events = await runStream('coverletter_chat');
+
+          expect(events.at(-1)?.type).toBe('done');
+          expect(openai.callJsonStream).toHaveBeenCalledTimes(1);
+        });
+
+        it('openai 키가 없으면 openai feature 는 OPENAI 문구로 거부', async () => {
+          openai.isAvailable = false;
+          openai.callJsonStream = jest.fn();
+
+          const events = await runStream('coverletter_chat');
+
+          expect(events[0]).toEqual({
+            type: 'error',
+            message: 'OPENAI_API_KEY 미설정',
+          });
+          expect(openai.callJsonStream).not.toHaveBeenCalled();
+        });
+
+        it('anthropic 키가 없으면 anthropic feature 는 ANTHROPIC 문구로 거부', async () => {
+          anthropic.isAvailable = false;
+          anthropic.callJsonStream = jest.fn();
+
+          const events = await runStream(ANTHROPIC_FEATURE);
+
+          expect(events[0]).toEqual({
+            type: 'error',
+            message: 'ANTHROPIC_API_KEY 미설정',
+          });
+          expect(anthropic.callJsonStream).not.toHaveBeenCalled();
+        });
+      });
+
       describe('provider 디스패치', () => {
         const streamOnce = () => {
           const fn = jest.fn(async function* () {
@@ -1617,12 +1707,10 @@ describe('LlmService', () => {
         };
 
         it.each([
-          [
-            'anthropic 모델 → anthropic 어댑터',
-            'coverletter_chat',
-            'anthropic',
-          ],
-          ['openai 모델 → openai 어댑터', 'jobposting_parse', 'openai'],
+          ['anthropic 모델 → anthropic 어댑터', ANTHROPIC_FEATURE, 'anthropic'],
+          // 🔴 Phase 1 에서 anthropic → openai 로 옮겨온 feature. 스트리밍 필수라
+          //   디스패치가 틀리면 자소서 대화가 통째로 죽는다
+          ['openai 모델 → openai 어댑터', 'coverletter_chat', 'openai'],
         ])('%s', async (_label, feature, expectedProvider) => {
           anthropic.callJsonStream = streamOnce();
           openai.callJsonStream = streamOnce();
@@ -1678,7 +1766,7 @@ describe('LlmService', () => {
           const events = await collect(
             service.callStream({
               userId: 'u-1',
-              feature: 'coverletter_chat',
+              feature: ANTHROPIC_FEATURE,
               systemPrompt: 's',
               userPrompt: 'u',
               jsonSchema: schema,
@@ -1699,7 +1787,7 @@ describe('LlmService', () => {
           const events = await collect(
             service.callStream({
               userId: 'u-1',
-              feature: 'coverletter_chat',
+              feature: ANTHROPIC_FEATURE,
               systemPrompt: 's',
               userPrompt: 'u',
               jsonSchema: schema,
@@ -1721,7 +1809,7 @@ describe('LlmService', () => {
         const events = await collect(
           service.callStream({
             userId: 'u-1',
-            feature: 'coverletter_chat',
+            feature: ANTHROPIC_FEATURE,
             systemPrompt: 's',
             userPrompt: 'u',
             jsonSchema: schema,
@@ -1761,7 +1849,7 @@ describe('LlmService', () => {
         const events = await collect(
           service.callStream({
             userId: 'u-1',
-            feature: 'coverletter_chat',
+            feature: ANTHROPIC_FEATURE,
             systemPrompt: 's',
             userPrompt: 'u',
             jsonSchema: schema,
@@ -1770,7 +1858,7 @@ describe('LlmService', () => {
 
         expect(costGuardMock.check).toHaveBeenCalledWith(
           'u-1',
-          'coverletter_chat',
+          ANTHROPIC_FEATURE,
         );
         expect(events.at(-1)?.type).toBe('done');
       });
@@ -1794,7 +1882,7 @@ describe('LlmService', () => {
         const events = (await collect(
           service.callStream({
             userId: 'u-1',
-            feature: 'coverletter_chat',
+            feature: ANTHROPIC_FEATURE,
             systemPrompt: 's',
             userPrompt: 'u',
             jsonSchema: schema,
@@ -1961,7 +2049,7 @@ describe('LlmService', () => {
 
       const gen1 = service.callStream({
         userId: 'u-1',
-        feature: 'coverletter_chat',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1972,7 +2060,7 @@ describe('LlmService', () => {
       const events2 = await collect(
         service.callStream({
           userId: 'u-1',
-          feature: 'coverletter_chat',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,

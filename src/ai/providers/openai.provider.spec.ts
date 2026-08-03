@@ -101,7 +101,7 @@ describe('OpenAIProvider', () => {
           { role: 'system', content: 'sys' },
           { role: 'user', content: 'user' },
         ],
-        max_tokens: 300,
+        max_completion_tokens: 300,
         temperature: 0.5,
       });
     });
@@ -249,6 +249,63 @@ describe('OpenAIProvider', () => {
    * 빠뜨리면 토큰 0 → **비용 0 · 코인 미차감**. 에러도 안 나고 응답도 정상이라
    * **아무도 모른 채 과금만 사라진다.** 그래서 요청 인자 자체를 spec 으로 박는다.
    */
+  /**
+   * 🔴 **`max_tokens` 는 gpt-5.6 에서 400 이다** (실측 2026-08-03:
+   * `Unsupported parameter: 'max_tokens' is not supported with this model`).
+   * gpt-4o 계열은 둘 다 되므로 **새 이름 하나로 통일**했다 — 세 경로가 갈리면
+   * "비스트리밍만 되고 스트리밍은 죽는" 식으로 어긋난다.
+   */
+  describe('출력 한도 파라미터 — 전 경로 통일', () => {
+    const okCompletion = {
+      choices: [{ message: { content: '{"r":"x"}' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    };
+    const SCHEMA_MIN = {
+      name: 'a',
+      schema: {
+        type: 'object',
+        properties: { r: { type: 'string' } },
+        required: ['r'],
+        additionalProperties: false,
+      },
+    };
+
+    it.each([
+      [
+        'complete',
+        (p: OpenAIProvider) =>
+          p.complete({
+            model: 'gpt-4o-mini',
+            systemPrompt: 's',
+            userPrompt: 'u',
+            maxTokens: 777,
+            temperature: 0.3,
+          }),
+      ],
+      [
+        'callJson',
+        (p: OpenAIProvider) =>
+          p.callJson({
+            model: 'gpt-4o-mini',
+            systemPrompt: 's',
+            userPrompt: 'u',
+            maxTokens: 777,
+            temperature: 0.3,
+            jsonSchema: SCHEMA_MIN,
+          }),
+      ],
+    ])(
+      '%s 는 max_completion_tokens 를 쓴다 (max_tokens 금지)',
+      async (_l, call) => {
+        mockCreate.mockResolvedValue(okCompletion);
+        await call(makeProvider());
+        const arg = mockCreate.mock.calls[0][0] as Record<string, unknown>;
+        expect(arg.max_completion_tokens).toBe(777);
+        expect(arg).not.toHaveProperty('max_tokens');
+      },
+    );
+  });
+
   describe('callJsonStream()', () => {
     const SCHEMA = {
       name: 'chat',
@@ -308,7 +365,7 @@ describe('OpenAIProvider', () => {
       mockCreate.mockResolvedValue(streamOf(['{"reply":"x"}'], USAGE));
       await collect(makeProvider().callJsonStream(REQ_JSON));
       const arg = mockCreate.mock.calls[0][0] as Record<string, unknown>;
-      expect(arg.max_tokens).toBe(REQ_JSON.maxTokens);
+      expect(arg.max_completion_tokens).toBe(REQ_JSON.maxTokens);
       expect(arg.temperature).toBe(REQ_JSON.temperature);
       expect(arg.model).toBe(REQ_JSON.model);
       // strict 스키마도 비스트리밍과 동일하게 실려야 한다
@@ -318,14 +375,18 @@ describe('OpenAIProvider', () => {
       });
     });
 
-    /** temperature 미지원 모델이면 **아예 전송하지 않는다** (전송 시 400) */
-    it('temperature 미지원 모델에는 전송하지 않는다', async () => {
+    /**
+     * 🔴 **gpt-5.6 은 temperature 를 기본값 1 외에는 400 으로 거부한다** (실측 2026-08-03).
+     * 우리 8개 feature 가 전부 temperature 를 지정하므로, 보내면 **전 호출이 죽는다.**
+     * 레지스트리가 `supportsTemperature: false` 로 선언해 아예 안 실리는지 고정한다.
+     */
+    it('gpt-5.6 에는 temperature 를 아예 싣지 않는다', async () => {
       mockCreate.mockResolvedValue(streamOf(['{"reply":"x"}'], USAGE));
       await collect(
         makeProvider().callJsonStream({ ...REQ_JSON, model: 'gpt-5.6-terra' }),
       );
       const arg = mockCreate.mock.calls[0][0] as Record<string, unknown>;
-      expect(arg).toHaveProperty('temperature'); // terra 는 지원 모델
+      expect(arg).not.toHaveProperty('temperature');
       expect(arg.model).toBe('gpt-5.6-terra');
     });
 

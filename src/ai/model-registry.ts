@@ -226,7 +226,11 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     },
     maxOutputTokens: 128_000,
     contextWindow: 1_050_000,
-    supportsTemperature: true,
+    // 🔴 **false 다** (실측 2026-08-03). 파라미터를 받긴 하지만 **기본값 1 외에는 400** —
+    //   `Unsupported value: 'temperature' does not support 0.3 ... Only the default (1)`.
+    //   우리 8개 feature 가 전부 temperature 를 지정하므로, true 로 두면 **전 호출이 400** 이다.
+    //   false = "보내지 않는다" 이고 그게 이 모델에서 유일하게 유효한 동작이다.
+    supportsTemperature: false,
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     // 추론 모델 — `reasoning_effort` 를 받는다. max_completion_tokens 가 작으면
@@ -247,7 +251,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     },
     maxOutputTokens: 128_000,
     contextWindow: 1_050_000,
-    supportsTemperature: true,
+    supportsTemperature: false, // terra 와 동일 — 기본값 1 외 400 (실측)
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     reasoning: { mode: 'effort' },

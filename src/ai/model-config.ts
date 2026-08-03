@@ -63,21 +63,36 @@ const FEATURE_MATRIX: Record<ActiveLlmFeature, ModelConfig> = {
   // F6 PR 2 — **모든 feature light 모델 강제** (memory `feedback_admin_quota_control` 비용 통제).
   // 한국어 품질 평가 후 사용자가 명시적으로 heavy 전환 결정 시 admin 매트릭스 갱신.
   coverletter_draft_v2: {
-    provider: 'anthropic',
-    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
-    defaultModel: 'claude-haiku-4-5',
+    // Phase 1 (2026-08-03) — 벤치 결과 Terra 확정 (ADR-062). 지어내기 0건 · 원가 27원/건
+    provider: 'openai',
+    modelEnvKey: 'OPENAI_MODEL_COVERLETTER',
+    defaultModel: 'gpt-5.6-terra',
     maxInputTokens: 16_000,
-    // D0 (2026-08-01) 2,000 → 6,000. 출력 = 자소서 본문 그 자체라 charLimit 에 정비례한다.
-    //   프롬프트가 "charLimit 의 92% 이상" 을 지시하므로: charLimit × 0.92 × (자당 토큰 ~1.5)
-    //   → 2,000자 문항 = 2,760 토큰 / 4,000자 문항 = 5,520 토큰. 6,000 이면 charLimit 4,000자까지 커버.
-    //   (자당 토큰 비율은 미실측 보수값 1.5 — count_tokens 실측 후 재조정)
-    maxOutputTokens: 6_000,
+    /**
+     * 6,000 → 8,000 (2026-08-03). D0 의 "자당 1.5" 는 **미실측 보수값**이었고,
+     * 실측은 Terra **0.546** 이다. 두 변화가 반대 방향이라 다시 계산했다:
+     *
+     *   본문  = 저장 가능한 최대 답변 10,000자(DTO MaxLength) × 0.546 = 5,460 토큰
+     *   추론  = Terra 실측 121~992 → 보수적으로 2,000 여유
+     *   합계  ≈ 7,460  → **8,000**
+     *
+     * 🔴 **추론 토큰이 새로 들어온 게 핵심이다.** gpt-5.6 은 추론 모델이라 출력 예산을
+     * 본문과 나눠 쓴다. 이걸 빼고 계산하면 사용자가 **잘린 자소서 + 정상 코인 차감**을 받는다
+     * (실제로 벤치 1차에서 Sonnet 5 가 예산 1,631 중 1,261 을 추론에 써 본문이 361자에서 잘렸다).
+     *
+     * 출력은 실제 생성분만 과금되므로 cap 상향의 직접 비용은 0 — 부족이 훨씬 위험하다.
+     */
+    maxOutputTokens: 8_000,
+    // ⚠️ gpt-5.6 은 temperature 기본값 1 외 400 → 레지스트리가 `supportsTemperature: false`
+    //   로 선언해 **전송되지 않는다**. 이 값은 다른 모델로 되돌릴 때를 위한 선언으로만 남는다.
     temperature: 0.5,
   },
   coverletter_feedback: {
-    provider: 'anthropic',
-    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
-    defaultModel: 'claude-haiku-4-5',
+    // Phase 1 (2026-08-03) — 자소서 트랙 통일. 점검도 "자료에 근거해 짚는" 작업이라
+    //   지어내기가 더 큰 위험이고, 그 축에서 Terra 가 이겼다 (ADR-062)
+    provider: 'openai',
+    modelEnvKey: 'OPENAI_MODEL_COVERLETTER',
+    defaultModel: 'gpt-5.6-terra',
     maxInputTokens: 16_000,
     // 🔴 D0 (2026-08-01 실사고 직접 원인) 1,500 → 6,000.
     //   1,500 은 스키마가 요구하는 최대 출력보다 **작았다** — 잘려서 `suggestions` 가 통째로 누락되고,
@@ -128,9 +143,11 @@ const FEATURE_MATRIX: Record<ActiveLlmFeature, ModelConfig> = {
   coverletter_chat: {
     // SSE 스트리밍으로 답변을 흘려보낸다 (LlmService.callStream)
     requiresStreaming: true,
-    provider: 'anthropic',
-    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
-    defaultModel: 'claude-haiku-4-5',
+    // Phase 1 (2026-08-03) — OpenAI 스트리밍 이식 후 이전. 초안을 Terra 가 쓰고
+    //   이어지는 대화는 다른 모델이 받으면 문체·지어내기 성향이 갈린다
+    provider: 'openai',
+    modelEnvKey: 'OPENAI_MODEL_COVERLETTER',
+    defaultModel: 'gpt-5.6-terra',
     maxInputTokens: 16_000,
     // D0 (2026-08-01) 5,000 → 8,000 + 스키마 `suggestedUpdates maxItems: 2` 로 상한 고정.
     //   기존 주석은 "5000자 JSON 필요 → maxTokens 5000" 이었는데 **자(char)와 토큰을 1:1 로 놓은 계산 오류**다.

@@ -41,6 +41,15 @@ export class OpenAIProvider implements LlmProvider {
     }
   }
 
+  /**
+   * 🔴 **출력 한도는 `max_completion_tokens` 로 보낸다** (실측 2026-08-03).
+   *
+   * `max_tokens` 는 gpt-5.6 계열에서 **400** 이다
+   * (`Unsupported parameter: 'max_tokens' is not supported with this model`).
+   * gpt-4o 계열은 **둘 다 200** 이라, 새 이름 하나로 통일하면 전 모델이 동작한다.
+   * 레지스트리 플래그를 새로 파지 않는 이유 — 등록된 OpenAI 모델 전부에서 같은 값이라
+   * 분기할 게 없다. 분기가 필요해지는 모델이 생기면 그때 선언으로 올린다.
+   */
   async complete(req: LlmProviderRequest): Promise<LlmProviderResponse> {
     this.assertAvailable();
     const completion = await this.client!.chat.completions.create({
@@ -56,7 +65,7 @@ export class OpenAIProvider implements LlmProvider {
             : req.userPrompt,
         },
       ],
-      max_tokens: req.maxTokens,
+      max_completion_tokens: req.maxTokens,
       ...temperatureArg(req.model, req.temperature),
     });
     return this.toResponse(completion);
@@ -79,7 +88,7 @@ export class OpenAIProvider implements LlmProvider {
             : req.userPrompt,
         },
       ],
-      max_tokens: req.maxTokens,
+      max_completion_tokens: req.maxTokens,
       ...temperatureArg(req.model, req.temperature),
       response_format: {
         type: 'json_schema',
@@ -156,7 +165,7 @@ export class OpenAIProvider implements LlmProvider {
             : req.userPrompt,
         },
       ],
-      max_tokens: req.maxTokens,
+      max_completion_tokens: req.maxTokens,
       ...temperatureArg(req.model, req.temperature),
       response_format: {
         type: 'json_schema',

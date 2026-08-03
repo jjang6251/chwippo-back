@@ -922,8 +922,18 @@ export class LlmService {
       };
       return;
     }
-    if (!this.anthropic.isAvailable) {
-      yield { type: 'error', message: 'ANTHROPIC_API_KEY 미설정' };
+    // 🔴 **실제로 쓸 provider 의 가용성을 본다** (2026-08-03).
+    //   이전엔 `this.anthropic.isAvailable` 을 provider 와 무관하게 확인했다 —
+    //   스트리밍이 Anthropic 전용이던 시절의 잔재다. Phase 1 에서 자소서 대화가
+    //   OpenAI 로 옮겨오면서, **ANTHROPIC_API_KEY 가 없으면 OpenAI 로 도는 기능까지
+    //   "ANTHROPIC_API_KEY 미설정" 으로 죽는** 상태가 됐다 (dev·부분 장애 시 재현).
+    const streamProvider =
+      cfg.provider === 'anthropic' ? this.anthropic : this.openai;
+    if (!streamProvider.isAvailable) {
+      yield {
+        type: 'error',
+        message: `${cfg.provider === 'anthropic' ? 'ANTHROPIC' : 'OPENAI'}_API_KEY 미설정`,
+      };
       return;
     }
 
@@ -964,8 +974,6 @@ export class LlmService {
     //   설정과 실제 호출이 어긋나는데 아무 신호가 없는 상태였다.
     //   (당시엔 OpenAI 어댑터에 스트리밍이 없어서 위 `supportsStreaming` 가드가
     //    먼저 막아 드러나지 않았을 뿐, 구현이 생기는 순간 실제 결함이 된다)
-    const streamProvider =
-      cfg.provider === 'anthropic' ? this.anthropic : this.openai;
     try {
       for await (const event of streamProvider.callJsonStream<T>({
         model: cfg.model,
