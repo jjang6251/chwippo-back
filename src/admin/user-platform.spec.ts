@@ -1,97 +1,55 @@
 /**
  * 사용 환경 판정 — 순수 함수 spec.
  *
- * 이 규칙이 목록 뱃지·상세·대시보드 **세 곳의 공통 근거**라, 여기가 틀리면 세 화면이 한꺼번에
- * 틀리고 **합계가 전체 인원과 안 맞는다.**
+ * 🔴 **이 spec 은 한 번 갈아엎였다** (2026-08-04). 직전 버전은 **UA 문자열**을 검증했고
+ * 14 케이스가 전부 통과했는데, **앱 사용자를 하나도 못 잡는 구현**이었다.
+ *
+ * 이유: 앱 로그인은 **네이티브 SDK** 로 이뤄져 WebView 를 거치지 않는다. UA 에 앱 표식이
+ * 애초에 없다. 즉 **테스트가 검증한 건 "규칙대로 동작하는가" 였지 "규칙이 맞는가" 가 아니었다.**
+ * 내가 만든 UA 픽스처는 실제 앱이 보내는 값이 아니라 **내가 그럴 거라 믿은 값**이었다.
+ *
+ * 그래서 판정 근거를 **로그인 엔드포인트라는 사실**로 바꿨다. 이 spec 은 이제 문자열이 아니라
+ * "스탬프가 찍혔는가" 만 본다 — 추측이 끼어들 자리가 없다.
  *
  * 시나리오:
- * - 앱 판정: 표식 포함 · 대소문자 · 실제 iOS/Android WebView UA
- * - 웹 판정: 데스크탑·모바일 브라우저 UA
- * - 🔴 부재: `null`·빈 문자열 → **앱도 웹도 아님** (웹으로 세면 없는 뱃지가 붙는다)
- * - 이력 롤업: 앱만 · 웹만 · 둘 다 · 없음
- * - 세그먼트: 4분류가 **서로 배타적**인가 (합계 = 전체 보장)
+ * - 스탬프 유무 → app/web (Date · ISO 문자열 · null · undefined)
+ * - 4분류 배타성 (합계 = 전체 보장)
  */
-import {
-  APP_UA_MARKER,
-  classifyUserAgents,
-  isAppUserAgent,
-  isWebUserAgent,
-  toSegment,
-} from './user-platform';
+import { classifyLoginStamps, toSegment } from './user-platform';
 
-/** 실제 UA 형태 — 앱은 WebView UA 뒤에 표식을 덧붙인다 */
-const APP_IOS = `Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 ${APP_UA_MARKER}/1.0.0`;
-const APP_ANDROID = `Mozilla/5.0 (Linux; Android 14; SM-S918N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 ${APP_UA_MARKER}/1.0.0`;
-const WEB_MAC =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const WEB_IPHONE_SAFARI =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+const T = new Date('2026-07-20T10:00:00Z');
 
-describe('isAppUserAgent', () => {
-  it('앱 WebView UA (iOS·Android) 를 앱으로 판정', () => {
-    expect(isAppUserAgent(APP_IOS)).toBe(true);
-    expect(isAppUserAgent(APP_ANDROID)).toBe(true);
+describe('classifyLoginStamps', () => {
+  it('앱 스탬프만 있으면 app_only', () => {
+    expect(toSegment(classifyLoginStamps(T, null))).toBe('app_only');
   });
 
-  it('대소문자가 달라도 판정한다', () => {
-    expect(isAppUserAgent(`x ${APP_UA_MARKER.toUpperCase()} y`)).toBe(true);
+  it('웹 스탬프만 있으면 web_only', () => {
+    expect(toSegment(classifyLoginStamps(null, T))).toBe('web_only');
   });
 
-  it('브라우저 UA 는 앱이 아니다', () => {
-    expect(isAppUserAgent(WEB_MAC)).toBe(false);
-    expect(isAppUserAgent(WEB_IPHONE_SAFARI)).toBe(false);
+  it('둘 다 있으면 both', () => {
+    expect(toSegment(classifyLoginStamps(T, T))).toBe('both');
   });
 
-  /**
-   * 🔴 아이폰 Safari 와 앱(iOS WebView)은 UA 앞부분이 거의 같다.
-   * **표식이 유일한 구분점**이라 이걸 놓치면 앱 사용자가 웹으로 뒤집힌다.
-   */
-  it('아이폰 Safari 와 아이폰 앱을 구분한다', () => {
-    expect(isAppUserAgent(APP_IOS)).toBe(true);
-    expect(isAppUserAgent(WEB_IPHONE_SAFARI)).toBe(false);
-  });
-});
-
-describe('부재 처리', () => {
-  /** UA 는 브라우저가 항상 보낸다 — 비어 있다는 건 정상 로그인이 아니라는 뜻 */
-  it.each([null, undefined, ''])('%p 은 앱도 웹도 아니다', (ua) => {
-    expect(isAppUserAgent(ua as string | null)).toBe(false);
-    expect(isWebUserAgent(ua as string | null)).toBe(false);
+  it('둘 다 없으면 none', () => {
+    expect(toSegment(classifyLoginStamps(null, null))).toBe('none');
   });
 
-  it('UA 가 하나도 없으면 segment 는 none', () => {
-    expect(toSegment(classifyUserAgents([]))).toBe('none');
-    expect(toSegment(classifyUserAgents([null, null]))).toBe('none');
-  });
-});
-
-describe('classifyUserAgents — 로그인 이력 롤업', () => {
-  it('앱으로만 로그인 → app_only', () => {
-    expect(toSegment(classifyUserAgents([APP_IOS, APP_IOS]))).toBe('app_only');
+  /** DB 드라이버가 문자열로 줄 수도 있다 — 값의 유무만 보므로 형태에 안 휘둘려야 한다 */
+  it('ISO 문자열로 와도 동일하게 판정한다', () => {
+    expect(classifyLoginStamps('2026-07-20T10:00:00Z', null)).toEqual({
+      app: true,
+      web: false,
+    });
   });
 
-  it('브라우저로만 로그인 → web_only', () => {
-    expect(toSegment(classifyUserAgents([WEB_MAC, WEB_IPHONE_SAFARI]))).toBe(
-      'web_only',
-    );
-  });
-
-  it('둘 다 → both', () => {
-    expect(toSegment(classifyUserAgents([WEB_MAC, APP_ANDROID]))).toBe('both');
-  });
-
-  /** 순서가 판정을 바꾸면 안 된다 */
-  it('이력 순서와 무관하다', () => {
-    expect(classifyUserAgents([APP_IOS, WEB_MAC])).toEqual(
-      classifyUserAgents([WEB_MAC, APP_IOS]),
-    );
-  });
-
-  /** 값 없는 이력이 섞여도 있는 것만으로 판정 */
-  it('null 이 섞여도 유효한 것만 본다', () => {
-    expect(toSegment(classifyUserAgents([null, APP_IOS, null]))).toBe(
-      'app_only',
-    );
+  /** 컬럼이 아직 없는 배포 창·미조회 필드 → undefined */
+  it('undefined 는 "없음" 으로 본다', () => {
+    expect(classifyLoginStamps(undefined, undefined)).toEqual({
+      app: false,
+      web: false,
+    });
   });
 });
 
