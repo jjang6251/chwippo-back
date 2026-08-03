@@ -1,6 +1,13 @@
 import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsNumber, IsOptional, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  Max,
+  Min,
+} from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -91,6 +98,23 @@ class UpdateAlertThresholdsDto {
   @Min(0)
   @Max(1000)
   perFeatureDailyCostUsd?: number;
+
+  // G-8 런타임 이상 알람 — 둘 다 건수라 컬럼이 INTEGER 다. 소수를 허용하면
+  // Postgres 가 반올림해 admin 이 입력한 값과 저장된 값이 달라진다 → IsInt.
+  // 하한 1 — 0 은 "매 tick 무조건 발화" 라 알람이 아니라 소음이 된다.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  outputTruncationCount1h?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  chargedFailureCount1h?: number;
 
   // AI 제공사 장애 알림 — 10분 error 임계(건) / 재발송 쿨다운(분)
   @IsOptional()

@@ -315,9 +315,82 @@ describe('buildCoverletterContext', () => {
     expect(r.meta.droppedRefIds).not.toContain('s-44');
   });
 
+  /**
+   * 🔴 **Phase 2-1 (2026-08-03) — 예산 4,000 → 12,000 의 실효 검증.**
+   *
+   * 이전 예산에서는 system prompt(657)를 빼면 자료에 3,343 토큰만 남아,
+   * 활동 로그 20개면 차고 **우선순위 꼴찌인 myinfo 가 통째로 사라졌다.**
+   * "숫자를 바꿨다" 가 아니라 **"예전에 잘리던 게 이제 들어간다"** 를 고정한다.
+   */
+  it('예산 상향 — 예전(4K)에 잘리던 자료량이 이제 들어간다', () => {
+    /**
+     * 크기를 **두 예산이 갈리는 구간**으로 잡는다 (로그 1개당 551~1,701자):
+     *   4,000 예산 → 자료 3,343 토큰 ≈ 10,029자  → 20,000자는 **잘린다**
+     *  12,000 예산 → 자료 11,343 토큰 ≈ 34,029자 → 20,000자는 **들어간다**
+     * 이 구간을 안 맞추면 한도를 되돌려도 spec 이 통과해 변이가 살아남는다.
+     */
+    const logs = Array.from({ length: 20 }, (_, i) => ({
+      refId: `r${i}`,
+      log: makeLog(`l${i}`, { content: `경험 ${i} ` + '내용'.repeat(250) }),
+    }));
+    const out = buildCoverletterContext({
+      application: DEFAULT_APP,
+      question: '지원동기',
+      category: '지원동기',
+      charLimit: 500,
+      selectedReflections: [],
+      aiRecommendedLogs: [],
+      selectedLogs: logs,
+      myinfo: {
+        ...EMPTY_MYINFO,
+        certs: [{ name: '정보처리기사', score: null }],
+      },
+    });
+
+    expect(out.meta.droppedCount).toBe(0);
+    expect(out.meta.logsUsed).toBe(20);
+    // 🔴 우선순위 꼴찌 — 예전엔 제일 먼저 통째로 사라지던 블록
+    expect(out.userPrompt).toContain('정보처리기사');
+  });
+
+  /** 호출부가 넘긴 예산이 상수보다 우선한다 (tier 를 켜기 위한 이음새) */
+  it('maxInputTokens 를 넘기면 그 값으로 예산을 잡는다', () => {
+    const logs = Array.from({ length: 20 }, (_, i) => ({
+      refId: `r${i}`,
+      log: makeLog(`l${i}`, { content: '내용'.repeat(125) }),
+    }));
+    const wide = buildCoverletterContext({
+      application: DEFAULT_APP,
+      question: '지원동기',
+      category: '지원동기',
+      charLimit: 500,
+      selectedReflections: [],
+      aiRecommendedLogs: [],
+      selectedLogs: logs,
+      myinfo: EMPTY_MYINFO,
+    });
+    const narrow = buildCoverletterContext({
+      application: DEFAULT_APP,
+      question: '지원동기',
+      category: '지원동기',
+      charLimit: 500,
+      selectedReflections: [],
+      aiRecommendedLogs: [],
+      selectedLogs: logs,
+      myinfo: EMPTY_MYINFO,
+      maxInputTokens: 1_500, // system prompt(657) 빼면 자료 예산이 거의 없다
+    });
+
+    expect(wide.meta.droppedCount).toBe(0);
+    expect(narrow.meta.droppedCount).toBeGreaterThan(0);
+  });
+
   it('token budget 초과 — 매우 긴 selected log 다수 → 나중 것들 drop', () => {
     // 한 log 가 약 1000자 → 약 333 토큰. 4K cap (- system) → 약 10개 안 들어감
-    const huge = 'A'.repeat(1000);
+    // Phase 2-1 (2026-08-03) — 예산 4,000 → 12,000. 예전 fixture(1,000자 × 20)는
+    // 이제 다 들어가서 drop 이 안 난다. **한도가 아니라 fixture 를 키운다** —
+    // 검증 대상은 "예산 초과 시 낮은 우선순위부터 떨어지는가" 이지 특정 숫자가 아니다.
+    const huge = 'A'.repeat(3000);
     const selectedLogs = Array.from({ length: 20 }, (_, i) => ({
       refId: `r-${i}`,
       log: makeLog(`l-${i}`, { content: huge }),
@@ -393,7 +466,7 @@ describe('buildCoverletterContext', () => {
 
   it('myinfo 가 budget 초과 → 통째 drop (droppedRefIds 무영향, ref 가 아님)', () => {
     // 4K cap - system(~150) - header(~80) ≈ 3800 budget. 25000자 → 8333 토큰 > 3800
-    const hugeDraft = 'X'.repeat(25_000);
+    const hugeDraft = 'X'.repeat(60_000); // 예산 12,000 토큰(≈36,000자)을 확실히 넘긴다
     const myinfo: MyinfoSafeDump = {
       coverletterDrafts: [
         { category: 'background', question: 'q', answer: hugeDraft },

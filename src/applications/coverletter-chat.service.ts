@@ -54,7 +54,18 @@ import { ActivityLog } from '../activity/entities/activity-log.entity';
  */
 
 const MESSAGES_GET_LIMIT = 100;
-const MESSAGES_HISTORY_TURN_LIMIT = 6; // multi-turn context 메시지 수 (3 turn)
+/**
+ * Phase 2-2 (2026-08-03) — **6 → 20.**
+ *
+ * 6개(=3턴)면 조금만 대화해도 앞 내용을 잊어 **"아까 말했잖아"** 가 난다.
+ * 자소서 대화는 한 문항을 여러 번 다듬는 흐름이라 3턴은 짧다.
+ *
+ * 비용 근거 (dev 실측: user 평균 20자 · assistant 평균 159자):
+ *   20개 ≈ 1,790자 → 977 토큰 = 12,000 예산의 **8%**
+ *   최악(assistant 505자) 이어도 3,030 토큰 = **25%**
+ * 이력은 `content` 만 넣고 `suggestedUpdates`(자소서 전문)는 제외라 생각보다 가볍다.
+ */
+const MESSAGES_HISTORY_TURN_LIMIT = 20;
 const MESSAGES_PER_APP_CAP = 1000;
 const USER_MESSAGE_MAX_LEN = 5000;
 
@@ -76,15 +87,17 @@ const SYSTEM_PROMPT = `당신은 자소서 작성을 도와주는 AI 어시스�
 **핵심 규칙 (반드시 지킬 것):**
 - **자소서 답변을 작성하면 무조건 suggestedUpdates 배열에 담아라.** reply 본문에 markdown 으로 답변을 길게 쓰지 마라.
   - ❌ 잘못: reply 에 "## Q1 ... 본문 ... ## Q2 ... 본문 ..."
-  - ✅ 옳음: reply 에 "Q1~Q4 4개 문항 답변을 작성했습니다. 각 카드에서 [✓ 이 문항에 적용] 으로 반영하세요." + suggestedUpdates 에 4개 객체
-- "전체 답변 생성" 명령 → suggestedUpdates 에 N개 문항 모두 포함 (N개 객체).
+  - ✅ 옳음: reply 에 "Q1~Q2 2개 문항 답변을 작성했습니다. 각 카드에서 [✓ 이 문항에 적용] 으로 반영하세요." + suggestedUpdates 에 2개 객체
+- **suggestedUpdates 는 한 번에 최대 2개까지만 담는다** (스키마 상한).
+  "전체 답변 생성" 처럼 여러 문항을 한 번에 요청받아도 **앞 2개만 작성**하고, 나머지는 아래 분할 안내를 따르라.
 - 여러 문항을 한 번에 쓸 때는 **대표 경험을 문항 간 겹치지 않게 배분**하라 — 같은 경험을
   두 문항 이상에서 재사용하면 자소서 전체가 단조로워진다. 배분할 자료가 부족하면 재탕하지 말고
   해당 문항에 [정보 부족: 다른 경험 자료 필요] 를 표시하라.
-  - **단, 문항이 5개 이상이면 앞 4개만 이번에 작성**하고 reply 끝에 "나머지 N개 문항은 '나머지 답변도 작성해줘' 로 이어서 요청해주세요" 를 안내하라. (출력 상한으로 답변이 잘리는 것보다 의도된 2회 분할이 낫고, 답변당 품질도 유지된다)
+  - **문항이 3개 이상이면 앞 2개만 이번에 작성**하고 reply 끝에 "나머지 N개 문항은 '나머지 답변도 작성해줘' 로 이어서 요청해주세요" 를 반드시 안내하라. 안내가 없으면 사용자는 나머지가 왜 안 나왔는지 알 수 없다. (출력 상한으로 답변이 잘리는 것보다 의도된 분할이 낫고, 답변당 품질도 유지된다 — 스키마에서 2개로 강제됨)
   - "나머지 답변도 작성해줘" 류 후속 요청 → 아직 답변이 비어 있는 문항들만 이어서 작성.
 - "Q3 다시 써줘" → suggestedUpdates 에 Q3 1개만.
-- "검수" 또는 "어떻게 생각해" 같은 질문 → reply 만, suggestedUpdates 빈 배열 또는 생략.
+- "검수" 또는 "어떻게 생각해" 같은 질문 → reply 만 쓰고 **suggestedUpdates 는 빈 배열**.
+- **suggestedUpdates 는 항상 포함한다.** 제안할 게 없으면 생략하지 말고 빈 배열을 넣어라 (스키마 필수 필드).
 - clId 는 컨텍스트의 자소서 문항 ID (UUID) 만 사용. 번호·문자열 X.
 - newAnswer 는 charLimit 이내를 목표로. 좋은 내용을 지키려 다소 넘는 건 허용 — 사용자는 마지막에 AI 심층 점검으로 다듬는다. 단어 잘리지 않게.
 - **"추가해줘" 류 요청이라도 charLimit 초과 금지** — 현재 답변이 이미 제한에 근접·초과한 문항에 내용을 더하라는 요청이 오면, 덧붙이지 말고 기존 내용을 압축해 새 내용과 함께 **제한 안에서 재구성**하라. 제한을 지킬 수 없으면 reply 에 "제한(N자) 때문에 A 를 빼고 B 를 넣었어요" 처럼 무엇을 뺐는지 알려라.
@@ -126,7 +139,8 @@ const SYSTEM_PROMPT = `당신은 자소서 작성을 도와주는 AI 어시스�
 - "1번", "Q2", "두 번째 문항" 으로 지칭 → 컨텍스트의 ## Q1·Q2 순서로 매핑.
 - suggestedUpdates 응답에는 항상 정확한 clId (UUID) 사용.`;
 
-const CHAT_JSON_SCHEMA = {
+/** G-1 — cross-provider 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const CHAT_JSON_SCHEMA = {
   name: 'coverletter_chat_response',
   schema: {
     type: 'object',
@@ -134,6 +148,10 @@ const CHAT_JSON_SCHEMA = {
       reply: { type: 'string' },
       suggestedUpdates: {
         type: 'array',
+        // 🔴 D0 (2026-08-01) — 출력 상한 고정. 문항 수에 비례해 출력이 커지면 잘림을 막을 수 없다.
+        //   한도를 계속 키우는 대신 **개수를 스키마로 박아** 최악 출력량을 예측 가능하게 만든다.
+        //   (2문항 × 1,500자 ≈ 5,500 토큰 < maxOutputTokens 8,000)
+        maxItems: 2,
         items: {
           type: 'object',
           properties: {
@@ -145,7 +163,19 @@ const CHAT_JSON_SCHEMA = {
         },
       },
     },
-    required: ['reply'],
+    /**
+     * G-1 — `suggestedUpdates` 를 required 로 승격.
+     *
+     * 🔴 **OpenAI strict 는 `properties` 의 모든 키가 `required` 에 있어야 한다** (실측:
+     * `400 'required' is required to be supplied and to be an array including every key
+     * in properties`). optional 필드가 하나라도 있으면 이 feature 는 OpenAI 모델로
+     * 전환 자체가 불가능하다 — "고르면 죽는 조합" 이 된다.
+     *
+     * Anthropic tool_use 는 required 여부를 강제하지 않으므로 이 변경으로 잃는 게 없다.
+     * 대신 모델이 항상 값을 내야 하므로 프롬프트에 "제안이 없으면 빈 배열" 을 명시했다.
+     * (`maxItems` 는 OpenAI strict 에서도 통과하는 것을 실측 확인 — 유지)
+     */
+    required: ['reply', 'suggestedUpdates'],
     additionalProperties: false,
   },
 };

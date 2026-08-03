@@ -24,6 +24,10 @@ export type AuditAction =
   // adminUserId = NULL (시스템 자동), targetType = 'user', targetId = userId
   // detail: { reason, duration_days, daily_cap_override, triggered_feature, consecutive_days }
   | 'auto_ban_ai'
+  // G-1 — feature 별 LLM 모델 전환 (재배포 없이 즉시 반영되므로 이력이 특히 중요)
+  // targetType = 'feature_model_config', targetId = feature
+  // detail: { before: {provider, model}, after: {provider, model} }
+  | 'update_feature_model'
   | 'set_user_ai_quota_override' // cost hardening B-4 — admin 수동 개별 한도 설정
   | 'clear_user_ai_quota_override' // cost hardening B-4 — 수동 해제
   // F6 PR 2 — admin 이 feature_quota_configs 변경 (dayLimit·monthLimit·cooldown·enabled)

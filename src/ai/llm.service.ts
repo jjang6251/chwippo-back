@@ -9,6 +9,7 @@ import { User } from '../users/user.entity';
 import {
   LlmCallLog,
   LlmCallStatus,
+  ActiveLlmFeature,
   LlmFeature,
   LlmProviderName,
 } from './entities/llm-call-log.entity';
@@ -16,12 +17,15 @@ import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
-import { getFallbackConfig, getModelConfig } from './model-config';
+import { getFallbackConfig } from './model-config';
+import { ModelConfigService } from './model-config.service';
+import { getModelSpec } from './model-registry';
 import { scrubJsonOutputPii, scrubOutputPii, scrubPii } from './pii-scrubber';
 import {
   LlmJsonParseError,
   LlmProvider,
   LlmProviderJsonRequest,
+  LlmProviderResponse,
 } from './providers/llm-provider.interface';
 import { OpenAIProvider } from './providers/openai.provider';
 import { AnthropicProvider } from './providers/anthropic.provider';
@@ -45,7 +49,11 @@ export const PROVIDER_OUTAGE_USER_MESSAGE =
 
 export interface LlmCallInput {
   userId: string;
-  feature: LlmFeature;
+  /**
+   * 🔴 `ActiveLlmFeature` — **퇴역 feature 로는 호출이 컴파일되지 않는다.**
+   * (감사 이력용 `LlmFeature` 와 구분: 저장은 넓게, 호출은 좁게)
+   */
+  feature: ActiveLlmFeature;
   /** @deprecated PR 0 — getModelConfig(feature) 로 자동 결정. 무시됨 */
   modelTier?: LlmModelTier;
   systemPrompt: string;
@@ -65,6 +73,19 @@ export interface LlmCallInput {
   preBlockedReason?: string;
   /** PR 0 — structured JSON output 필요 시 schema 전달. callJson 경로 활성화 */
   jsonSchema?: LlmProviderJsonRequest['jsonSchema'];
+  /**
+   * D0 (2026-08-01 자소서 점검 크래시) — **caller 도메인 검증**.
+   *
+   * provider 의 `json-schema-guard` 가 *형식*(required 존재·type 일치)을 본다면, 이 콜백은
+   * caller 가 *내용*을 본다 (예: 점검 결과인데 `issues` 도 `summary` 도 비어 있음).
+   *
+   * 위반 사유 문자열을 반환하면 `LlmJsonParseError` 로 승격되어 **기존 재시도(attempts<2)**
+   * 경로를 그대로 탄다. 2회 모두 실패하면 `status='error'` 가 되고, **코인 차감은
+   * `status='ok'` 경로에서만 일어나므로 자동으로 차감되지 않는다** — 환불 경로가 필요 없다.
+   *
+   * 유효하면 `null` 을 반환한다. 순수 함수여야 하며 부수효과를 넣지 말 것 (재시도 시 재실행됨).
+   */
+  validateResult?: (json: unknown) => string | null;
 }
 
 export interface LlmCallOk {
@@ -87,6 +108,13 @@ export interface LlmCallOk {
   webSearchCount?: number;
   /** PR_B1 — 차감된 코인 (0 = 차감 X — charges_coins=false 또는 COIN_SYSTEM_ENABLED=false) */
   coinCost?: number;
+  /**
+   * D0 — **`'length'` 면 출력 토큰 한도에 걸려 응답이 잘렸다**는 뜻.
+   *
+   * 필수 필드는 다 있어 검증을 통과했지만 배열이 짧게 끝났을 수 있다 (예: 지적사항 6개 → 3개).
+   * caller 가 사용자에게 "일부만 생성됐다"고 알릴 근거. 코인은 정상 차감된다 (부분 결과도 가치가 있음).
+   */
+  finishReason?: LlmProviderResponse['finishReason'];
 }
 
 /**
@@ -178,6 +206,8 @@ export class LlmService {
     private readonly costGuard: CostGuardService, // AI cost guard — per-user/per-feature daily USD cap
     // 제공사 장애 감시 — error audit 직후 hook (provider_outage 분류일 때만, best-effort)
     private readonly outageAlert: ProviderOutageAlertService,
+    // G-1 — feature 별 모델 해석 (DB → env → 코드 기본값)
+    private readonly modelConfig: ModelConfigService,
     // 웨이브 C 승격 — 레플리카 간 공유 in-flight lock. REDIS_URL 미설정 시 null → Map 폴백.
     @Optional()
     @Inject(REDIS_CLIENT)
@@ -215,7 +245,7 @@ export class LlmService {
       return this.callGuarded(input);
     }
     if (!(await this.tryAcquireInFlight(input.userId, input.feature))) {
-      const cfg = getModelConfig(input.feature, this.config);
+      const cfg = await this.modelConfig.resolve(input.feature);
       return this.saveInFlightBlocked(input, cfg.model, cfg.provider);
     }
     try {
@@ -227,7 +257,7 @@ export class LlmService {
 
   private async callGuarded(input: LlmCallInput): Promise<LlmCallResult> {
     const startedAt = Date.now();
-    const cfg = getModelConfig(input.feature, this.config);
+    const cfg = await this.modelConfig.resolve(input.feature);
     if (cfg.provider === 'mock') {
       throw new Error(
         `getModelConfig 가 cfg.provider='mock' 반환 — FEATURE_MATRIX 점검 필요 (feature=${input.feature})`,
@@ -396,6 +426,8 @@ export class LlmService {
           cacheReadTokens?: number;
           webSearchCount?: number;
           json?: unknown;
+          /** D0 — 'length' 면 출력 잘림. audit 에 기록해 사후 관측 */
+          finishReason: LlmProviderResponse['finishReason'];
         };
         if (input.jsonSchema) {
           result = await provider.callJson({
@@ -416,6 +448,28 @@ export class LlmService {
             maxTokens: cfg.maxOutputTokens,
             temperature: cfg.temperature,
           });
+        }
+
+        // ── 6.5. D0 — caller 도메인 검증 (provider 형식 검증의 다음 단계) ──
+        //   provider 는 required·type 을, 여기서는 caller 가 "내용이 쓸모 있는가"를 본다.
+        //   throw → 기존 재시도(attempts<2) → 2회 실패 시 status='error' → **charge 미실행**.
+        //   PII 스크럽 *전* 원본으로 검증한다 (스크럽이 내용 유무 판단을 바꾸지 않도록).
+        if (input.validateResult && result.json !== undefined) {
+          const invalidReason = input.validateResult(result.json);
+          if (invalidReason) {
+            throw new LlmJsonParseError(
+              cfg.provider,
+              JSON.stringify(result.json).slice(0, 500),
+              `result rejected by caller — ${invalidReason}`,
+              {
+                promptTokens: result.promptTokens,
+                completionTokens: result.completionTokens,
+                cacheCreationTokens: result.cacheCreationTokens,
+                cacheReadTokens: result.cacheReadTokens,
+                webSearchCount: result.webSearchCount,
+              },
+            );
+          }
         }
 
         // ── 7. 응답 PII 역방향 스크럼 (hallucination 차단) ──
@@ -475,6 +529,8 @@ export class LlmService {
             latencyMs: 0,
             outputRedacted: false,
             attempts: 1,
+            // D0 — parse 실패의 원인 구분. 'length' 면 잘림, 그 외면 모델 오작동.
+            finishReason: failedUsage?.finishReason,
           });
         }
 
@@ -489,6 +545,7 @@ export class LlmService {
             cacheReadTokens: result.cacheReadTokens,
             webSearchCount: result.webSearchCount,
           },
+          cfg.model,
         );
 
         const log = await this.saveAudit({
@@ -510,6 +567,9 @@ export class LlmService {
           latencyMs,
           outputRedacted,
           attempts,
+          // D0 — 성공했어도 'length' 면 **부분 잘림**이다. 필수 필드는 다 있어 통과했지만
+          //   issues 가 6개 대신 3개로 끝났을 수 있다. 사용자 안내·빈도 관측의 근거.
+          finishReason: result.finishReason,
         });
 
         return {
@@ -522,6 +582,7 @@ export class LlmService {
           cacheReadTokens: result.cacheReadTokens,
           webSearchCount: result.webSearchCount,
           coinCost: chargeResult.coinCost,
+          finishReason: result.finishReason, // D0 — caller 가 잘림 안내에 사용
           costUsd,
           latencyMs,
           callLogId: log.id,
@@ -594,6 +655,8 @@ export class LlmService {
                 promptTokens: number;
                 completionTokens: number;
                 json?: unknown;
+                /** D0 — 폴백 응답의 잘림도 동일하게 관측 */
+                finishReason: LlmProviderResponse['finishReason'];
               };
               if (input.jsonSchema) {
                 fbResult = await fbProvider.callJson({
@@ -639,6 +702,9 @@ export class LlmService {
                   outputTokens: fbResult.completionTokens,
                   // fallback (openai) 는 cache_creation·cache_read·web_search 없음
                 },
+                // 🔴 1차가 아니라 **fallback 모델**의 단가로 과금해야 한다.
+                //   provider 가 바뀌면 단가도 바뀌는데 지금까지 1차 기준으로 계산됐다.
+                fallbackCfg.model,
               );
 
               const fbLog = await this.saveAudit({
@@ -655,6 +721,7 @@ export class LlmService {
                 latencyMs: fbLatency,
                 outputRedacted: fbOutputRedacted,
                 attempts: attempts + 1,
+                finishReason: fbResult.finishReason, // D0 — 폴백 응답의 잘림도 관측
                 coinCost: fbChargeResult.coinCost.toString(),
                 costBreakdown: fbChargeResult.breakdown,
               });
@@ -714,6 +781,8 @@ export class LlmService {
           latencyMs: Date.now() - startedAt,
           outputRedacted: false,
           attempts,
+          // D0 — 재시도까지 실패한 최종 행. 'length' 면 **한도 부족이 근본 원인**이라는 신호다.
+          finishReason: parseUsage?.finishReason,
         });
         // 1차 오류(err) 기준 분류 — fallback 까지 실패해도 err 는 1차 오류 그대로다.
         const errorKind = this.classifyErrorKind(err);
@@ -766,7 +835,7 @@ export class LlmService {
       useLock &&
       !(await this.tryAcquireInFlight(input.userId, input.feature))
     ) {
-      const cfg = getModelConfig(input.feature, this.config);
+      const cfg = await this.modelConfig.resolve(input.feature);
       await this.saveInFlightBlocked(input, cfg.model, cfg.provider);
       yield {
         type: 'error',
@@ -814,7 +883,7 @@ export class LlmService {
       input.feature,
     );
     if (streamCostGuard.blocked) {
-      const cfgForAudit = getModelConfig(input.feature, this.config);
+      const cfgForAudit = await this.modelConfig.resolve(input.feature);
       await this.saveBlocked(
         input,
         cfgForAudit.model,
@@ -830,17 +899,41 @@ export class LlmService {
       return;
     }
 
-    // 2. provider 결정 — anthropic 만 streaming 지원
-    const cfg = getModelConfig(input.feature, this.config);
-    if (cfg.provider !== 'anthropic') {
+    // 2. 모델이 스트리밍을 지원하는가 — **provider 가 아니라 모델 선언 기준**
+    //
+    // G-1 이전에는 `cfg.provider !== 'anthropic'` 로 판정했다. provider 단위로 보면
+    // "같은 회사인데 이 모델만 스트리밍이 안 되는" 경우나 "OpenAI 스트리밍을 나중에
+    // 구현한 경우" 를 표현할 수 없다. 레지스트리의 `supportsStreaming` 은
+    // **우리 어댑터 기준 end-to-end 가능 여부**라 그대로 쓰면 된다.
+    //
+    // 🔴 **조용히 비스트리밍으로 폴백하지 않는다.** 폴백하면 관리자가 모델을 잘못
+    // 골라도 아무도 모른 채 사용자 경험만 나빠진다. 여기서 명시적으로 실패시키고,
+    // 애초에 못 고르게 막는 건 admin 저장 시 검증(B-12)이 담당한다.
+    const cfg = await this.modelConfig.resolve(input.feature);
+    const streamSpec = getModelSpec(cfg.model);
+    if (!streamSpec?.supportsStreaming) {
+      this.logger.error(
+        `스트리밍 미지원 모델로 callStream 진입 (feature=${input.feature}, ` +
+          `model=${cfg.model}) — admin 모델 설정을 확인하세요.`,
+      );
       yield {
         type: 'error',
-        message: `streaming 은 anthropic 전용 (현재 ${cfg.provider})`,
+        message: `현재 설정된 모델(${cfg.model})은 실시간 응답을 지원하지 않아요.`,
       };
       return;
     }
-    if (!this.anthropic.isAvailable) {
-      yield { type: 'error', message: 'ANTHROPIC_API_KEY 미설정' };
+    // 🔴 **실제로 쓸 provider 의 가용성을 본다** (2026-08-03).
+    //   이전엔 `this.anthropic.isAvailable` 을 provider 와 무관하게 확인했다 —
+    //   스트리밍이 Anthropic 전용이던 시절의 잔재다. Phase 1 에서 자소서 대화가
+    //   OpenAI 로 옮겨오면서, **ANTHROPIC_API_KEY 가 없으면 OpenAI 로 도는 기능까지
+    //   "ANTHROPIC_API_KEY 미설정" 으로 죽는** 상태가 됐다 (dev·부분 장애 시 재현).
+    const streamProvider =
+      cfg.provider === 'anthropic' ? this.anthropic : this.openai;
+    if (!streamProvider.isAvailable) {
+      yield {
+        type: 'error',
+        message: `${cfg.provider === 'anthropic' ? 'ANTHROPIC' : 'OPENAI'}_API_KEY 미설정`,
+      };
       return;
     }
 
@@ -875,8 +968,14 @@ export class LlmService {
     const promptExcerpt = userPrompt.slice(0, 200);
 
     // 5. streaming
+    //
+    // 🔴 provider 로 **디스패치**한다. 이전에는 `this.anthropic` 이 하드코딩돼 있어,
+    //   admin 이 모델을 OpenAI 로 바꿔도 스트리밍은 Anthropic 으로 나갔다 —
+    //   설정과 실제 호출이 어긋나는데 아무 신호가 없는 상태였다.
+    //   (당시엔 OpenAI 어댑터에 스트리밍이 없어서 위 `supportsStreaming` 가드가
+    //    먼저 막아 드러나지 않았을 뿐, 구현이 생기는 순간 실제 결함이 된다)
     try {
-      for await (const event of this.anthropic.callJsonStream<T>({
+      for await (const event of streamProvider.callJsonStream<T>({
         model: cfg.model,
         systemPrompt,
         cachedContext,
@@ -918,6 +1017,7 @@ export class LlmService {
               cacheReadTokens: event.response.cacheReadTokens,
               webSearchCount: event.response.webSearchCount,
             },
+            cfg.model,
           );
 
           const log = await this.saveAudit({
@@ -939,6 +1039,7 @@ export class LlmService {
             latencyMs,
             outputRedacted,
             attempts: 1,
+            finishReason: event.response.finishReason, // D0 — 스트림 부분 잘림 관측
           });
           yield {
             type: 'done',
@@ -981,6 +1082,7 @@ export class LlmService {
                   cacheCreationTokens: streamParseUsage.cacheCreationTokens,
                   cacheReadTokens: streamParseUsage.cacheReadTokens,
                   webSearchCount: streamParseUsage.webSearchCount,
+                  // D0 참고 — finishReason 은 cost 계산에 안 쓰이고 아래 saveAudit 에서 별도 기록
                 },
               ),
             )
@@ -988,6 +1090,7 @@ export class LlmService {
         latencyMs: Date.now() - startedAt,
         outputRedacted: false,
         attempts: 1,
+        finishReason: streamParseUsage?.finishReason, // D0 — 스트림 잘림 관측
       });
       // 스트림 경로도 error audit 직후 hook (coverletter_chat 이 주력 스트림 UX).
       const errorKind = this.classifyErrorKind(err);
@@ -1256,12 +1359,13 @@ export class LlmService {
    */
   async auditCacheHitCharge(args: {
     userId: string;
-    feature: LlmFeature;
+    /** 캐시 히트 과금도 **살아있는 feature** 에만 발생한다 */
+    feature: ActiveLlmFeature;
     coinCost: string;
     resourceType?: string;
     resourceId?: string;
   }): Promise<void> {
-    const cfg = getModelConfig(args.feature, this.config);
+    const cfg = await this.modelConfig.resolve(args.feature);
     try {
       await this.saveAudit({
         input: {
@@ -1316,6 +1420,8 @@ export class LlmService {
     coinCost?: string;
     /** PR_B1 — cost USD 분해 5 키 (input/output/cache_creation/cache_read/web_search) */
     costBreakdown?: Record<string, number>;
+    /** D0 — provider 종료 사유. 'length' = 출력 잘림. provider 미호출 경로는 undefined */
+    finishReason?: LlmProviderResponse['finishReason'];
   }): Promise<LlmCallLog> {
     return this.logRepo.save(
       this.logRepo.create({
@@ -1340,6 +1446,7 @@ export class LlmService {
         promptExcerpt: args.promptExcerpt,
         outputRedacted: args.outputRedacted,
         attempts: args.attempts,
+        finishReason: args.finishReason ?? null,
       }),
     );
   }

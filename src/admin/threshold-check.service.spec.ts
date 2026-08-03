@@ -297,11 +297,118 @@ describe('ThresholdCheckService', () => {
       jest.spyOn(service, 'checkDailyCost').mockResolvedValue();
       jest.spyOn(service, 'checkHourlyErrorRate').mockResolvedValue();
       jest.spyOn(service, 'checkVsYesterday').mockResolvedValue();
+      jest.spyOn(service, 'checkOutputTruncation').mockResolvedValue();
+      jest.spyOn(service, 'checkChargedFailure').mockResolvedValue();
       const spy = jest
         .spyOn(service, 'checkAbnormalCoinUsage')
         .mockResolvedValue();
       await service.tick();
       expect(spy).toHaveBeenCalledWith(200);
+    });
+  });
+
+  /**
+   * G-8 — 배포 후에만 드러나는 이상을 잡는 두 알람.
+   *
+   * 둘 다 **정상 상태에서 0 이어야 하는** 지표라, "몇 건이면 이상한가" 가 아니라
+   * "0 이 아니면 이상하다" 가 판단 기준이다. 그래서 경계값(`threshold-1` / `threshold`)을
+   * 양쪽 다 못 박는다 — `<` 를 `<=` 로 바꾸는 실수가 곧 알람 1건 유실이다.
+   */
+  describe('checkOutputTruncation', () => {
+    it('잘림 0건 → 무알림', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(makeQb<LlmCallLog>([]));
+      await service.checkOutputTruncation(3);
+      expect(discord.notify).not.toHaveBeenCalled();
+      expect(historyRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('경계 — threshold-1 건이면 아직 무알림', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([{ feature: 'coverletter_chat', cnt: '2' }]),
+      );
+      await service.checkOutputTruncation(3);
+      expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    it('경계 — 정확히 threshold 건이면 발화', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([{ feature: 'coverletter_chat', cnt: '3' }]),
+      );
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
+      discord.notify.mockResolvedValue('sent');
+      await service.checkOutputTruncation(3);
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ alertType: 'output_truncation' }),
+      );
+    });
+
+    /**
+     * feature 별로 흩어져 있으면 각각은 임계 미만이라 **개별로는 안 걸린다.**
+     * 합산으로 판정하지 않으면 "여러 기능이 조금씩 잘리는" 상황을 통째로 놓친다.
+     */
+    it('여러 feature 에 흩어져 있어도 합산으로 판정한다', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([
+          { feature: 'coverletter_chat', cnt: '2' },
+          { feature: 'coverletter_review', cnt: '2' },
+        ]),
+      );
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
+      discord.notify.mockResolvedValue('sent');
+      await service.checkOutputTruncation(3);
+      // 어느 기능의 cap 이 부족한지가 바로 조치 대상이라 메시지에 feature 가 들어가야 한다
+      expect(discord.notify).toHaveBeenCalledWith(
+        expect.stringContaining('coverletter_review'),
+        expect.anything(),
+      );
+    });
+
+    it("finish_reason='length' 조건으로 조회한다", async () => {
+      const qb = makeQb<LlmCallLog>([]);
+      logRepo.createQueryBuilder.mockReturnValueOnce(qb);
+      await service.checkOutputTruncation(3);
+      expect(qb.andWhere).toHaveBeenCalledWith("l.finish_reason = 'length'");
+    });
+  });
+
+  describe('checkChargedFailure', () => {
+    it('차감 후 실패 0건 → 무알림', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(makeQb<LlmCallLog>([]));
+      await service.checkChargedFailure(1);
+      expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    /** 돈만 잃는 실패라 임계 1 — **1건에서 바로** 울려야 한다 */
+    it('1건이면 즉시 발화 + 잃은 코인 수를 알린다', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([
+          { feature: 'coverletter_chat', cnt: '1', coins: '12' },
+        ]),
+      );
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
+      discord.notify.mockResolvedValue('sent');
+      await service.checkChargedFailure(1);
+      expect(discord.notify).toHaveBeenCalledWith(
+        expect.stringContaining('12코인'),
+        expect.anything(),
+      );
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ alertType: 'charged_failure' }),
+      );
+    });
+
+    it('차감됐고 실패한 것만 조회한다 (성공 호출·미차감 실패 제외)', async () => {
+      const qb = makeQb<LlmCallLog>([]);
+      logRepo.createQueryBuilder.mockReturnValueOnce(qb);
+      await service.checkChargedFailure(1);
+      expect(qb.andWhere).toHaveBeenCalledWith('l.coin_cost > 0');
+      expect(qb.andWhere).toHaveBeenCalledWith("l.status <> 'ok'");
     });
   });
 });

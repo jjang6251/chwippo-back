@@ -418,4 +418,174 @@ describe('AiCoverletterFeedbackService', () => {
     expect(r.status).toBe('error');
     expect(clRepo.update).not.toHaveBeenCalled();
   });
+
+  /**
+   * D0 (2026-08-01 자소서 점검 크래시) — 응답 정규화 · 빈 결과 판정 · 잘림 플래그.
+   *
+   * 사고 체인: LLM 응답에 `suggestions` 누락 → 백엔드가 `as` 캐스팅으로 그대로 저장 →
+   * 프론트가 `suggestions.length` 를 읽어 크래시. 아래는 그 체인의 **백엔드 구간**을 고정한다.
+   */
+  describe('D0 — 응답 정규화 · 빈 결과 · 잘림', () => {
+    /** llm.call 에 넘긴 validateResult 콜백을 꺼내 직접 검증 (재시도 루프는 LlmService 책임) */
+    const getValidateResult = (): ((json: unknown) => string | null) => {
+      const arg = llm.call.mock.calls[0][0] as {
+        validateResult?: (json: unknown) => string | null;
+      };
+      if (!arg.validateResult)
+        throw new Error('validateResult 가 전달되지 않았다');
+      return arg.validateResult;
+    };
+
+    const reviewWithJson = async (json: unknown, finishReason?: string) => {
+      llm.call.mockResolvedValue({
+        status: 'ok',
+        text: '',
+        json,
+        promptTokens: 400,
+        completionTokens: 200,
+        coinCost: 3,
+        costUsd: 0.002,
+        latencyMs: 800,
+        callLogId: 'log-fb',
+        outputRedacted: false,
+        finishReason,
+      } as never);
+      return service.review(USER_ID, CL_ID);
+    };
+
+    describe('정규화 — 저장·반환 형태를 항상 고정', () => {
+      it('🔴 suggestions 가 누락돼도 [] 로 정규화된다 (크래시 원인 필드)', async () => {
+        const noSuggestions: Record<string, unknown> = { ...OK_FEEDBACK };
+        delete noSuggestions.suggestions;
+        const r = await reviewWithJson(noSuggestions);
+
+        expect(r.status).toBe('ok');
+        expect(r.feedback?.suggestions).toEqual([]);
+        // DB 에 저장되는 값도 정규화된 형태여야 한다 (프론트 계약 고정)
+        const saved = clRepo.update.mock.calls[0][1] as {
+          lastFeedback: { suggestions: unknown };
+        };
+        expect(saved.lastFeedback.suggestions).toEqual([]);
+      });
+
+      it.each(['strengths', 'issues'])(
+        '%s 가 누락돼도 [] 로 정규화된다',
+        async (field) => {
+          const partial: Record<string, unknown> = { ...OK_FEEDBACK };
+          delete partial[field];
+          const r = await reviewWithJson(partial);
+
+          expect(r.feedback?.[field as 'strengths' | 'issues']).toEqual([]);
+        },
+      );
+
+      it('summary 가 누락되면 빈 문자열로 정규화된다', async () => {
+        const noSummary: Record<string, unknown> = { ...OK_FEEDBACK };
+        delete noSummary.summary;
+        const r = await reviewWithJson(noSummary);
+
+        expect(r.feedback?.summary).toBe('');
+      });
+
+      it('배열이어야 할 필드가 다른 타입이면 [] 로 대체한다', async () => {
+        const r = await reviewWithJson({ ...OK_FEEDBACK, strengths: '문자열' });
+
+        expect(r.feedback?.strengths).toEqual([]);
+      });
+
+      it('issues 의 불완전한 원소는 버린다 (잘리면 마지막 원소가 깨진다)', async () => {
+        const r = await reviewWithJson({
+          ...OK_FEEDBACK,
+          issues: [
+            { kind: 'ai_tone', quote: '끊임없는 열정', advice: '구체 동사로' },
+            { kind: 'vague', quote: '잘린 원소' }, // advice 없음
+          ],
+        });
+
+        expect(r.feedback?.issues).toHaveLength(1);
+      });
+
+      it('enum 밖 kind 는 버린다 (hallucination 이 프론트로 나가지 않게)', async () => {
+        const r = await reviewWithJson({
+          ...OK_FEEDBACK,
+          issues: [{ kind: '없는_종류', quote: 'q', advice: 'a' }],
+        });
+
+        expect(r.feedback?.issues).toEqual([]);
+      });
+
+      it('json 자체가 undefined 여도 크래시하지 않고 빈 형태를 만든다', async () => {
+        const r = await reviewWithJson(undefined);
+
+        expect(r.feedback).toEqual({
+          strengths: [],
+          issues: [],
+          suggestions: [],
+          summary: '',
+        });
+      });
+    });
+
+    describe('validateResult — 빈 결과를 실패로 승격 (코인 미차감 경로)', () => {
+      it('issues 와 summary 가 둘 다 비면 사유를 반환한다', async () => {
+        await service.review(USER_ID, CL_ID);
+
+        expect(
+          getValidateResult()({
+            strengths: [],
+            issues: [],
+            suggestions: [],
+            summary: '',
+          }),
+        ).toContain('empty');
+      });
+
+      it('공백만 있는 summary 도 빈 것으로 본다', async () => {
+        await service.review(USER_ID, CL_ID);
+
+        expect(getValidateResult()({ issues: [], summary: '   ' })).toContain(
+          'empty',
+        );
+      });
+
+      it('issues 가 비어도 summary 가 있으면 정당한 결과다 — 통과', async () => {
+        await service.review(USER_ID, CL_ID);
+
+        expect(
+          getValidateResult()({ issues: [], summary: '지적할 것이 없어요' }),
+        ).toBeNull();
+      });
+
+      it('issues 가 있으면 summary 가 비어도 통과', async () => {
+        await service.review(USER_ID, CL_ID);
+
+        expect(
+          getValidateResult()({
+            issues: [{ kind: 'vague', quote: 'q', advice: 'a' }],
+            summary: '',
+          }),
+        ).toBeNull();
+      });
+    });
+
+    describe('truncated — 부분 잘림 안내 (코인은 차감, 사용자에게 알림)', () => {
+      it("finishReason 이 'length' 면 truncated=true", async () => {
+        const r = await reviewWithJson(OK_FEEDBACK, 'length');
+
+        expect(r.truncated).toBe(true);
+      });
+
+      it("finishReason 이 'stop' 이면 truncated=false", async () => {
+        const r = await reviewWithJson(OK_FEEDBACK, 'stop');
+
+        expect(r.truncated).toBe(false);
+      });
+
+      it('finishReason 이 없으면 truncated=false (구버전 경로)', async () => {
+        const r = await reviewWithJson(OK_FEEDBACK);
+
+        expect(r.truncated).toBe(false);
+      });
+    });
+  });
 });

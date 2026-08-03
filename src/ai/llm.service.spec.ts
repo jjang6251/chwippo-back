@@ -4,9 +4,12 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
-import { LlmCallLog } from './entities/llm-call-log.entity';
+import { LlmCallLog, type LlmFeature } from './entities/llm-call-log.entity';
 import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
+import { getModelConfig } from './model-config';
+import { ModelConfigService } from './model-config.service';
+import { MODEL_REGISTRY, getModelSpec } from './model-registry';
 import {
   CURRENT_AI_CONSENT_VERSION,
   LlmService,
@@ -34,6 +37,18 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
  * - audit 행 신규 필드 (provider, promptHash, promptExcerpt, attempts, outputRedacted)
  * - preBlocked 분기 (consent 보다 우선)
  */
+/**
+ * 🔴 **anthropic 경로 테스트용 feature.**
+ *
+ * 이전엔 `coverletter_draft_v2` 를 "anthropic feature" 대용으로 14곳에 흩뿌려 썼는데,
+ * Phase 1 에서 그 feature 가 Terra(openai)로 옮겨가자 **30개 테스트가 한 번에 깨졌다.**
+ * 테스트가 "이 feature 는 anthropic 이다" 라는 **바뀔 수 있는 사실**에 결합돼 있었던 것 —
+ * 단가 만료 cron·admin 스트리밍 spec 과 같은 취약점이다.
+ *
+ * 상수 한 줄로 모아, 다음에 모델이 또 바뀌면 **여기만 고치면 된다.**
+ */
+const ANTHROPIC_FEATURE = 'interview_prep_session' as const;
+
 describe('LlmService', () => {
   let service: LlmService;
   let logRepo: jest.Mocked<Repository<LlmCallLog>>;
@@ -96,6 +111,7 @@ describe('LlmService', () => {
     feature: 'note_summary',
     provider: 'openai',
     model: 'gpt-4o-mini',
+    finishReason: null, // D0 — 신규 컬럼. 잘림 검증 spec 은 override 로 'length' 주입
     promptTokens: 0,
     completionTokens: 0,
     cacheCreationTokens: 0,
@@ -197,6 +213,15 @@ describe('LlmService', () => {
         { provide: CoinService, useValue: coinService },
         { provide: CostGuardService, useValue: costGuard },
         { provide: ProviderOutageAlertService, useValue: outageAlert },
+        // G-1 — 모델 해석이 서비스로 분리됐다. spec 에서는 DB 행이 없는 상태를
+        //   재현한다 → env → 코드 기본값 폴백 (= 이 spec 들의 기존 전제 그대로).
+        {
+          provide: ModelConfigService,
+          useValue: {
+            resolve: (f: LlmFeature) =>
+              Promise.resolve(getModelConfig(f, config)),
+          },
+        },
       ],
     }).compile();
 
@@ -358,7 +383,7 @@ describe('LlmService', () => {
       });
       await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -411,7 +436,7 @@ describe('LlmService', () => {
       anthropic.isAvailable = false;
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -516,7 +541,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: {
@@ -655,7 +680,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -698,13 +723,187 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
       });
       expect(r.status).toBe('error');
       expect(anthropic.callJson).toHaveBeenCalledTimes(2);
+    });
+
+    /**
+     * D0 (2026-08-01 실사고) — 6.5 `validateResult` **배선** 검증.
+     *
+     * caller 쪽 spec 은 콜백을 단독 호출해 판정 로직만 본다. 그것만으로는
+     * "LlmService 가 그 콜백을 실제로 부르고, 실패로 승격시키고, **코인을 차감하지 않는지**"가
+     * 검증되지 않는다 — 이번 사고의 핵심이 바로 그 금전 경로라 여기서 고정한다.
+     */
+    describe('D0 — validateResult 배선 · finishReason 전파', () => {
+      const okResponse = {
+        text: '',
+        json: { score: 7 },
+        promptTokens: 50,
+        completionTokens: 20,
+        finishReason: 'tool_use' as const,
+      };
+
+      it('🔴 사유를 반환하면 재시도 후 status=error + **코인 미차감**', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: ANTHROPIC_FEATURE,
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => 'empty result',
+        });
+
+        expect(r.status).toBe('error');
+        // 형식은 맞으니 provider 는 성공 — 재시도 1회까지 소진 후 실패
+        expect(anthropic.callJson).toHaveBeenCalledTimes(2);
+        expect(coinServiceMock.charge).not.toHaveBeenCalled();
+      });
+
+      it('사유가 audit errorMessage 에 남는다 (사후 원인 추적)', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        await service.call({
+          userId: 'u-1',
+          feature: ANTHROPIC_FEATURE,
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => 'issues·summary 가 모두 비어 있음',
+        });
+
+        const errRow = logRepo.save.mock.calls
+          .map((c) => c[0] as Partial<LlmCallLog>)
+          .find((row) => row.status === 'error');
+        expect(errRow?.errorMessage).toContain(
+          'issues·summary 가 모두 비어 있음',
+        );
+      });
+
+      it('1차 거부 → 2차 통과면 ok + retry_parsing row (차감은 1회)', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+        let called = 0;
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: ANTHROPIC_FEATURE,
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => (++called === 1 ? 'first reject' : null),
+        });
+
+        expect(r.status).toBe('ok');
+        const statuses = logRepo.save.mock.calls.map(
+          (c) => (c[0] as Partial<LlmCallLog>).status,
+        );
+        expect(statuses).toContain('retry_parsing');
+        expect(coinServiceMock.charge).toHaveBeenCalledTimes(1);
+      });
+
+      it('null 을 반환하면 그대로 통과 + 차감 실행', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: ANTHROPIC_FEATURE,
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: () => null,
+        });
+
+        expect(r.status).toBe('ok');
+        expect(anthropic.callJson).toHaveBeenCalledTimes(1);
+        expect(coinServiceMock.charge).toHaveBeenCalledTimes(1);
+      });
+
+      it('미지정이면 검증 자체가 없다 — 기존 caller 동작 무변경', async () => {
+        anthropic.callJson.mockResolvedValue(okResponse);
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: ANTHROPIC_FEATURE,
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+        });
+
+        expect(r.status).toBe('ok');
+        expect(coinServiceMock.charge).toHaveBeenCalledTimes(1);
+      });
+
+      it('PII 스크럽 **전** 원본 json 을 받는다 (스크럽이 내용 유무 판단을 바꾸지 않게)', async () => {
+        anthropic.callJson.mockResolvedValue({
+          ...okResponse,
+          json: { score: 7, note: '010-1234-5678' },
+        });
+        const seen: unknown[] = [];
+
+        await service.call({
+          userId: 'u-1',
+          feature: ANTHROPIC_FEATURE,
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+          validateResult: (json) => {
+            seen.push(json);
+            return null;
+          },
+        });
+
+        expect(seen[0]).toEqual({ score: 7, note: '010-1234-5678' });
+      });
+
+      it('complete() 경로(json 없음)에서는 호출되지 않는다', async () => {
+        openai.complete.mockResolvedValue({
+          text: 'plain',
+          promptTokens: 5,
+          completionTokens: 5,
+          finishReason: 'stop',
+        });
+        const validateResult = jest.fn().mockReturnValue('should not run');
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: 'note_summary',
+          systemPrompt: 's',
+          userPrompt: 'u',
+          validateResult,
+        });
+
+        expect(r.status).toBe('ok');
+        expect(validateResult).not.toHaveBeenCalled();
+      });
+
+      it("finishReason='length' 가 반환값과 audit row 에 전파된다 (잘림 관측)", async () => {
+        anthropic.callJson.mockResolvedValue({
+          ...okResponse,
+          finishReason: 'length' as const,
+        });
+
+        const r = await service.call({
+          userId: 'u-1',
+          feature: ANTHROPIC_FEATURE,
+          systemPrompt: 's',
+          userPrompt: 'u',
+          jsonSchema: schema,
+        });
+
+        if (r.status !== 'ok') throw new Error('expected ok');
+        expect(r.finishReason).toBe('length');
+
+        const okRow = logRepo.save.mock.calls
+          .map((c) => c[0] as Partial<LlmCallLog>)
+          .find((row) => row.status === 'ok');
+        expect(okRow?.finishReason).toBe('length');
+      });
     });
 
     it('jsonSchema 없으면 complete() 사용 (callJson 미호출)', async () => {
@@ -953,7 +1152,7 @@ describe('LlmService', () => {
       anthropic.isAvailable = false; // coverletter_chat = anthropic provider
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_chat',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: {
@@ -1013,7 +1212,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2', // anthropic feature
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1040,7 +1239,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1052,7 +1251,7 @@ describe('LlmService', () => {
       setupRecoverable(429);
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1064,7 +1263,7 @@ describe('LlmService', () => {
       setupRecoverable(400);
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1079,7 +1278,7 @@ describe('LlmService', () => {
       openai.complete.mockRejectedValue(openaiErr);
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1091,7 +1290,7 @@ describe('LlmService', () => {
       openai.isAvailable = false;
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1140,7 +1339,7 @@ describe('LlmService', () => {
       openai.complete = jest.fn().mockRejectedValue(withStatus(503));
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2', // anthropic 1차, openai fallback
+        feature: ANTHROPIC_FEATURE, // anthropic 1차, openai fallback
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1167,7 +1366,7 @@ describe('LlmService', () => {
       anthropic.complete = jest.fn().mockRejectedValue(withStatus(400));
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1182,7 +1381,7 @@ describe('LlmService', () => {
       anthropic.complete = jest.fn().mockRejectedValue(withStatus(429));
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1222,7 +1421,7 @@ describe('LlmService', () => {
         );
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1243,7 +1442,7 @@ describe('LlmService', () => {
       });
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1280,7 +1479,7 @@ describe('LlmService', () => {
       );
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
       });
@@ -1313,7 +1512,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1340,7 +1539,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_draft_v2', // fallback 매핑이 있는 anthropic feature
+        feature: ANTHROPIC_FEATURE, // fallback 매핑이 있는 anthropic feature
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1370,7 +1569,7 @@ describe('LlmService', () => {
 
       const r = await service.call({
         userId: 'u-1',
-        feature: 'coverletter_feedback',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1392,6 +1591,214 @@ describe('LlmService', () => {
         return events;
       };
 
+      /**
+       * G-1 — 스트리밍 가능 여부를 **provider 가 아니라 모델 선언**으로 판정한다.
+       *
+       * 이전 판정은 `cfg.provider !== 'anthropic'` 이었다. provider 단위로는
+       * "같은 회사인데 이 모델만 안 되는" 경우나 "OpenAI 스트리밍을 나중에 구현한"
+       * 경우를 표현할 수 없다.
+       *
+       * 🔴 **조용히 비스트리밍으로 폴백하지 않는다.** 폴백하면 관리자가 모델을 잘못
+       * 골라도 아무도 모른 채 사용자 경험만 나빠진다. 애초에 못 고르게 막는 건
+       * admin 저장 시 검증이 담당하고, 여기는 마지막 방어선이다.
+       */
+      /**
+       * 🔴 **provider 디스패치** (2026-08-03).
+       *
+       * OpenAI 어댑터에 `callJsonStream` 이 생기기 전까지 `llm.service` 는
+       * `this.anthropic.callJsonStream` 을 **하드코딩**하고 있었다. 위 `supportsStreaming`
+       * 가드가 OpenAI 모델을 먼저 막아줘서 드러나지 않았을 뿐, 구현이 생기는 순간
+       * **admin 이 모델을 OpenAI 로 바꿔도 스트리밍만 Anthropic 으로 나가는** 결함이 된다.
+       * 설정과 실제 호출이 어긋나는데 아무 신호가 없다 — 그래서 여기서 고정한다.
+       */
+      /**
+       * 🔴 **가용성도 실제로 쓸 provider 기준이어야 한다** (2026-08-03).
+       *
+       * 이전엔 `this.anthropic.isAvailable` 을 provider 와 무관하게 확인했다 —
+       * 스트리밍이 Anthropic 전용이던 시절의 잔재다. Phase 1 에서 자소서 대화가
+       * OpenAI 로 옮겨오면서 **ANTHROPIC_API_KEY 가 없으면 OpenAI 로 도는 기능까지
+       * "ANTHROPIC_API_KEY 미설정" 으로 죽는** 상태가 됐다.
+       */
+      describe('provider 가용성', () => {
+        const streamOk = () =>
+          jest.fn(async function* () {
+            yield {
+              type: 'done',
+              json: { reply: 'ok' },
+              response: {
+                text: '{"reply":"ok"}',
+                promptTokens: 10,
+                completionTokens: 5,
+                finishReason: 'stop',
+              },
+            };
+          });
+        const runStream = (feature: string) =>
+          collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: feature as never,
+              systemPrompt: 'sys',
+              userPrompt: 'user',
+              jsonSchema: {
+                name: 'x',
+                schema: {
+                  type: 'object',
+                  properties: { reply: { type: 'string' } },
+                  required: ['reply'],
+                  additionalProperties: false,
+                },
+              },
+            }),
+          );
+
+        it('anthropic 키가 없어도 openai feature 는 정상 스트림', async () => {
+          anthropic.isAvailable = false;
+          openai.callJsonStream = streamOk();
+
+          const events = await runStream('coverletter_chat');
+
+          expect(events.at(-1)?.type).toBe('done');
+          expect(openai.callJsonStream).toHaveBeenCalledTimes(1);
+        });
+
+        it('openai 키가 없으면 openai feature 는 OPENAI 문구로 거부', async () => {
+          openai.isAvailable = false;
+          openai.callJsonStream = jest.fn();
+
+          const events = await runStream('coverletter_chat');
+
+          expect(events[0]).toEqual({
+            type: 'error',
+            message: 'OPENAI_API_KEY 미설정',
+          });
+          expect(openai.callJsonStream).not.toHaveBeenCalled();
+        });
+
+        it('anthropic 키가 없으면 anthropic feature 는 ANTHROPIC 문구로 거부', async () => {
+          anthropic.isAvailable = false;
+          anthropic.callJsonStream = jest.fn();
+
+          const events = await runStream(ANTHROPIC_FEATURE);
+
+          expect(events[0]).toEqual({
+            type: 'error',
+            message: 'ANTHROPIC_API_KEY 미설정',
+          });
+          expect(anthropic.callJsonStream).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('provider 디스패치', () => {
+        const streamOnce = () => {
+          const fn = jest.fn(async function* () {
+            yield {
+              type: 'done',
+              json: { reply: 'ok' },
+              response: {
+                text: '{"reply":"ok"}',
+                promptTokens: 10,
+                completionTokens: 5,
+                finishReason: 'stop',
+              },
+            };
+          });
+          return fn;
+        };
+
+        it.each([
+          ['anthropic 모델 → anthropic 어댑터', ANTHROPIC_FEATURE, 'anthropic'],
+          // 🔴 Phase 1 에서 anthropic → openai 로 옮겨온 feature. 스트리밍 필수라
+          //   디스패치가 틀리면 자소서 대화가 통째로 죽는다
+          ['openai 모델 → openai 어댑터', 'coverletter_chat', 'openai'],
+        ])('%s', async (_label, feature, expectedProvider) => {
+          anthropic.callJsonStream = streamOnce();
+          openai.callJsonStream = streamOnce();
+
+          await collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: feature as never,
+              systemPrompt: 'sys',
+              userPrompt: 'user',
+              jsonSchema: {
+                name: 'x',
+                schema: {
+                  type: 'object',
+                  properties: { reply: { type: 'string' } },
+                  required: ['reply'],
+                  additionalProperties: false,
+                },
+              },
+            }),
+          );
+
+          const [used, unused] =
+            expectedProvider === 'anthropic'
+              ? [anthropic.callJsonStream, openai.callJsonStream]
+              : [openai.callJsonStream, anthropic.callJsonStream];
+          expect(used).toHaveBeenCalledTimes(1);
+          expect(unused).not.toHaveBeenCalled();
+
+          // 🔴 해석된 모델이 그 어댑터의 것인지 — 모델과 어댑터가 어긋나면
+          //   "OpenAI 모델명을 Anthropic 에 보내는" 400 이나 잘못된 단가 기록이 된다
+          const sent = used.mock.calls[0][0] as { model: string };
+          expect(getModelSpec(sent.model)?.provider).toBe(expectedProvider);
+        });
+      });
+
+      describe('G-1 — 스트리밍 미지원 모델 거부', () => {
+        /** 이 spec 의 config mock 이 ANTHROPIC_MODEL_LIGHT 로 돌려주는 모델 */
+        const RESOLVED = 'claude-haiku-4-5-20251001';
+        let original: (typeof MODEL_REGISTRY)[string];
+
+        beforeEach(() => {
+          original = MODEL_REGISTRY[RESOLVED];
+        });
+        afterEach(() => {
+          MODEL_REGISTRY[RESOLVED] = original;
+        });
+
+        it('미지원 모델이면 error event 로 명시적 거부 + provider 미호출', async () => {
+          MODEL_REGISTRY[RESOLVED] = { ...original, supportsStreaming: false };
+          anthropic.callJsonStream = jest.fn();
+
+          const events = await collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: ANTHROPIC_FEATURE,
+              systemPrompt: 's',
+              userPrompt: 'u',
+              jsonSchema: schema,
+            }),
+          );
+
+          expect(events).toHaveLength(1);
+          expect(events[0].type).toBe('error');
+          expect(events[0].message).toContain('실시간 응답을 지원하지 않');
+          // 조용한 폴백 금지 — 비스트리밍으로 대신 처리하지 않는다
+          expect(anthropic.callJsonStream).not.toHaveBeenCalled();
+        });
+
+        it('레지스트리 미등록 모델도 거부한다 (능력을 모르면 시도하지 않는다)', async () => {
+          delete MODEL_REGISTRY[RESOLVED];
+          anthropic.callJsonStream = jest.fn();
+
+          const events = await collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: ANTHROPIC_FEATURE,
+              systemPrompt: 's',
+              userPrompt: 'u',
+              jsonSchema: schema,
+            }),
+          );
+
+          expect(events[0].type).toBe('error');
+          expect(anthropic.callJsonStream).not.toHaveBeenCalled();
+        });
+      });
+
       it('cost guard 차단 → error event + blocked_cost_quota audit + provider 미호출', async () => {
         costGuardMock.check.mockResolvedValueOnce({
           blocked: true,
@@ -1402,7 +1809,7 @@ describe('LlmService', () => {
         const events = await collect(
           service.callStream({
             userId: 'u-1',
-            feature: 'coverletter_chat',
+            feature: ANTHROPIC_FEATURE,
             systemPrompt: 's',
             userPrompt: 'u',
             jsonSchema: schema,
@@ -1442,7 +1849,7 @@ describe('LlmService', () => {
         const events = await collect(
           service.callStream({
             userId: 'u-1',
-            feature: 'coverletter_chat',
+            feature: ANTHROPIC_FEATURE,
             systemPrompt: 's',
             userPrompt: 'u',
             jsonSchema: schema,
@@ -1451,7 +1858,7 @@ describe('LlmService', () => {
 
         expect(costGuardMock.check).toHaveBeenCalledWith(
           'u-1',
-          'coverletter_chat',
+          ANTHROPIC_FEATURE,
         );
         expect(events.at(-1)?.type).toBe('done');
       });
@@ -1475,7 +1882,7 @@ describe('LlmService', () => {
         const events = (await collect(
           service.callStream({
             userId: 'u-1',
-            feature: 'coverletter_chat',
+            feature: ANTHROPIC_FEATURE,
             systemPrompt: 's',
             userPrompt: 'u',
             jsonSchema: schema,
@@ -1642,7 +2049,7 @@ describe('LlmService', () => {
 
       const gen1 = service.callStream({
         userId: 'u-1',
-        feature: 'coverletter_chat',
+        feature: ANTHROPIC_FEATURE,
         systemPrompt: 's',
         userPrompt: 'u',
         jsonSchema: schema,
@@ -1653,7 +2060,7 @@ describe('LlmService', () => {
       const events2 = await collect(
         service.callStream({
           userId: 'u-1',
-          feature: 'coverletter_chat',
+          feature: ANTHROPIC_FEATURE,
           systemPrompt: 's',
           userPrompt: 'u',
           jsonSchema: schema,

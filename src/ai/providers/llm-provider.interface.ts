@@ -79,6 +79,12 @@ export interface LlmFailureUsage {
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
   webSearchCount?: number;
+  /**
+   * D0 — 실패한 응답의 종료 사유. **`'length'` 면 출력 잘림이 실패 원인**이라는 뜻이고,
+   * 이게 없으면 "왜 스키마를 어겼는지"(잘림 vs 모델 오작동)를 사후에 구분할 수 없다.
+   * parse 실패는 곧 잘림인 경우가 많아 이 값이 가장 중요한 실패 경로다.
+   */
+  finishReason?: LlmProviderResponse['finishReason'];
 }
 
 /** parsing 실패 시 throw — LlmService 가 catch 해서 retry */

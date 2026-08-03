@@ -31,15 +31,49 @@ export type ParseJobPostingResult =
  */
 const PARSE_STALE_MINUTES = 2;
 
-/** LLM 이 채우는 구조화 출력 (parsedAt 은 서버가 세팅 — schema 미포함) */
+/**
+ * LLM 이 채우는 구조화 출력 (parsedAt 은 서버가 세팅 — schema 미포함).
+ *
+ * 🔴 **전부 옵셔널이다.** 이전에는 `notPosting: boolean` 처럼 필수로 선언하고
+ * `result.json` 을 **무검증 단언**했는데, `LlmCallOk.json` 은 `json?: unknown`
+ * 이라 **타입이 거짓말을 하는** 상태였다. 2026-08-01 자소서 점검 크래시가 정확히 이 모양이다
+ * (ADR-058) — 실제 도달 경로는 스키마 계층이 막고 있었지만, 그 보장은 **한 겹 떨어져 있다.**
+ */
 interface JobPostingLlmOutput {
-  notPosting: boolean;
-  responsibilities: string;
-  requirements: string[];
-  preferred: string[];
-  techStack: string[];
-  qualifications: string[];
-  keywords: string[];
+  notPosting?: boolean;
+  responsibilities?: string;
+  requirements?: string[];
+  preferred?: string[];
+  techStack?: string[];
+  qualifications?: string[];
+  keywords?: string[];
+}
+
+/**
+ * 신뢰 경계 밖(LLM 응답) → 내부 타입. **검증을 통과시킨 뒤에 타입을 확정한다.**
+ * 자소서 점검의 `normalizeFeedback` 과 같은 패턴.
+ */
+function normalizeLlmOutput(raw: unknown): JobPostingLlmOutput {
+  const obj = (
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw : {}
+  ) as Record<string, unknown>;
+  /** 🔴 `?? []` 는 null 만 막는다 — 배열이 아닌 값이 오면 `.map` 이 터진다 */
+  const strArray = (v: unknown): string[] | undefined =>
+    Array.isArray(v)
+      ? v.filter((s): s is string => typeof s === 'string')
+      : undefined;
+  return {
+    notPosting: obj.notPosting === true,
+    responsibilities:
+      typeof obj.responsibilities === 'string'
+        ? obj.responsibilities
+        : undefined,
+    requirements: strArray(obj.requirements),
+    preferred: strArray(obj.preferred),
+    techStack: strArray(obj.techStack),
+    qualifications: strArray(obj.qualifications),
+    keywords: strArray(obj.keywords),
+  };
 }
 
 /**
@@ -82,7 +116,8 @@ const PARSE_SYSTEM_PROMPT = `너는 채용 공고 텍스트에서 지원자가 �
   해당 직무에 해당하는 요건만 추출한다. 무관한 직무의 요건은 버린다.`;
 
 /** callJson strict schema — parsedAt 제외 (서버 세팅). 모든 필드 required. */
-const JOB_POSTING_SCHEMA = {
+/** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
+export const JOB_POSTING_SCHEMA = {
   name: 'jobposting_parse',
   schema: {
     type: 'object',
@@ -215,7 +250,9 @@ export class JobPostingService {
         };
       }
 
-      const out = result.json as JobPostingLlmOutput;
+      // 🔴 `as` 단언 금지 — 검증을 통과시킨 뒤에 타입을 확정한다 (ADR-058).
+      //   `result.json` 은 status='ok' 여도 `undefined` 일 수 있다 (`json?: unknown`).
+      const out = normalizeLlmOutput(result.json);
 
       // 공고 아님 → 저장 안 함 (호출은 이미 차감됨)
       if (out.notPosting) {
