@@ -958,8 +958,16 @@ export class LlmService {
     const promptExcerpt = userPrompt.slice(0, 200);
 
     // 5. streaming
+    //
+    // 🔴 provider 로 **디스패치**한다. 이전에는 `this.anthropic` 이 하드코딩돼 있어,
+    //   admin 이 모델을 OpenAI 로 바꿔도 스트리밍은 Anthropic 으로 나갔다 —
+    //   설정과 실제 호출이 어긋나는데 아무 신호가 없는 상태였다.
+    //   (당시엔 OpenAI 어댑터에 스트리밍이 없어서 위 `supportsStreaming` 가드가
+    //    먼저 막아 드러나지 않았을 뿐, 구현이 생기는 순간 실제 결함이 된다)
+    const streamProvider =
+      cfg.provider === 'anthropic' ? this.anthropic : this.openai;
     try {
-      for await (const event of this.anthropic.callJsonStream<T>({
+      for await (const event of streamProvider.callJsonStream<T>({
         model: cfg.model,
         systemPrompt,
         cachedContext,

@@ -9,7 +9,7 @@ import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
 import { getModelConfig } from './model-config';
 import { ModelConfigService } from './model-config.service';
-import { MODEL_REGISTRY } from './model-registry';
+import { MODEL_REGISTRY, getModelSpec } from './model-registry';
 import {
   CURRENT_AI_CONSENT_VERSION,
   LlmService,
@@ -1590,6 +1590,75 @@ describe('LlmService', () => {
        * 골라도 아무도 모른 채 사용자 경험만 나빠진다. 애초에 못 고르게 막는 건
        * admin 저장 시 검증이 담당하고, 여기는 마지막 방어선이다.
        */
+      /**
+       * 🔴 **provider 디스패치** (2026-08-03).
+       *
+       * OpenAI 어댑터에 `callJsonStream` 이 생기기 전까지 `llm.service` 는
+       * `this.anthropic.callJsonStream` 을 **하드코딩**하고 있었다. 위 `supportsStreaming`
+       * 가드가 OpenAI 모델을 먼저 막아줘서 드러나지 않았을 뿐, 구현이 생기는 순간
+       * **admin 이 모델을 OpenAI 로 바꿔도 스트리밍만 Anthropic 으로 나가는** 결함이 된다.
+       * 설정과 실제 호출이 어긋나는데 아무 신호가 없다 — 그래서 여기서 고정한다.
+       */
+      describe('provider 디스패치', () => {
+        const streamOnce = () => {
+          const fn = jest.fn(async function* () {
+            yield {
+              type: 'done',
+              json: { reply: 'ok' },
+              response: {
+                text: '{"reply":"ok"}',
+                promptTokens: 10,
+                completionTokens: 5,
+                finishReason: 'stop',
+              },
+            };
+          });
+          return fn;
+        };
+
+        it.each([
+          [
+            'anthropic 모델 → anthropic 어댑터',
+            'coverletter_chat',
+            'anthropic',
+          ],
+          ['openai 모델 → openai 어댑터', 'jobposting_parse', 'openai'],
+        ])('%s', async (_label, feature, expectedProvider) => {
+          anthropic.callJsonStream = streamOnce();
+          openai.callJsonStream = streamOnce();
+
+          await collect(
+            service.callStream({
+              userId: 'u-1',
+              feature: feature as never,
+              systemPrompt: 'sys',
+              userPrompt: 'user',
+              jsonSchema: {
+                name: 'x',
+                schema: {
+                  type: 'object',
+                  properties: { reply: { type: 'string' } },
+                  required: ['reply'],
+                  additionalProperties: false,
+                },
+              },
+            }),
+          );
+
+          const [used, unused] =
+            expectedProvider === 'anthropic'
+              ? [anthropic.callJsonStream, openai.callJsonStream]
+              : [openai.callJsonStream, anthropic.callJsonStream];
+          expect(used).toHaveBeenCalledTimes(1);
+          expect(unused).not.toHaveBeenCalled();
+
+          // 🔴 해석된 모델이 그 어댑터의 것인지 — 모델과 어댑터가 어긋나면
+          //   "OpenAI 모델명을 Anthropic 에 보내는" 400 이나 잘못된 단가 기록이 된다
+          const sent = used.mock.calls[0][0] as { model: string };
+          expect(getModelSpec(sent.model)?.provider).toBe(expectedProvider);
+        });
+      });
+
       describe('G-1 — 스트리밍 미지원 모델 거부', () => {
         /** 이 spec 의 config mock 이 ANTHROPIC_MODEL_LIGHT 로 돌려주는 모델 */
         const RESOLVED = 'claude-haiku-4-5-20251001';

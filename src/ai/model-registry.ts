@@ -232,7 +232,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     // 추론 모델 — `reasoning_effort` 를 받는다. max_completion_tokens 가 작으면
     // 추론 토큰만 쓰고 본문 없이 400 이 난다 (실측: max_completion_tokens=1 → 400).
     reasoning: { mode: 'effort' },
-    supportsStreaming: false, // openai.provider 에 callJsonStream 미구현
+    supportsStreaming: true, // openai.provider.callJsonStream 구현됨 (2026-08-03)
     koreanTokensPerChar: 0.546, // 실측 — Anthropic(1.02) 의 절반
   },
 
@@ -251,7 +251,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     reasoning: { mode: 'effort' },
-    supportsStreaming: false,
+    supportsStreaming: true,
     koreanTokensPerChar: 0.546,
   },
 
@@ -270,9 +270,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     reasoning: null,
-    // 🔴 openai.provider 에 callJsonStream 이 없다. API 가 지원해도 우리는 못 쓴다.
-    //   이 값이 false 라서 admin 이 chat 을 이 모델로 바꿀 때 경고가 뜬다.
-    supportsStreaming: false,
+    supportsStreaming: true, // 2026-08-03 openai.provider 에 callJsonStream 구현
     koreanTokensPerChar: 0.548, // 실측 2026-08-03
   },
 
@@ -291,7 +289,7 @@ export const MODEL_REGISTRY: Record<string, ModelSpec> = {
     structuredOutputMode: 'json_schema_strict',
     supportsPromptCache: true,
     reasoning: null,
-    supportsStreaming: false,
+    supportsStreaming: true,
     koreanTokensPerChar: null,
   },
 };
