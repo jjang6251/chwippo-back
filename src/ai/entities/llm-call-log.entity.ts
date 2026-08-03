@@ -9,27 +9,51 @@ import {
 } from 'typeorm';
 import { User } from '../../users/user.entity';
 
-export type LlmFeature =
-  // 기존 (F5)
+/**
+ * **지금 호출할 수 있는** feature. `LlmService.call` 과 `FEATURE_MATRIX` 가 이 타입을 쓴다.
+ *
+ * 🔴 퇴역 feature 와 갈라둔 이유 (2026-08-03) — 두 개는 성격이 다른데 하나로 묶여 있었다:
+ *   - **감사 이력**: 과거 `llm_call_logs` 행을 읽으려면 옛 값도 타입에 있어야 한다
+ *   - **현재 설정**: "지금 어떤 모델로 부를까" 는 안 부르는 기능이 있을 이유가 없다
+ *
+ * 구분이 없어서 `FEATURE_MATRIX` 에 **한 번도 호출된 적 없는 6개**가 1년 넘게 남아 있었고,
+ * G-1 admin 매트릭스가 화면이 되면서 관리자에게 14줄 중 6줄이 죽은 항목으로 노출됐다.
+ * (`coverletter` 와 `coverletter_draft_v2` 가 나란히 떠서 어느 쪽이 진짜인지 알 수 없었다)
+ */
+export type ActiveLlmFeature =
   | 'note_summary'
+  | 'coverletter_draft_v2'
+  | 'coverletter_feedback'
+  | 'coverletter_recommend'
+  | 'coverletter_chat'
+  | 'interview_prep_session'
+  | 'interview_prep_followup'
+  | 'jobposting_parse';
+
+/**
+ * 퇴역 feature — **과거 `llm_call_logs` 행에 문자열로 남아 있어 타입에서 못 지운다.**
+ * 새 호출은 불가능하다 (`ActiveLlmFeature` 가 아니므로 `LlmService.call` 이 컴파일 거부).
+ *
+ * | 값 | 사유 |
+ * |---|---|
+ * | `coverletter` | 자소서 v1 → `coverletter_draft_v2` 로 대체 (F6 PR 1, 2026-05-26) |
+ * | `interview` | 면접 v1 → `interview_prep_session` 으로 대체 |
+ * | `interview_followup` | 꼬리질문 v1 → `interview_prep_followup` 으로 대체 |
+ * | `score` · `analysis` | F5 때 타입·설정만 선언하고 **구현한 적 없음** (호출부가 커밋 이력에 부재) |
+ * | `auto_tag` | `auto-tagger.ts` 가 **규칙 기반**으로 구현돼 LLM 불필요 |
+ * | `company_research` | 2026-07-09 퇴역 — 유저 트리거 조사 제거 (pre-seed 공급 전환, ADR-040) |
+ */
+export type RetiredLlmFeature =
   | 'coverletter'
   | 'interview'
   | 'interview_followup'
   | 'score'
   | 'analysis'
   | 'auto_tag'
-  // PR 0 신규 — F6 PR 1·2 에서 활용
-  | 'coverletter_draft_v2'
-  | 'coverletter_feedback'
-  | 'coverletter_recommend'
-  | 'interview_prep_session'
-  | 'interview_prep_followup'
-  // 'company_research' 는 2026-07-09 퇴역 — 유저 트리거 조사 제거 (pre-seed 공급 전환).
-  //   과거 llm_call_logs 행에는 문자열로 남아 있음 (audit 보존).
-  // F1 자소서 풀페이지 Phase D — AI 채팅 (multi-turn, structured output, suggestedUpdates 적용)
-  | 'coverletter_chat'
-  // 공고 요건 파싱 (jobposting-parse) — 붙여넣은 공고 텍스트를 6필드 구조화 (light·strict JSON)
-  | 'jobposting_parse';
+  | 'company_research';
+
+/** 저장·조회용 전체 집합 (감사 이력 포함). **호출에는 `ActiveLlmFeature` 를 쓴다** */
+export type LlmFeature = ActiveLlmFeature | RetiredLlmFeature;
 
 /** F6 PR 2 Phase 5.6 — 'mock' 은 NODE_ENV='development' + API key 미설정 시 LlmService 의 mock 분기 (UI 흐름 테스트 전용). production 절대 X */
 export type LlmProviderName = 'openai' | 'anthropic' | 'mock';

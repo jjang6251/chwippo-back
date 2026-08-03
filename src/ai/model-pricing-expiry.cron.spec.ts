@@ -5,9 +5,13 @@ import { ModelPricingExpiryCron } from './model-pricing-expiry.cron';
 /**
  * G-1 — 단가 만료 사전 알림.
  *
- * 🔴 **현재 등록된 4개 모델에는 `validUntil` 이 없다.** 즉 운영에서는 아직 한 번도
- * 울리지 않는다 — 이 spec 이 유일한 검증 수단이다. 나중에 프로모션 단가 모델을
- * 넣는 사람이 "알림이 되긴 하나" 를 여기서 확인할 수 있어야 한다.
+ * ⚠️ **2026-08-03 부터 실제 대상이 생겼다** — Sonnet 5 인트로 단가가 8/31 만료다.
+ * 그전까지는 등록 모델에 `validUntil` 이 하나도 없어 "운영에선 안 울린다" 가 전제였고,
+ * 그 전제로 쓰인 테스트들이 실제 모델이 등록되자 **다른 이유로 깨졌다**
+ * (프로모 모델 1건을 기대했는데 Sonnet 5 까지 2건이 울림).
+ *
+ * 그래서 cron **로직** 테스트는 실제 레지스트리와 격리한다 — 모델이 추가·삭제될 때마다
+ * 로직 테스트가 깨지면 안 된다. 실제 등록 내용은 아래 별도 describe 에서 본다.
  */
 describe('ModelPricingExpiryCron', () => {
   const PROMO = 'test-only-promo-model';
@@ -35,15 +39,27 @@ describe('ModelPricingExpiryCron', () => {
     };
   };
 
+  /** 로직 테스트 동안 치워둔 실제 만료 모델 (afterEach 에서 되돌린다) */
+  let stashed: Record<string, (typeof MODEL_REGISTRY)[string]> = {};
+
   beforeEach(() => {
     notify = jest.fn().mockResolvedValue('sent');
     cron = new ModelPricingExpiryCron({
       notify,
     } as unknown as DiscordNotifier);
+    // 실제 레지스트리에서 유효기간 있는 모델을 잠시 제거 — 로직만 검증하기 위해
+    stashed = {};
+    for (const [id, spec] of Object.entries(MODEL_REGISTRY)) {
+      if (spec.pricing.validUntil) {
+        stashed[id] = spec;
+        delete MODEL_REGISTRY[id];
+      }
+    }
   });
 
   afterEach(() => {
     delete MODEL_REGISTRY[PROMO];
+    Object.assign(MODEL_REGISTRY, stashed);
     jest.useRealTimers();
   });
 
@@ -99,7 +115,7 @@ describe('ModelPricingExpiryCron', () => {
   });
 
   describe('대상이 아닌 경우', () => {
-    it('유효기간 없는 모델은 알리지 않는다 (= 현재 등록된 4개 전부)', async () => {
+    it('유효기간 없는 모델은 알리지 않는다', async () => {
       freeze('2026-08-24');
       await cron.runDaily();
       expect(notify).not.toHaveBeenCalled();
@@ -153,5 +169,34 @@ describe('ModelPricingExpiryCron', () => {
       await cron.runDaily();
       expect(spy).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * 위 describe 는 cron **로직**을 보느라 실제 만료 모델을 치워둔다.
+ * 그래서 "진짜로 선언이 돼 있는가" 는 여기서 따로 본다 — 격리와 실물 확인은 다른 질문이다.
+ */
+describe('실제 등록된 만료 단가', () => {
+  it('Sonnet 5 인트로는 8/31 만료 + next 가 함께 선언돼 있다', () => {
+    const p = MODEL_REGISTRY['claude-sonnet-5'].pricing;
+    expect(p.validUntil).toBe('2026-08-31');
+    // next 가 없으면 cron 이 "미완 선언" 으로 보고 조용히 넘어간다 — 알림이 안 온다
+    expect(p.next).toEqual({ input: 3.0, output: 15.0 });
+    expect(p.input).toBe(2.0);
+    expect(p.output).toBe(10.0);
+  });
+
+  /**
+   * 🔴 만료를 선언해놓고 `next` 를 빠뜨리면 **알림도 안 오고 단가도 안 바뀐다** —
+   * 가장 조용한 실패다. 앞으로 추가되는 모델에도 강제한다.
+   */
+  it('validUntil 을 선언한 모델은 반드시 next 도 갖는다', () => {
+    for (const [id, spec] of Object.entries(MODEL_REGISTRY)) {
+      if (spec.pricing.validUntil) {
+        expect(`${id}:${spec.pricing.next ? 'ok' : 'next 누락'}`).toBe(
+          `${id}:ok`,
+        );
+      }
+    }
   });
 });

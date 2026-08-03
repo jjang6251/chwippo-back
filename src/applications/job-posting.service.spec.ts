@@ -128,6 +128,83 @@ describe('JobPostingService', () => {
     expect(patch.jobPosting.parsedAt).toBeDefined();
   });
 
+  /**
+   * 🔴 **신뢰 경계 밖 응답 정규화** (2026-08-03 `/qa full` 에서 발견).
+   *
+   * `JobPostingLlmOutput` 이 `notPosting: boolean`·`requirements: string[]` 처럼 전부
+   * **필수로 선언**하고 `result.json as JobPostingLlmOutput` 로 단언하고 있었다.
+   * 그런데 `LlmCallOk.json` 은 `json?: unknown` — **타입이 거짓말을 하는** 상태였다.
+   * 2026-08-01 자소서 점검 크래시가 정확히 이 모양이다 (ADR-058).
+   *
+   * 실제 도달은 스키마 계층이 막고 있었지만 **그 보장은 한 겹 떨어져 있다** —
+   * 스키마가 바뀌거나 fallback provider 로 넘어가면 무방비다.
+   */
+  describe('LLM 응답 정규화 — 타입이 거짓말하지 않게', () => {
+    const callWith = (json: unknown) =>
+      llm.call.mockResolvedValueOnce({
+        status: 'ok',
+        text: '',
+        json,
+        promptTokens: 10,
+        completionTokens: 5,
+        coinCost: 0,
+        costUsd: 0,
+        latencyMs: 100,
+        callLogId: 'log-x',
+        outputRedacted: false,
+      } as never);
+
+    it('json 이 undefined 여도 크래시하지 않는다 (status=ok 여도 가능)', async () => {
+      callWith(undefined);
+      const r = await service.parse(USER_ID, APP_ID, parseDto());
+      if (!('jobPosting' in r)) throw new Error('expected jobPosting result');
+      expect(r.jobPosting.requirements).toEqual([]);
+      expect(r.jobPosting.responsibilities).toBeNull();
+    });
+
+    /** 🔴 `?? []` 는 null 만 막는다 — 배열 아닌 값이 오면 `.map` 이 터진다 */
+    it.each([
+      ['문자열', '3년 이상 경력'],
+      ['객체', { a: 1 }],
+      ['숫자', 3],
+      ['null', null],
+    ])('배열이어야 할 필드가 %s 이면 빈 배열로 정규화', async (_l, bad) => {
+      callWith({ ...OK_LLM_OUTPUT, requirements: bad });
+      const r = await service.parse(USER_ID, APP_ID, parseDto());
+      if (!('jobPosting' in r)) throw new Error('expected jobPosting result');
+      expect(r.jobPosting.requirements).toEqual([]);
+      // 나머지 정상 필드는 살아 있어야 한다 (한 필드 오염이 전체를 죽이지 않음)
+      expect(r.jobPosting.preferred).toEqual(['AWS 경험']);
+    });
+
+    it('배열 안에 문자열 아닌 원소가 섞이면 그것만 걸러낸다', async () => {
+      callWith({
+        ...OK_LLM_OUTPUT,
+        requirements: ['정상', 42, null, '또 정상'],
+      });
+      const r = await service.parse(USER_ID, APP_ID, parseDto());
+      if (!('jobPosting' in r)) throw new Error('expected jobPosting result');
+      expect(r.jobPosting.requirements).toEqual(['정상', '또 정상']);
+    });
+
+    it('json 이 배열이면 객체가 아니므로 전부 빈 값', async () => {
+      callWith(['이건', '객체가', '아니다']);
+      const r = await service.parse(USER_ID, APP_ID, parseDto());
+      if (!('jobPosting' in r)) throw new Error('expected jobPosting result');
+      expect(r.jobPosting.requirements).toEqual([]);
+    });
+
+    /** notPosting 은 **정확히 true** 일 때만 — truthy 문자열에 속으면 저장이 통째로 스킵된다 */
+    it.each([
+      ['문자열 "false"', 'false'],
+      ['숫자 1', 1],
+    ])('notPosting 이 %s 이면 공고로 취급한다', async (_l, bad) => {
+      callWith({ ...OK_LLM_OUTPUT, notPosting: bad });
+      const r = await service.parse(USER_ID, APP_ID, parseDto());
+      expect('jobPosting' in r).toBe(true);
+    });
+  });
+
   it('공고 아닌 텍스트 (notPosting) → 저장 안 함 + notPosting 반환 (차감됨)', async () => {
     llm.call.mockResolvedValueOnce({
       status: 'ok',
