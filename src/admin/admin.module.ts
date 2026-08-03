@@ -5,6 +5,7 @@ import { AdminService } from './admin.service';
 import { ActivationService } from './activation.service';
 import { ActivationController } from './activation.controller';
 import { AdminUsersController } from './admin-users.controller';
+import { UserPlatformService } from './user-platform.service';
 import { AdminUsersService } from './admin-users.service';
 import { AdminAuditService } from './admin-audit.service';
 import { AdminAuditLog } from './admin-audit-log.entity';
@@ -40,6 +41,8 @@ import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../users/user.entity';
+import { RefreshSession } from '../auth/refresh-session.entity';
+import { UserDevice } from '../devices/user-device.entity';
 import { Application } from '../applications/application.entity';
 import { Inquiry } from '../inquiries/inquiry.entity';
 import { UsersModule } from '../users/users.module';
@@ -67,6 +70,8 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
       TierConfig,
       FeatureCoinMeta,
       FeatureModelConfig, // G-1 — 모델 전환 admin
+      RefreshSession, // 사용 환경(웹/앱) 판정 — UA 이력
+      UserDevice, // 사용 환경 — 푸시 도달 가능 여부
       Inquiry,
       CompanyResearchCache,
       Application,
@@ -105,6 +110,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AdminService,
     ActivationService, // A8 Activation 측정
     AdminUsersService,
+    UserPlatformService, // 사용 환경(웹/앱) 배치 조회 — N+1 방지
     AdminAuditService,
     AlertThresholdsService,
     ThresholdCheckService,

@@ -11,6 +11,7 @@ import { User } from '../users/user.entity';
 import { UserCoinBalance } from '../ai/entities/user-coin-balance.entity';
 import { Application } from '../applications/application.entity';
 import { Inquiry } from '../inquiries/inquiry.entity';
+import { UserPlatformService } from './user-platform.service';
 import { AdminAuditService } from './admin-audit.service';
 import { UpdateAdminUserDto } from './dto/update-admin-user.dto';
 import { GrantCoinDto } from './dto/grant-coin.dto';
@@ -92,6 +93,7 @@ export class AdminUsersService {
     private readonly storageUsage: StorageUsageService,
     private readonly adminNotify: AdminNotifyService,
     private readonly discord: DiscordNotifier,
+    private readonly platform: UserPlatformService,
   ) {}
 
   async findAll(query: {
@@ -141,7 +143,22 @@ export class AdminUsersService {
     }
 
     const [users, total] = await qb.getManyAndCount();
-    return { data: users.map(omitSensitive), total };
+
+    // 🔴 **사용 환경은 페이지 단위 배치로만 붙인다.** 사용자마다 조회하면 20명 목록에
+    //    쿼리 40개가 나간다. `getMany` 는 인원수와 무관하게 **2회 고정**이다.
+    const platforms = await this.platform.getMany(users.map((u) => u.id));
+
+    return {
+      data: users.map((u) => ({
+        ...omitSensitive(u),
+        platform: platforms.get(u.id) ?? {
+          app: false,
+          web: false,
+          pushCapable: false,
+        },
+      })),
+      total,
+    };
   }
 
   async findOne(id: string): Promise<object> {
@@ -840,6 +857,7 @@ export class AdminUsersService {
       auditLogs,
       applications,
       visitStats,
+      platforms,
     ] = await Promise.all([
       this.appRepo.count({
         where: { userId: targetUserId, deletedAt: IsNull() as never },
@@ -933,6 +951,8 @@ export class AdminUsersService {
           WHERE user_id = $1`,
         [targetUserId],
       ),
+      // 배치 API 를 단건에도 그대로 쓴다 — 단건 전용 메서드를 만들면 목록에서 N+1 로 새어나간다
+      this.platform.getMany([targetUserId]),
     ]);
 
     const cl = coverletterQuestionStats[0] ?? {
@@ -977,6 +997,12 @@ export class AdminUsersService {
         last30Days: parseInt(vs.last30, 10),
         /** 집계 시작일 (YYYY-MM-DD, KST). 이 테이블 도입 이전 가입자는 총계가 부분값이다 */
         firstVisitDate: vs.first_visit,
+      },
+      /** 사용 환경 — 목록 뱃지와 **같은 판정 규칙**을 쓴다 (`user-platform.ts`) */
+      platform: platforms.get(targetUserId) ?? {
+        app: false,
+        web: false,
+        pushCapable: false,
       },
     };
   }
