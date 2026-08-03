@@ -54,7 +54,18 @@ import { ActivityLog } from '../activity/entities/activity-log.entity';
  */
 
 const MESSAGES_GET_LIMIT = 100;
-const MESSAGES_HISTORY_TURN_LIMIT = 6; // multi-turn context 메시지 수 (3 turn)
+/**
+ * Phase 2-2 (2026-08-03) — **6 → 20.**
+ *
+ * 6개(=3턴)면 조금만 대화해도 앞 내용을 잊어 **"아까 말했잖아"** 가 난다.
+ * 자소서 대화는 한 문항을 여러 번 다듬는 흐름이라 3턴은 짧다.
+ *
+ * 비용 근거 (dev 실측: user 평균 20자 · assistant 평균 159자):
+ *   20개 ≈ 1,790자 → 977 토큰 = 12,000 예산의 **8%**
+ *   최악(assistant 505자) 이어도 3,030 토큰 = **25%**
+ * 이력은 `content` 만 넣고 `suggestedUpdates`(자소서 전문)는 제외라 생각보다 가볍다.
+ */
+const MESSAGES_HISTORY_TURN_LIMIT = 20;
 const MESSAGES_PER_APP_CAP = 1000;
 const USER_MESSAGE_MAX_LEN = 5000;
 
