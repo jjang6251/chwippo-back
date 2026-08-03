@@ -21,6 +21,7 @@ import { Education } from '../myinfo/entities/education.entity';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { AdminNotifyService } from '../notifications/admin-notify.service';
 import { DiscordNotifier } from '../common/discord-notifier';
+import { UserPlatformService } from './user-platform.service';
 
 const ADMIN_ID = 'admin-uuid';
 const USER_ID = 'user-uuid';
@@ -175,6 +176,10 @@ describe('AdminUsersService', () => {
           },
         },
         { provide: DiscordNotifier, useValue: mockDiscord },
+        {
+          provide: UserPlatformService,
+          useValue: { getMany: jest.fn().mockResolvedValue(new Map()) },
+        },
       ],
     }).compile();
 
