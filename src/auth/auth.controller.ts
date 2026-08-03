@@ -162,6 +162,7 @@ export class AuthController {
     const { accessToken, refreshToken } = await this.authService.issueTokens(
       user,
       req.headers['user-agent'] ?? null,
+      'app', // Apple 네이티브 SDK → 사용 환경 스탬프
     );
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
@@ -214,6 +215,7 @@ export class AuthController {
     const { accessToken, refreshToken } = await this.authService.issueTokens(
       user,
       req.headers['user-agent'] ?? null,
+      'app', // 카카오 네이티브 SDK → 사용 환경 스탬프
     );
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
@@ -366,6 +368,7 @@ export class AuthController {
     const { accessToken, refreshToken } = await this.authService.issueTokens(
       user,
       req.headers['user-agent'] ?? null,
+      'web', // 카카오 웹 OAuth 콜백 → 사용 환경 스탬프
     );
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
@@ -547,6 +550,7 @@ export class AuthController {
     const { accessToken, refreshToken } = await this.authService.issueTokens(
       user,
       req.headers['user-agent'] ?? null,
+      'web', // Apple 웹 콜백 → 사용 환경 스탬프
     );
 
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);

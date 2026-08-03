@@ -78,6 +78,8 @@ describe('LlmService', () => {
     appleSub: null,
     appleEmail: null,
     appleRefreshToken: null,
+    firstAppLoginAt: null,
+    firstWebLoginAt: null,
     nickname: '장성원',
     email: null,
     role: 'user',

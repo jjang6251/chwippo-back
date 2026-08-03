@@ -32,6 +32,12 @@ function hashRefreshToken(token: string): string {
 
 /** 세션 지속성 웨이브 (B안) — 튜닝 상수 (하드코딩 · 공격 표면 축소 A04) */
 const SLIDING_DAYS = 60; // 정상 rotation 시 expires_at +60일
+/**
+ * 로그인이 들어온 경로 — 사용 환경(웹/앱) 판정의 **사실 근거**.
+ * `reviewer-login` 은 심사용 계정이라 스탬프하지 않는다 (통계 오염 방지).
+ */
+export type LoginPlatform = 'app' | 'web';
+
 const ABSOLUTE_CAP_DAYS = 180; // created_at +180일 초과 시 rotation 거부
 const MAX_SESSIONS_PER_USER = 10; // 기기 상한 (초과 시 최저 사용 세션 evict)
 /**
@@ -204,6 +210,7 @@ export class AuthService {
   async issueTokens(
     user: User,
     deviceInfo?: string | null,
+    platform?: LoginPlatform,
   ): Promise<TokenPair> {
     const sid = randomUUID();
     const tokenId = randomUUID();
@@ -234,6 +241,30 @@ export class AuthService {
         sessionExpiredNotifiedAt: null,
       });
     });
+
+    // 사용 환경 스탬프 — **어느 엔드포인트로 들어왔는가** 라는 사실을 기록한다.
+    // 🔴 UA 로 추측하면 안 된다: 네이티브 SDK 로그인은 WebView 를 안 거쳐 앱 표식이 없다.
+    //
+    // 🔴 **로그인 트랜잭션 밖 · best-effort 다** (audit log 와 같은 정책).
+    //    이건 운영 통계용이지 인증의 일부가 아니다. 안에 두면 이 UPDATE 하나가 실패할 때
+    //    **로그인 전체가 롤백돼 사용자가 못 들어온다** — 통계를 위해 로그인을 걸 수는 없다.
+    //    (Postgres 는 트랜잭션 내 에러 후 후속 문장을 전부 거부하므로 안에서 try/catch 해도 못 막는다.)
+    //
+    // 최초 1회만 기록(`IS NULL`) — 필요한 건 "쓴 적 있는가" 이지 최근성이 아니다.
+    if (platform) {
+      const col =
+        platform === 'app' ? 'first_app_login_at' : 'first_web_login_at';
+      try {
+        await this.dataSource.query(
+          `UPDATE users SET ${col} = $2 WHERE id = $1 AND ${col} IS NULL`,
+          [user.id, now],
+        );
+      } catch (err) {
+        this.logger.warn(
+          `사용 환경 스탬프 실패 (로그인은 정상): ${(err as Error).message}`,
+        );
+      }
+    }
 
     return { accessToken, refreshToken };
   }

@@ -41,7 +41,6 @@ import { LlmCallLog } from '../ai/entities/llm-call-log.entity';
 import { AiModule } from '../ai/ai.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../users/user.entity';
-import { RefreshSession } from '../auth/refresh-session.entity';
 import { UserDevice } from '../devices/user-device.entity';
 import { Application } from '../applications/application.entity';
 import { Inquiry } from '../inquiries/inquiry.entity';
@@ -70,8 +69,7 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
       TierConfig,
       FeatureCoinMeta,
       FeatureModelConfig, // G-1 — 모델 전환 admin
-      RefreshSession, // 사용 환경(웹/앱) 판정 — UA 이력
-      UserDevice, // 사용 환경 — 푸시 도달 가능 여부
+      UserDevice, // 사용 환경 — 푸시 도달 가능 여부 (앱 사용 판정은 users 스탬프)
       Inquiry,
       CompanyResearchCache,
       Application,

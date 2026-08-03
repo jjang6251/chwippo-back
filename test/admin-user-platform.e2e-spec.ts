@@ -1,6 +1,9 @@
 /**
  * 회원 사용 환경(웹/앱) e2e — **N+1 방지가 이 spec 의 존재 이유다.**
  *
+ * 🔴 판정 근거가 **UA → 로그인 스탬프**로 교체됐다 (2026-08-04). 직전 구현은 앱 사용자를
+ * 하나도 못 잡았다 — 네이티브 SDK 로그인은 WebView 를 안 거쳐 UA 에 앱 표식이 없다.
+ *
  * 🔴 **mock 유닛 spec 으로는 N+1 을 원리적으로 못 잡는다.** repository 를 mock 하면 몇 번을
  * 부르든 즉시 값이 돌아와 테스트가 통과한다. "쿼리가 인원수만큼 나갔는가" 는 **실제 드라이버가
  * 몇 번 호출됐는지**를 세야만 알 수 있다.
@@ -13,20 +16,13 @@
  * - 분포: 4분류 합계 = 전체 인원 (로그인 이력 없는 회원도 포함)
  * - 권한: 비인증 401 · 일반 user 403
  */
-import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
-import { RefreshSession } from '../src/auth/refresh-session.entity';
 import { createTestApp } from './helpers/bootstrap';
 import { bearer, signInAsAdmin, signInAsUser } from './helpers/auth';
 import { cleanAllTestUsers } from './helpers/db';
-
-const APP_UA =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 chwippo-mobile-webview/1.0.0';
-const WEB_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
 
 describe('Admin 회원 사용 환경 (e2e)', () => {
   let app: INestApplication<App>;
@@ -46,14 +42,15 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
     await cleanAllTestUsers(app);
   });
 
-  /** 로그인 이력을 직접 심는다 — 실제 로그인 왕복으로는 UA 를 마음대로 줄 수 없다 */
-  async function seedSession(userId: string, ua: string | null) {
-    await ds.getRepository(RefreshSession).insert({
-      id: randomUUID(),
-      userId,
-      expiresAt: new Date(Date.now() + 86_400_000),
-      deviceInfo: ua,
-    });
+  /**
+   * 로그인 스탬프를 직접 심는다 — 실제 카카오/Apple 왕복은 e2e 에서 불가능하다.
+   * (스탬프가 **실제로 찍히는지**는 `auth.controller` 의 인자 전달로 보장되고,
+   *  여기서는 그 값이 **화면 판정으로 이어지는지**를 본다.)
+   */
+  async function seedLogin(userId: string, platform: 'app' | 'web') {
+    const col =
+      platform === 'app' ? 'first_app_login_at' : 'first_web_login_at';
+    await ds.query(`UPDATE users SET ${col} = now() WHERE id = $1`, [userId]);
   }
 
   /**
@@ -85,10 +82,10 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
       const u2 = await signInAsUser(app, { nickname: 'plat-web' });
       const u3 = await signInAsUser(app, { nickname: 'plat-both' });
 
-      await seedSession(u1.user.id, APP_UA);
-      await seedSession(u2.user.id, WEB_UA);
-      await seedSession(u3.user.id, APP_UA);
-      await seedSession(u3.user.id, WEB_UA);
+      await seedLogin(u1.user.id, 'app');
+      await seedLogin(u2.user.id, 'web');
+      await seedLogin(u3.user.id, 'app');
+      await seedLogin(u3.user.id, 'web');
 
       const res = await request(app.getHttpServer())
         .get('/admin/users?limit=100')
@@ -115,7 +112,7 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
     it('쿼리 수가 사용자 수와 무관하다 (1명 vs 5명)', async () => {
       const admin = await signInAsAdmin(app);
       const one = await signInAsUser(app, { nickname: 'nplus-1' });
-      await seedSession(one.user.id, WEB_UA);
+      await seedLogin(one.user.id, 'web');
 
       // ⚠️ 첫 요청은 인증 경로 워밍업으로 쿼리가 더 나간다 — 측정 전에 한 번 태워 편차를 없앤다
       await request(app.getHttpServer())
@@ -132,7 +129,7 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
 
       for (let i = 2; i <= 5; i += 1) {
         const u = await signInAsUser(app, { nickname: `nplus-${i}` });
-        await seedSession(u.user.id, i % 2 === 0 ? APP_UA : WEB_UA);
+        await seedLogin(u.user.id, i % 2 === 0 ? 'app' : 'web');
       }
 
       const [, q5] = await countQueries(async () => {
@@ -158,10 +155,10 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
       const b = await signInAsUser(app, { nickname: 'dist-both' });
       await signInAsUser(app, { nickname: 'dist-none' }); // 세션 이력 없음
 
-      await seedSession(a.user.id, APP_UA);
-      await seedSession(w.user.id, WEB_UA);
-      await seedSession(b.user.id, APP_UA);
-      await seedSession(b.user.id, WEB_UA);
+      await seedLogin(a.user.id, 'app');
+      await seedLogin(w.user.id, 'web');
+      await seedLogin(b.user.id, 'app');
+      await seedLogin(b.user.id, 'web');
 
       const res = await request(app.getHttpServer())
         .get('/admin/platform-distribution')
@@ -198,8 +195,8 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
     it('상세도 목록과 같은 판정 결과를 준다', async () => {
       const admin = await signInAsAdmin(app);
       const u = await signInAsUser(app, { nickname: 'plat-detail' });
-      await seedSession(u.user.id, APP_UA);
-      await seedSession(u.user.id, WEB_UA);
+      await seedLogin(u.user.id, 'app');
+      await seedLogin(u.user.id, 'web');
 
       const res = await request(app.getHttpServer())
         .get(`/admin/users/${u.user.id}/detail`)
