@@ -47,6 +47,9 @@ export class ThresholdCheckService {
       await this.checkVsYesterday(cfg.vsYesterdayIncreaseThreshold);
       // 웨이브 D — 코인 차감 feature 이상 사용 감시 (쿨다운·한도 제거의 안전망)
       await this.checkAbnormalCoinUsage(cfg.abuserSuspectDailyCalls);
+      // G-8 — 예방(QA)과 짝이 되는 탐지. 배포 후는 QA 가 못 본다.
+      await this.checkOutputTruncation(cfg.outputTruncationCount1h);
+      await this.checkChargedFailure(cfg.chargedFailureCount1h);
     } catch (err) {
       this.logger.error(`tick failed: ${(err as Error).message}`);
     }
@@ -110,6 +113,74 @@ export class ThresholdCheckService {
       cost,
       threshold,
       `🔥 일 누적 비용 임계치 초과\ntoday=$${cost.toFixed(2)}\nthreshold=$${threshold.toFixed(2)}`,
+    );
+  }
+
+  /**
+   * G-8 — **출력이 잘렸는데 성공으로 기록된** 호출 (`finish_reason='length'`).
+   *
+   * 🔴 이게 위험한 이유 — status 는 `ok` 다. error 율 알람에 안 걸린다.
+   * 사용자는 **잘린 자소서를 받고 코인은 정상 차감**된다. 2026-08-01 실사고가 이 유형이었고
+   * **사용자 신고로 발견**됐다. 정상 상태에서 0 이어야 하는 지표라 몇 건만 나와도 신호다.
+   *
+   * feature 별로 묶어 보낸다 — 어느 기능의 cap 이 부족한지가 바로 조치 대상이다.
+   */
+  async checkOutputTruncation(threshold: number): Promise<void> {
+    const hourStart = new Date(Date.now() - 60 * 60 * 1000);
+    const rows = await this.logRepo
+      .createQueryBuilder('l')
+      .select('l.feature', 'feature')
+      .addSelect('COUNT(*)', 'cnt')
+      .where('l.created_at >= :start', { start: hourStart })
+      .andWhere("l.finish_reason = 'length'")
+      .groupBy('l.feature')
+      .getRawMany<{ feature: string; cnt: string }>();
+
+    const total = rows.reduce((a, r) => a + Number(r.cnt), 0);
+    if (total < threshold) return;
+
+    const detail = rows.map((r) => `${r.feature}: ${r.cnt}건`).join('\n');
+    await this.fireAlert(
+      'output_truncation',
+      total,
+      threshold,
+      `✂️ 출력 잘림 발생 (최근 1h)\n${detail}\n총 ${total}건 / 임계 ${threshold}\n` +
+        `→ 해당 feature 의 maxOutputTokens 확인. 사용자는 잘린 결과를 받고 코인은 차감됐다.`,
+    );
+  }
+
+  /**
+   * G-8 — **코인은 나갔는데 결과가 실패**한 호출.
+   *
+   * 🔴 돈만 잃는 가장 나쁜 실패라 **1건도 그냥 넘기면 안 된다.**
+   * 정상 설계상 차감은 `status='ok'` 에서만 일어나므로(코인 미차감이 실패의 기본값),
+   * 이 알람이 울린다는 건 **그 불변식이 깨졌다**는 뜻이다.
+   */
+  async checkChargedFailure(threshold: number): Promise<void> {
+    const hourStart = new Date(Date.now() - 60 * 60 * 1000);
+    const rows = await this.logRepo
+      .createQueryBuilder('l')
+      .select('l.feature', 'feature')
+      .addSelect('COUNT(*)', 'cnt')
+      .addSelect('SUM(l.coin_cost)', 'coins')
+      .where('l.created_at >= :start', { start: hourStart })
+      .andWhere('l.coin_cost > 0')
+      .andWhere("l.status <> 'ok'")
+      .groupBy('l.feature')
+      .getRawMany<{ feature: string; cnt: string; coins: string }>();
+
+    const total = rows.reduce((a, r) => a + Number(r.cnt), 0);
+    if (total < threshold) return;
+
+    const detail = rows
+      .map((r) => `${r.feature}: ${r.cnt}건 (${r.coins}코인)`)
+      .join('\n');
+    await this.fireAlert(
+      'charged_failure',
+      total,
+      threshold,
+      `🔴 차감 후 실패 발생 (최근 1h)\n${detail}\n총 ${total}건 / 임계 ${threshold}\n` +
+        `→ "실패 시 미차감" 불변식이 깨졌다. 해당 호출 환불 검토 필요.`,
     );
   }
 

@@ -124,6 +124,28 @@ export class AlertThresholds {
   @Column({ name: 'ai_outage_alert_cooldown_min', type: 'int', default: 30 })
   aiOutageAlertCooldownMin: number;
 
+  /**
+   * G-8 — 최근 1h `finish_reason='length'` 건수 임계. **정상이면 0 이어야 하는 지표.**
+   * 잘린 자소서를 사용자가 받고 코인은 정상 차감된다 (2026-08-01 실사고 유형).
+   * 순간 스파이크 여지를 둬 기본 3.
+   */
+  @Column({
+    name: 'output_truncation_count_1h',
+    type: 'int',
+    default: 3,
+  })
+  outputTruncationCount1h: number;
+
+  /**
+   * G-8 — 최근 1h **차감 발생 + 실패** 건수 임계. 돈만 잃는 실패라 **1건도 즉시** 알린다.
+   */
+  @Column({
+    name: 'charged_failure_count_1h',
+    type: 'int',
+    default: 1,
+  })
+  chargedFailureCount1h: number;
+
   @Column({ name: 'updated_by', type: 'uuid', nullable: true })
   updatedBy: string | null;
 

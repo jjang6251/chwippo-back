@@ -37,6 +37,8 @@ function makeThresholds(
     perFeatureDailyCostUsd: 5,
     aiOutageAlertCount10m: 3,
     aiOutageAlertCooldownMin: 30,
+    outputTruncationCount1h: 3,
+    chargedFailureCount1h: 1,
     updatedBy: null,
     updatedAt: new Date(),
     updatedByUser: null,

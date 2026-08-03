@@ -20,6 +20,9 @@ export interface UpdateAlertThresholdsDto {
   // AI cost guard
   perUserDailyCostUsd?: number;
   perFeatureDailyCostUsd?: number;
+  // G-8 런타임 이상 알람 (2026-08-03) — 둘 다 **정상이면 0 이어야 하는** 지표
+  outputTruncationCount1h?: number;
+  chargedFailureCount1h?: number;
   // AI 제공사 장애 알림
   aiOutageAlertCount10m?: number;
   aiOutageAlertCooldownMin?: number;
@@ -81,6 +84,10 @@ export class AlertThresholdsService {
       row.freeUserSignupSpikePct = dto.freeUserSignupSpikePct;
     if (dto.costOutlierStddev !== undefined)
       row.costOutlierStddev = dto.costOutlierStddev;
+    if (dto.outputTruncationCount1h !== undefined)
+      row.outputTruncationCount1h = dto.outputTruncationCount1h;
+    if (dto.chargedFailureCount1h !== undefined)
+      row.chargedFailureCount1h = dto.chargedFailureCount1h;
     // AI cost guard
     if (dto.perUserDailyCostUsd !== undefined)
       row.perUserDailyCostUsd = dto.perUserDailyCostUsd;
