@@ -30,7 +30,7 @@ import { ActivityLog } from '../activity/entities/activity-log.entity';
  *  7) chat: 5000자 초과 → BadRequest
  *  8) chat: 다른 user IDOR → NotFound
  *  9) chat: 정상 — user/assistant 양쪽 save + LLM 1회 호출
- * 10) chat: 메시지 이력 7+ → 최근 6개만 LLM 컨텍스트
+ * 10) chat: 메시지 이력 21+ → 최근 20개만 LLM 컨텍스트 (Phase 2-2 · 이전 6)
  * 11) chat: quota blocked → LLM provider 미호출 + assistant 차단 메시지
  * 12) chat: LLM error → assistant 에 에러 메시지
  * 13) chat: suggestedUpdates clId 가 다른 application 의 cl → 무시 (IDOR)
@@ -249,24 +249,36 @@ describe('CoverletterChatService', () => {
       expect(r.assistantMessage.role).toBe('assistant');
     });
 
-    it('10) 메시지 이력 7+ → 최근 6개만 LLM 컨텍스트', async () => {
-      const history = Array.from({ length: 10 }, (_, i) => ({
+    /**
+     * 🔴 **한도 숫자에 결합하지 않는다.** 이전엔 `take === 6` 을 하드코딩해서
+     * Phase 2-2(6 → 20)에 그대로 깨졌다. 검증 대상은 "최근 N개만 간다" 는 **동작**이지
+     * N 이 몇인지가 아니다 — mock 이 요청받은 `take` 를 그대로 존중하게 두면
+     * 한도를 또 바꿔도 이 spec 은 안 흔들린다.
+     */
+    it('10) 오래된 이력은 LLM 컨텍스트에서 빠진다 (최근 N개만)', async () => {
+      const TOTAL = 40; // 어떤 한도든 확실히 초과하도록 넉넉히
+      const history = Array.from({ length: TOTAL }, (_, i) => ({
         id: `m-${i}`,
         role: i % 2 ? 'assistant' : ('user' as const),
         content: `메시지 ${i}`,
         createdAt: new Date(2026, 0, i + 1),
       })) as CoverletterChatMessage[];
-      // 첫 호출 = chat 의 history (DESC take 6) — 6개만 반환되도록 모킹
+      let usedTake = 0;
       msgRepo.find.mockImplementation(async (opts?: { take?: number }) => {
-        if (opts?.take === 6) return history.slice(-6).reverse();
+        if (opts?.take) {
+          usedTake = opts.take;
+          return history.slice(-opts.take).reverse(); // DESC
+        }
         return history;
       });
+
       await service.chat(USER_ID, APP_ID, { userMessage: '검토해줘' });
+
       const llmArg = llm.call.mock.calls[0][0];
-      // userPrompt 안에 최근 6개만 (메시지 0~3 는 없어야)
-      expect(llmArg.userPrompt).not.toContain('메시지 0');
-      expect(llmArg.userPrompt).not.toContain('메시지 3');
-      expect(llmArg.userPrompt).toContain('메시지 9');
+      expect(usedTake).toBeGreaterThan(0);
+      expect(usedTake).toBeLessThan(TOTAL); // 전부 보내지 않는다
+      expect(llmArg.userPrompt).toContain(`메시지 ${TOTAL - 1}`); // 최신은 포함
+      expect(llmArg.userPrompt).not.toContain('메시지 0'); // 가장 오래된 건 제외
     });
 
     it('캐시 분리 — 문항·회사·조사는 cachedContext, 이력·새 메시지는 userPrompt (2026-07-09)', async () => {
