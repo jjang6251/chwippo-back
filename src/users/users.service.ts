@@ -188,6 +188,34 @@ export class UsersService {
     });
   }
 
+  /**
+   * 데스크탑 웹 사용 스탬프 — 최초 1회만 기록.
+   *
+   * 프론트는 `useCoverletterReadOnly() === false` 일 때만 이걸 부른다. 즉 **자소서 게이트와
+   * 같은 표현식**이 신호원이라 둘이 어긋날 수 없다. 관측 화면에서 *"모바일이라 못 쓴 것"* 과
+   * *"데스크탑에서 안 쓴 것"* 을 가르는 분모가 된다.
+   *
+   * 🔴 **읽고-쓰지 않고 조건부 UPDATE 한 방으로 처리한다.** 형제 메서드들(`markOnboarded` 등)은
+   * `findOneBy` 후 분기하지만, 여기는 **동시 요청이 흔하다** (탭 여러 개를 동시에 열면 각 탭이
+   * 발사한다). 읽고-쓰기면 둘 다 NULL 을 보고 둘 다 쓴다. `IS NULL` 을 WHERE 에 넣으면
+   * 두 번째는 **0행**이 되어 최초 시각이 보존된다.
+   *
+   * **best-effort 통계다** — 없는 사용자도 예외를 던지지 않는다 (0행). 이 호출의 실패가
+   * 사용자 화면에 영향을 주면 안 된다.
+   *
+   * ⚠️ 클라이언트가 보내는 신호라 위조할 수 있다. 권한·과금과 무관한 운영 통계이므로
+   * 위조 이득이 없어 서버 검증을 두지 않는다.
+   */
+  async markDesktopWebSeen(userId: string): Promise<void> {
+    await this.repo
+      .createQueryBuilder()
+      .update(User)
+      .set({ firstDesktopWebSeenAt: () => 'now()' })
+      .where('id = :userId', { userId })
+      .andWhere('first_desktop_web_seen_at IS NULL')
+      .execute();
+  }
+
   async updateNickname(userId: string, nickname: string): Promise<User> {
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');

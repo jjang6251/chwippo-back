@@ -1130,4 +1130,75 @@ describe('UsersService', () => {
       expect(userRepo.update).not.toHaveBeenCalled();
     });
   });
+
+  describe('markDesktopWebSeen', () => {
+    /** UPDATE 체인 mock — 호출된 인자를 그대로 들여다볼 수 있게 각 단계를 기록한다 */
+    function stubUpdateChain(affected = 1) {
+      const calls = {
+        where: [] as unknown[],
+        andWhere: [] as unknown[],
+        set: [] as unknown[],
+      };
+      const qb = {
+        update: jest.fn().mockReturnThis(),
+        set: jest.fn((v: unknown) => (calls.set.push(v), qb)),
+        where: jest.fn((v: unknown) => (calls.where.push(v), qb)),
+        andWhere: jest.fn((v: unknown) => (calls.andWhere.push(v), qb)),
+        execute: jest.fn().mockResolvedValue({ affected }),
+      };
+      userRepo.createQueryBuilder.mockReturnValue(qb as never);
+      return { qb, calls };
+    }
+
+    it('정상 → 조건부 UPDATE 를 1회 실행한다', async () => {
+      const { qb } = stubUpdateChain();
+
+      await service.markDesktopWebSeen('user-uuid-1');
+
+      expect(qb.execute).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * 🔴 이 조건이 빠지면 **탭을 여러 개 열 때마다 최초 시각이 덮어써진다.**
+     * 여기서 재는 건 "언제 처음 데스크탑을 썼나" 이므로 최초값 보존이 곧 지표의 정의다.
+     */
+    it('WHERE 에 IS NULL 가드가 있다 (재호출·동시 요청에서 최초 시각 보존)', async () => {
+      const { calls } = stubUpdateChain();
+
+      await service.markDesktopWebSeen('user-uuid-1');
+
+      const whereSql = [...calls.where, ...calls.andWhere].join(' ');
+      expect(whereSql).toContain('first_desktop_web_seen_at IS NULL');
+    });
+
+    /**
+     * 🔴 읽고-쓰기(`findOneBy` → 분기 → `update`)로 바꾸면 **동시 요청 둘이 모두 NULL 을 보고
+     * 둘 다 쓴다.** 형제 메서드들과 패턴이 다른 이유이므로 회귀로 고정한다.
+     */
+    it('읽고-쓰지 않는다 (findOneBy 미호출 · UPDATE 한 방)', async () => {
+      stubUpdateChain();
+
+      await service.markDesktopWebSeen('user-uuid-1');
+
+      expect(userRepo.findOneBy).not.toHaveBeenCalled();
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('이미 스탬프됨 → 0행이어도 예외 없이 끝난다 (멱등)', async () => {
+      stubUpdateChain(0);
+
+      await expect(
+        service.markDesktopWebSeen('user-uuid-1'),
+      ).resolves.toBeUndefined();
+    });
+
+    // best-effort 통계다 — 없는 사용자에 대해서도 던지지 않는다 (형제 메서드와 의도적으로 다름)
+    it('존재하지 않는 user → 예외 없이 0행', async () => {
+      stubUpdateChain(0);
+
+      await expect(
+        service.markDesktopWebSeen('nonexistent'),
+      ).resolves.toBeUndefined();
+    });
+  });
 });

@@ -52,6 +52,16 @@ export class UsersController {
   }
 
   /** 캘린더 UX 재구성 — 홈=/calendar redirect 안내 배너 dismiss (멱등) */
+  /**
+   * 데스크탑 웹 사용 스탬프 (관측 전용) — 프론트가 자소서 게이트와 **같은 조건**일 때만 부른다.
+   * 멱등: 이미 찍힌 사용자는 0행 UPDATE 로 끝난다. 프론트도 `localStorage` 로 브라우저당 1회.
+   */
+  @Post('me/desktop-seen')
+  @HttpCode(204)
+  async markDesktopWebSeen(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.usersService.markDesktopWebSeen(user.id);
+  }
+
   @Post('me/dismiss-calendar-home-intro')
   @HttpCode(204)
   async dismissCalendarHomeIntro(@CurrentUser() user: AuthUser): Promise<void> {

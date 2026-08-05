@@ -68,13 +68,15 @@ describe('ActivationService', () => {
     expect(res.funnel).toEqual({ signup: 10, setup: 6, ahaBeta: 3, d7: 4 });
   });
 
-  it('브리핑 상관 — read 65% / 미read 20% (반올림) + 수신 유저-일 합산', async () => {
+  // 🔴 비율이 아니라 **분자·분모**를 준다 — 서버가 % 로 접으면 분모가 5든 500이든
+  //    화면이 똑같이 그린다. 소표본 판정은 표기 계층(utils/shareFormat)이 한다.
+  it('브리핑 상관 — 그룹별 분자·분모 + 수신 유저-일 합산', async () => {
     const res = await service.getActivation();
 
     expect(res.briefing).toEqual({
       receivedUserDays: 30,
-      actedRateRead: 65,
-      actedRateUnread: 20,
+      read: { acted: 13, total: 20 },
+      unread: { acted: 2, total: 10 },
     });
   });
 
@@ -88,12 +90,14 @@ describe('ActivationService', () => {
     expect(res.funnel).toEqual({ signup: 0, setup: 0, ahaBeta: 0, d7: 0 });
     expect(res.briefing).toEqual({
       receivedUserDays: 0,
-      actedRateRead: null,
-      actedRateUnread: null,
+      read: { acted: 0, total: 0 },
+      unread: { acted: 0, total: 0 },
     });
   });
 
-  it('한쪽 그룹만 표본 0 → 그 그룹만 null (0% 와 구분)', async () => {
+  // "표본이 없다" 와 "표본은 있는데 아무도 안 했다" 는 다른 사실이다.
+  // 분모를 그대로 주므로 total=0 과 acted=0 이 구조적으로 구분된다 (null 특례가 필요 없어졌다)
+  it('한쪽 그룹만 표본 0 → total 0 으로 구분된다 (acted 0 과 다름)', async () => {
     dataSource.query.mockReset();
     dataSource.query
       .mockResolvedValueOnce([])
@@ -101,8 +105,8 @@ describe('ActivationService', () => {
 
     const res = await service.getActivation();
 
-    expect(res.briefing.actedRateRead).toBe(0);
-    expect(res.briefing.actedRateUnread).toBeNull();
+    expect(res.briefing.read).toEqual({ acted: 0, total: 5 });
+    expect(res.briefing.unread).toEqual({ acted: 0, total: 0 });
   });
 
   it('5분 캐시 — 연속 2회 호출 시 쿼리는 1세트(2회)만', async () => {

@@ -80,6 +80,7 @@ describe('LlmService', () => {
     appleRefreshToken: null,
     firstAppLoginAt: null,
     firstWebLoginAt: null,
+    firstDesktopWebSeenAt: null,
     nickname: '장성원',
     email: null,
     role: 'user',
