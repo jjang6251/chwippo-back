@@ -27,13 +27,25 @@ export interface ActivationCohortRow {
   d30: number;
 }
 
+/** 그룹별 행동 표본 — **분자·분모를 그대로 준다** */
+export interface BriefingGroup {
+  /** 당일 카드·스텝을 건드린 유저-일 */
+  acted: number;
+  /** 그 그룹의 전체 유저-일 (표기 규칙의 분모) */
+  total: number;
+}
+
 export interface BriefingCorrelation {
   /** 최근 30일 브리핑 수신 유저-일 수 */
   receivedUserDays: number;
-  /** read 그룹의 당일 카드·스텝 행동률 (%) — 표본 0이면 null */
-  actedRateRead: number | null;
-  /** 미read 그룹의 당일 행동률 (%) */
-  actedRateUnread: number | null;
+  /**
+   * 🔴 **비율을 서버가 계산해 내려주지 않는다** (2026-08-06 변경).
+   * 이전에는 `actedRateRead: 65` 처럼 % 만 줬는데, 그러면 **분모가 5든 500이든 화면이 똑같이
+   * `65%`** 로 그린다. 소표본 백분율은 정확해 보이는 만큼 위험하고, 프론트는 분모를 몰라
+   * 방어할 수단이 없었다. 표기 규칙은 `utils/shareFormat` 한 곳이 소유한다.
+   */
+  read: BriefingGroup;
+  unread: BriefingGroup;
 }
 
 export interface ActivationResponse {
@@ -225,19 +237,17 @@ export class ActivationService {
       [TZ],
     );
 
-    const readRow = rows.find((r) => r.read === true);
-    const unreadRow = rows.find((r) => r.read === false);
-    const rate = (row?: { total: string; acted: string }): number | null => {
-      const total = Number(row?.total ?? 0);
-      if (total === 0) return null;
-      return Math.round((Number(row?.acted ?? 0) / total) * 100);
-    };
+    const group = (row?: { total: string; acted: string }): BriefingGroup => ({
+      acted: Number(row?.acted ?? 0),
+      total: Number(row?.total ?? 0),
+    });
+    const read = group(rows.find((r) => r.read === true));
+    const unread = group(rows.find((r) => r.read === false));
 
     return {
-      receivedUserDays:
-        Number(readRow?.total ?? 0) + Number(unreadRow?.total ?? 0),
-      actedRateRead: rate(readRow),
-      actedRateUnread: rate(unreadRow),
+      receivedUserDays: read.total + unread.total,
+      read,
+      unread,
     };
   }
 }

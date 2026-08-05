@@ -40,6 +40,7 @@ describe('CompaniesService', () => {
     appleRefreshToken: null,
     firstAppLoginAt: null,
     firstWebLoginAt: null,
+    firstDesktopWebSeenAt: null,
     nickname: 'tester',
     email: null,
     role: 'user',

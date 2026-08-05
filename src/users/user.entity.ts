@@ -78,6 +78,25 @@ export class User {
   @Column({ name: 'first_web_login_at', type: 'timestamptz', nullable: true })
   firstWebLoginAt: Date | null;
 
+  /**
+   * 데스크탑 웹(뷰포트 ≥1024px · 비네이티브)을 쓴 적이 있는가 — **자소서 도달 지표의 분모**.
+   *
+   * 🔴 `firstWebLoginAt` 은 **웹 vs 앱**만 가른다. 모바일 웹과 데스크탑 웹은 구분하지 못하는데,
+   * 자소서 편집·AI 는 데스크탑 웹 전용이라 이 축이 없으면 **"모바일이라 못 쓴 것"** 과
+   * **"데스크탑에서 안 쓴 것"** 이 한 숫자에 섞인다.
+   *
+   * 신호원은 게이트 자신이다 — 프론트가 `useCoverletterReadOnly() === false` 일 때만 beacon 을
+   * 쏘므로 판정식이 게이트와 같은 표현식이고, 둘이 어긋날 수 없다. **UA 로 추측하지 않는다.**
+   *
+   * ⚠️ `NULL` 은 **"모바일"이 아니라 "미확인"** 이다 (스탬프 도입 전 가입자 · 백필 근거가 없는 사용자).
+   */
+  @Column({
+    name: 'first_desktop_web_seen_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  firstDesktopWebSeenAt: Date | null;
+
   @Column({ name: 'last_active_at', type: 'timestamptz', nullable: true })
   lastActiveAt: Date | null;
 
