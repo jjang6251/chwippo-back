@@ -3,6 +3,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { ActivationService } from './activation.service';
+import { OpsReachService } from './ops-reach.service';
+import { OpsReachController } from './ops-reach.controller';
 import { ActivationController } from './activation.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { UserPlatformService } from './user-platform.service';
@@ -103,10 +105,12 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     AdminNotificationsController, // PR_B2 Phase 4
     CompanyResearchStatusController, // feature-research-admin
     ActivationController, // A8 Activation 측정
+    OpsReachController, // 도달 현황 — 관측계획 0단계 자동화
   ],
   providers: [
     AdminService,
     ActivationService, // A8 Activation 측정
+    OpsReachService, // 도달 현황 — 관측계획 0단계 자동화
     AdminUsersService,
     UserPlatformService, // 사용 환경(웹/앱) 배치 조회 — N+1 방지
     AdminAuditService,

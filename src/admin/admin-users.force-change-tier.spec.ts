@@ -45,6 +45,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     email: null,
     firstAppLoginAt: null,
     firstWebLoginAt: null,
+    firstDesktopWebSeenAt: null,
     role: 'user',
     createdAt: new Date(),
     lastActiveAt: null,
