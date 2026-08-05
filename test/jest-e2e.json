@@ -2,6 +2,8 @@
   "moduleFileExtensions": ["js", "json", "ts"],
   "rootDir": ".",
   "testEnvironment": "node",
+  "_comment_testTimeout": "e2e 는 suite 마다 Nest 앱을 새로 부팅한다. jest 기본 5s 는 22+ suite 를 순차 실행할 때 beforeAll 이 넘기고, 어느 suite 가 걸릴지가 실행마다 달라져 플레이크로 보인다 (2026-08-06 실측: develop 기준선에서도 매번 다른 2개가 실패).",
+  "testTimeout": 30000,
   "testRegex": ".e2e-spec.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
