@@ -1,0 +1,142 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "백엔드 개발자로서 본인을 소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "현대오토에버의 백엔드 직무에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점 한 가지를 말씀해 주시고, 그 강점이 백엔드 개발 업무에서 어떻게 발휘되었는지 설명해 주세요.",
+      "source_log_ids": [
+        "l2",
+        "l3"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지를 말씀해 주시고, 이를 개선하기 위해 어떤 노력을 해왔는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "로그가 없어 장애 원인을 3시간 동안 찾지 못했던 경험을 말씀해 주셨는데, 당시 가장 큰 실패 원인은 무엇이었고 같은 상황이 다시 발생한다면 어떻게 대응하시겠습니까?",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "팀의 코드 리뷰 규칙이 없던 상황에서 리뷰어 2명 지정 규칙을 제안하고 도입한 경험을 설명해 주세요. 팀원들의 참여를 어떻게 이끌어 내셨나요?",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "코드 리뷰나 기술적 의사결정에서 팀원과 의견이 달랐던 경험이 있다면, 이견을 어떤 기준으로 조율했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "company_industry",
+      "question": "왜 다른 회사가 아니라 현대오토에버인가요? 현대오토에버와 자동차·모빌리티 산업의 어떤 점이 본인의 백엔드 역량과 잘 맞는다고 생각하십니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 백엔드 개발자로서 어떤 역량을 갖춘 사람이 되고 싶으며, 이를 위해 어떤 목표를 세우고 있습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "현대오토에버의 백엔드 개발 업무와 관련해 면접관에게 궁금한 점을 질문해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 본인을 꼭 채용해야 하는 이유와 함께 하고 싶은 말을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "개발 속도와 안정성, 그리고 팀의 협업 효율이 충돌할 때 백엔드 개발자로서 어떤 가치를 우선하겠습니까? 그 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API에서 재고 테이블을 매 요청마다 전체 조회하는 구조를 개선했다고 했는데, Array와 Linked List, Hash 자료구조의 특성을 고려한다면 재고 조회와 캐시 키 설계에 어떤 자료구조가 적합한지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "Redis 캐시를 도입해 주문 처리 API 응답 속도를 850ms에서 210ms로 개선했다고 했는데, 캐시 일관성 문제와 캐시 무효화 전략은 어떻게 설계하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "재고 조회 성능을 개선하기 위해 데이터베이스 인덱스를 추가한다면 어떤 컬럼을 기준으로 인덱스를 설계하고, 인덱스가 오히려 성능을 저하시킬 수 있는 경우는 언제인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리와 재고 차감이 함께 이루어지는 상황에서 트랜잭션의 원자성과 동시성 문제를 어떻게 보장하시겠습니까? Redis와 데이터베이스 사이의 처리 순서도 함께 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API의 트래픽이 증가해 여러 서버에서 동시에 요청을 처리하게 될 때, 프로세스와 스레드의 차이가 어떤 상황에서 중요해지며 서버 자원과 동시성 문제를 어떻게 관리하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "주문 처리 API 응답 속도를 850ms에서 210ms로 개선했다고 했는데, 개선 전후의 성능을 어떤 방식으로 측정했으며 Redis 도입이 실제 원인 개선으로 이어졌다고 어떻게 검증했습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "일 12만 건 트래픽을 처리하기 위해 Redis 캐시를 도입했다고 했는데, 캐시를 사용하지 않고 데이터베이스 쿼리나 읽기 전용 복제본을 개선하는 방법과 비교해 Redis를 선택한 판단 기준은 무엇이었습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "구조화 로깅을 팀에 도입한 뒤 평균 장애 복구 시간이 절반으로 줄었다고 했는데, 어떤 로그 필드와 형식을 정의했고 장애 원인 파악 시간이 줄어든 과정을 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "코드 리뷰어 2명 지정 규칙을 제안한 뒤 머지까지 걸리는 시간이 평균 2일로 줄었다고 했는데, 리뷰 품질이 유지되었는지와 개선 효과를 어떤 기준으로 확인했습니까?",
+      "source_log_ids": [
+        "l3"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1737,
+  "outputTokens": 1401,
+  "stopReason": "stop",
+  "thinkingTokens": 180,
+  "latencyMs": 8732
+}

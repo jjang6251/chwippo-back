@@ -1,0 +1,49 @@
+{
+  "questions": [
+    {
+      "category": "data_metrics",
+      "question": "인스타그램 계정을 운영하면서 게시물 12개를 올려 지원자를 20명에서 34명으로 늘렸다고 했는데, 이 과정에서 어떤 전환율을 목표로 했고, 실제 결과는 어땠나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "ROAS를 측정할 때 어떤 지표를 가장 중요하게 여기고, 그 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "data_metrics",
+      "question": "가설을 세우고 검증하는 프로세스에서 가장 기억에 남는 사례를 설명해 주세요. 어떤 가설이었고, 결과는 어땠나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI 기술이 마케팅 전략에 미치는 영향을 어떻게 생각하시나요? 특히, 어떤 자동화 영역에서 마케터의 역할이 보완될 것이라고 보시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI 시대에 마케터가 갖춰야 할 필수 역량은 무엇이라고 생각하시나요? 그 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "배달의민족에서 마케팅 직무에 지원하게 된 특별한 이유가 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "교내 동아리에서 신입 모집 홍보를 맡았던 경험을 통해 배운 점은 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1753,
+  "outputTokens": 334,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 4797
+}

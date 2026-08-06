@@ -73,6 +73,31 @@ export class InterviewPrepQuestion {
   category: string | null;
 
   /** AI 가 생성한 모범 답안 (사용자 my_memo 와 분리) */
+  /**
+   * v2.1 (2026-08-07) — **우선 준비 대상.**
+   *
+   * 실제 신입 면접은 1인 26분 · 실질 문답 4분 남짓이라 **받는 질문이 5개 안팎**이다.
+   * 20문항을 다 준비하는 건 현실적이지 않아, 모델이 "먼저 할 것" 5~7개를 골라 준다.
+   *
+   * `NOT NULL DEFAULT false` — 옛 질문은 전부 false 로 남는다 (표시가 없을 뿐 안 깨진다).
+   */
+  @Column({ name: 'must_prepare', type: 'boolean', default: false })
+  mustPrepare: boolean;
+
+  /**
+   * 꼬리질문이 **무엇을 파고들었는지** (v2.1, 2026-08-07) — `my_memo` | `ai_answer` | `question`.
+   *
+   * 메인 질문(depth 0)은 항상 null 이다. 생성 시점의 판단을 박제하는 이유는,
+   * 부모의 메모가 나중에 바뀌어도 **그때 무엇을 보고 만들었는지**는 변하지 않아서다.
+   */
+  @Column({
+    name: 'followup_basis',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
+  followupBasis: string | null;
+
   @Column({ name: 'suggested_answer', type: 'text', nullable: true })
   suggestedAnswer: string | null;
 

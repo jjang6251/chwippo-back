@@ -1,0 +1,121 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "자기소개 해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "배달의민족에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점은 무엇이라고 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점은 무엇이라고 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었던 경험이나 실패했던 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 중 갈등이나 이견을 조율한 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "배달의민족이 운영하는 3면 시장 구조에 대해 어떻게 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 어떤 마케터가 되고 싶으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "배달의민족의 마케팅 팀에서 가장 중요하게 생각하는 KPI는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 하고 싶은 말이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "data_metrics",
+      "question": "이전 경험에서 다뤘던 ROAS나 CPA와 관련된 지표에 대해 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "가설 검증 프로세스를 통해 어떤 성과를 얻었는지 구체적으로 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "data_metrics",
+      "question": "전환율을 개선하기 위해 어떤 전략을 사용하셨나요? 구체적인 수치를 포함해 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI 시대에 마케터의 역할이 어떻게 변화하고 있다고 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "마케팅 자동화 도구를 사용한 경험이 있으신가요? 있다면 어떤 도구를 사용했는지와 그 효과를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "자기소개서에서 언급한 신입 모집 홍보 경험을 통해 어떤 교훈을 얻으셨나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "교내 동아리에서의 경험이 배달의민족 마케팅 직무에 어떻게 도움이 될 것이라고 생각하시나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "배달의민족의 마케팅 전략 중 가장 흥미로운 점은 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "배달의민족의 핵심 가치인 '규율 위의 자율'이 마케팅에 어떻게 적용될 수 있을까요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "배달의민족의 비전과 당신의 가치관은 어떻게 일치하나요?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1672,
+  "outputTokens": 681,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 8487
+}

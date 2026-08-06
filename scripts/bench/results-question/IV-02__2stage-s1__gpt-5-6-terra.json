@@ -1,0 +1,75 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "안녕하세요. 먼저 본인을 1분 내로 소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "마케팅 직무에 지원하게 된 계기와, 그중에서도 배달의민족에 지원한 이유를 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점 한 가지를 실제 경험과 함께 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지와 이를 보완하기 위해 실천하고 있는 방법을 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었거나 기대한 결과를 얻지 못했던 경험을 말씀해 주세요. 당시 원인을 어떻게 분석했고, 이후 무엇을 바꾸셨나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "여러 사람과 협업하여 공동 목표를 달성했던 경험을 말씀해 주세요. 본인의 역할과 기여를 구체적으로 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 과정에서 의견 충돌이나 갈등이 발생했던 경험이 있나요? 상대와 어떻게 조율했고 결과는 어땠는지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "누군가 지시하지 않아도 스스로 문제를 발견하고 끝까지 몰입했던 경험을 말씀해 주세요. 무엇이 본인을 움직이게 했나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "배달의민족은 ‘규율 위의 자율’과 ‘스스로 몰입하는 사람’을 중요한 가치로 봅니다. 높은 자율성 속에서 우선순위를 정하고 성과를 만들어 낸 경험을 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "음식 배달 중개 플랫폼은 이용자·가게·라이더를 연결하는 3면 시장 구조를 갖고 있습니다. 다른 회사가 아니라 이러한 구조의 배달의민족에서 마케팅을 하고 싶은 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 마케터로서 어떤 문제를 해결하는 사람이 되고 싶은지, 단기적으로 만들고 싶은 성과와 함께 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 질문하고 싶은 내용이 있으면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 면접관에게 꼭 전하고 싶은 말이 있다면 말씀해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1774,
+  "outputTokens": 619,
+  "stopReason": "stop",
+  "thinkingTokens": 46,
+  "latencyMs": 6897
+}

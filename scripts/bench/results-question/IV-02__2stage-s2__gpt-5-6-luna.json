@@ -1,0 +1,60 @@
+{
+  "questions": [
+    {
+      "category": "data_metrics",
+      "question": "교내 동아리 신입 모집을 위해 인스타그램 게시물 12개를 올렸고 지원자가 전년 20명에서 34명으로 늘었다고 했는데, 이 성과를 평가하기 위해 어떤 KPI를 설정하고 게시물의 기여도를 어떻게 측정하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "인스타그램 홍보를 통해 지원자가 20명에서 34명으로 증가했다고 했는데, 지원자 증가가 게시물 노출 때문인지 실제 전환 효과 때문인지 검증하기 위해 어떤 데이터를 수집하고 어떤 가설 검증 절차를 진행하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "배달 플랫폼 마케팅에서 전환율, CPA, ROAS, 리텐션 중 우선순위를 정해야 한다면 어떤 기준으로 핵심 KPI를 선택하시겠습니까? 또한 목표 대비 성과가 낮을 때 어떤 순서로 원인을 분석하시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI를 활용한 마케팅이 확대되는 상황에서 광고 소재 생성, 타깃 세분화, 성과 예측 중 어떤 업무를 자동화할 수 있다고 보며, 마케터가 직접 판단하고 보완해야 하는 영역은 무엇이라고 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "배달 플랫폼의 그로스와 리텐션을 개선하기 위해 AI를 활용한다면 어떤 고객 데이터를 바탕으로 어떤 마케팅 가설을 세우고 검증하시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "교내 동아리 인스타그램 계정을 운영할 때 게시물 12개의 주제와 형식은 어떤 기준으로 결정하셨으며, 성과가 좋았던 게시물과 그렇지 않았던 게시물을 어떻게 비교하셨습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "신입 지원자를 전년 20명에서 34명으로 늘리는 과정에서 본인이 직접 내린 가장 중요한 마케팅 의사결정은 무엇이었으며, 다른 대안을 선택하지 않은 이유는 무엇입니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "인스타그램 홍보 성과가 본인의 활동 때문이라고 판단한 근거는 무엇이며, 게시물 외에 지원자 증가에 영향을 줄 수 있는 요인들은 어떻게 통제하거나 구분하셨습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1749,
+  "outputTokens": 692,
+  "stopReason": "stop",
+  "thinkingTokens": 119,
+  "latencyMs": 5015
+}

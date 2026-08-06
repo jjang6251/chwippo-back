@@ -1,0 +1,64 @@
+{
+  "questions": [
+    {
+      "category": "coverletter_based",
+      "question": "상품 상세 화면 개편에서 사용자 인터뷰 8명을 통해 사용자가 이미지보다 사이즈 정보를 먼저 찾는다는 점을 확인했다고 했는데, 인터뷰 대상은 어떤 기준으로 선정했고 이 발견이 특정 사용자군에만 해당할 가능성은 어떻게 검증했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "design_process",
+      "question": "사이즈 정보의 순서를 바꾸기 전에 기존 상품 상세 화면에서 사용자가 정보를 탐색하는 흐름을 어떻게 파악했고, 인터뷰 결과를 실제 화면 구조로 번역하는 과정에서 고려한 대안들을 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "portfolio_decision",
+      "question": "이미지보다 사이즈 정보를 앞에 배치하는 결정이 상품의 시각적 매력이나 브랜드 표현을 약화시킬 수 있다는 의견이 나왔다면, 어떤 근거와 기준으로 최종 우선순위를 결정하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "상품 상세 화면 개편 후 장바구니 전환율이 3%p 상승했다고 했는데, 이 변화가 정보 순서 개편의 효과라고 판단한 근거는 무엇이며, 동시에 영향을 줄 수 있는 다른 요인은 어떻게 분리해서 보셨는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "디자인 시스템 부재로 버튼 스타일이 화면마다 달랐던 상황에서, 24개 컴포넌트를 어떤 기준으로 구분하고 우선순위를 정했는지 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "컴포넌트를 토큰으로 묶는 과정에서 재사용성을 높이려는 요구와 각 화면의 개별 요구사항이 충돌했을 때, 어디까지를 공통화하고 어디부터 예외로 둘지 어떤 원칙으로 판단했는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "신규 화면 작업 시간이 이틀에서 반나절로 줄었다고 했는데, 이 시간 단축을 어떤 방식으로 측정했으며 디자인 시스템 도입 이후에도 품질과 일관성이 유지되는지는 어떻게 확인했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "portfolio_decision",
+      "question": "무신사처럼 상품 정보의 탐색성과 브랜드별 개성이 모두 중요한 서비스에서, 디자인 시스템의 일관성과 브랜드·카테고리별 표현의 유연성을 어떻게 함께 설계하시겠습니까?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1678,
+  "outputTokens": 719,
+  "stopReason": "stop",
+  "thinkingTokens": 134,
+  "latencyMs": 7027
+}

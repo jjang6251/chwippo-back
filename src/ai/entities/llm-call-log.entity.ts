@@ -28,6 +28,9 @@ export type ActiveLlmFeature =
   | 'coverletter_chat'
   | 'interview_prep_session'
   | 'interview_prep_followup'
+  // v2 (2026-08-06) — 세션·꼬리질문이 질문만 만들게 되면서 신설. 사용자가 특정 질문에서
+  // `AI 도움` 을 누를 때 그 질문 1개의 예상 답변을 만든다.
+  | 'interview_prep_answer'
   | 'jobposting_parse';
 
 /**

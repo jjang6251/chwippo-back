@@ -1,0 +1,99 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "자기소개 해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "배달의민족에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점은 무엇이라고 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점은 무엇이라고 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었던 경험이나 실패했던 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "갈등이나 이견을 조율했던 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "마케팅 활동에서 가장 중요하다고 생각하는 가치는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "배달의민족의 핵심 가치인 '규율 위의 자율'에 대해 어떻게 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "왜 다른 회사가 아니라 배달의민족인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 어떤 마케터가 되고 싶은지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관님께 하고 싶은 질문이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 하고 싶은 말이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "data_metrics",
+      "question": "이전에 진행했던 마케팅 캠페인에서 ROAS나 전환율을 어떻게 측정했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "가설을 검증하는 과정에서 어떤 지표를 사용했는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI 시대의 마케터 역할 변화에 대해 어떻게 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "마케팅 자동화가 가져오는 장점과 단점은 무엇이라고 생각하나요?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1778,
+  "outputTokens": 481,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 5951
+}

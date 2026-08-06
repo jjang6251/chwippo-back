@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import {
+  COST_CAP_USER_MESSAGE,
   LlmService,
   PROVIDER_OUTAGE_USER_MESSAGE,
   type LlmErrorKind,
@@ -21,6 +22,7 @@ import { ActivityReflection } from '../activity/entities/activity-reflection.ent
 import { Activity } from '../activity/entities/activity.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { buildCoverletterContext } from './coverletter-context-builder';
+import { assertJobTextPresent } from './job-text';
 import { CompanyResearchService } from '../interview-prep/company-research.service';
 import { CoverletterSourceRef } from './coverletter-source-ref.entity';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
@@ -154,6 +156,8 @@ export class AiCoverletterDraftService {
     if (!clWithApp?.application) {
       throw new NotFoundException('지원 카드를 찾을 수 없습니다.');
     }
+    // 직무 게이트 — 직무를 모르면 직무에 맞는 초안을 쓸 수 없다 (프론트 우회 방어)
+    assertJobTextPresent(clWithApp.application);
 
     // A1 — 회사조사 완료 가드 제거 (3경로 개편). draft 컨텍스트는 원래
     // source_refs·myinfo 기반이라 조사와 무관 — 조사는 chat 단계에서만 활용됨.
@@ -313,6 +317,7 @@ export class AiCoverletterDraftService {
       application: {
         companyName: clWithApp.application.companyName,
         jobCategory: clWithApp.application.jobCategory ?? null,
+        jobTitle: clWithApp.application.jobTitle ?? null,
       },
       question: cl.question,
       category: cl.category,
@@ -465,6 +470,8 @@ export class AiCoverletterDraftService {
         return '내용에 부적절한 표현이 감지됐어요. 수정 후 다시 시도해 주세요.';
       case 'blocked_input_cap':
         return '입력이 너무 길어요. 활동 로그를 줄여 다시 시도해 주세요.';
+      case 'blocked_cost_quota':
+        return COST_CAP_USER_MESSAGE;
       case 'error':
       default:
         return '잠시 후 다시 시도해 주세요.';

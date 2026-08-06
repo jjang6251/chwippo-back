@@ -1,0 +1,128 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "백엔드 직무와 연결해 1분 내로 자기소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "백엔드 개발 직무에 지원한 동기와, 이 직무를 통해 해결하고 싶은 문제를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 가장 큰 강점 한 가지를 백엔드 개발 업무 사례와 함께 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지와 이를 보완하기 위해 지속적으로 실천하는 방법을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "장애 대응 당시 로그가 없어 원인 파악에 3시간이 걸렸다고 했는데, 이 경험에서 가장 아쉬웠던 판단은 무엇이며 이후 어떻게 개선했는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "코드 리뷰 규칙을 제안하고 정착시키는 과정에서 팀원들과 어떻게 협업했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "개발 방향이나 일정에 대해 팀원과 이견이 있었던 경험이 있다면, 어떤 기준으로 의견을 조율했는지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "다른 회사가 아니라 현대오토에버를 선택한 이유와, 현대오토에버에서 백엔드 엔지니어로 기여할 수 있는 부분을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 3년 안에 어떤 백엔드 개발자로 성장하고 싶으며, 이를 위해 어떤 역량을 우선적으로 갖추겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 현대오토에버의 백엔드 개발 업무나 협업 방식에 관해 질문하고 싶은 내용이 있으면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 면접관에게 꼭 전달하고 싶은 말이 있으면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "개발 속도와 안정성 사이에서 우선순위가 충돌할 때, 본인은 어떤 원칙으로 판단하겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API에서 Redis 캐시를 도입했다고 했는데, 캐시 적용에 적합한 데이터와 적합하지 않은 데이터를 어떤 기준으로 구분했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "재고 데이터처럼 변경 가능성이 있는 정보를 Redis에서 조회할 때 캐시 불일치가 발생할 수 있는데, 이를 방지하거나 허용하기 위한 전략을 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 과정에서 재고 차감과 주문 생성이 함께 일어난다면, 트랜잭션의 원자성과 격리 수준을 어떻게 설계하겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "일 12만 건 트래픽 환경에서 동시 요청이 몰려 동일 재고가 중복으로 판매되는 문제를 어떻게 방지하겠습니까? 데이터베이스와 Redis 관점에서 각각 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "백엔드 서버에서 프로세스와 스레드의 차이를 설명하고, 요청 처리 서버의 동시성 모델을 선택할 때 고려할 사항을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "주문 처리 API의 응답 시간을 850ms에서 210ms로 개선했다고 했는데, 전체 조회 구조가 병목이라고 판단하기 위해 어떤 지표와 검증 과정을 활용했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "구조화 로깅을 도입할 때 어떤 로그 필드를 표준화했으며, 로그의 추적 가능성과 개인정보·민감정보 보호는 어떻게 함께 고려했는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "리뷰어 2명 지정 규칙으로 PR 머지 기간을 평균 2일로 줄였다고 했는데, 단순히 리뷰어를 늘린 것이 아니라 병목을 해소하기 위해 어떤 운영 방식을 설계했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1737,
+  "outputTokens": 1169,
+  "stopReason": "stop",
+  "thinkingTokens": 167,
+  "latencyMs": 11695
+}

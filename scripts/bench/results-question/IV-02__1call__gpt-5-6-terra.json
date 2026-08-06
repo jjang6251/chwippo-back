@@ -1,0 +1,116 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "간단한 자기소개와 함께, 마케팅 직무에 적합하다고 생각하는 본인만의 강점을 중심으로 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "마케팅 직무에 지원한 계기와, 배달의민족에서 특히 해보고 싶은 마케팅 과업을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 가장 큰 강점 한 가지를 마케팅 업무에서 발휘한 사례와 함께 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지는 무엇이며, 이를 보완하기 위해 어떤 노력을 하고 있는지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "목표한 결과를 얻지 못했거나 가장 힘들었던 경험을 하나 말씀해 주시고, 그 경험 이후 무엇을 바꾸었는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "여러 사람과 협업하여 공동의 목표를 달성했던 경험에서 본인이 맡은 역할과 기여를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 중 의견 충돌이나 이견이 발생했을 때 이를 조율했던 경험을 구체적으로 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "배달의민족은 가게·라이더·이용자를 연결하는 3면 시장 구조를 운영합니다. 다른 회사가 아니라 배달의민족에서 마케팅을 해야 하는 이유와, 이 구조에서 마케터가 고려해야 할 점을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "배달의민족이 강조하는 ‘규율 위의 자율’과 ‘스스로 몰입하는 사람’이라는 가치 중 본인과 가장 맞닿아 있는 부분은 무엇인가요? 이를 보여 주는 경험과 함께 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 3년 안에 어떤 마케터로 성장하고 싶으며, 이를 위해 어떤 역량을 우선적으로 쌓고 싶으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "본인이 중요하게 생각하는 일의 기준이나 가치관은 무엇이며, 성과와 개인의 신념이 충돌한다면 어떤 기준으로 판단하시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 질문하고 싶은 사항이 있다면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 오늘 면접에서 꼭 전하고 싶은 말이 있다면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "교내 동아리 신입 모집 홍보를 위해 인스타그램 게시물 12개를 운영해 지원자를 전년 20명에서 34명으로 늘렸다고 했는데, 가장 효과적이었다고 판단한 콘텐츠와 그 판단 근거를 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "동아리 인스타그램 운영 당시 타깃 지원자를 어떻게 정의했고, 게시물의 주제·형식·발행 순서를 어떤 기준으로 결정했는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "동아리 지원자 수 증가를 성과로 제시하셨는데, 게시물 12개 중 어떤 콘텐츠가 지원 증가에 기여했는지 검증하기 위해 추가로 확인했어야 할 지표는 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "배달의민족에서 신규 이용자 확보 캠페인을 진행한다고 가정해 보겠습니다. 목표 설정부터 핵심 KPI, ROAS·CPA·전환율의 관계, 예산 조정 기준까지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "data_metrics",
+      "question": "그로스와 리텐션을 함께 높여야 하는 상황에서, 신규 이용자 유입 캠페인의 성과가 좋은지 판단하기 위해 어떤 코호트와 지표를 보시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI가 광고 소재 제작과 타기팅 최적화를 자동화하는 환경에서, 마케터가 계속 직접 판단하고 보완해야 할 영역은 무엇이라고 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI를 활용해 배달의민족 마케팅 캠페인 아이디어를 발굴하고 실행한다면, 어느 단계에 AI를 활용하고 결과물의 품질과 브랜드 적합성은 어떻게 검증하시겠습니까?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1668,
+  "outputTokens": 1210,
+  "stopReason": "stop",
+  "thinkingTokens": 176,
+  "latencyMs": 12637
+}

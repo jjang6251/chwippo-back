@@ -1,0 +1,1564 @@
+[
+  {
+    "id": "JF-finance",
+    "jobCategory": "재무·회계·세무",
+    "fork": "finance",
+    "total": 22,
+    "offDomain": [],
+    "onDomainHits": [
+      "재무제표",
+      "손익",
+      "현금흐름",
+      "감가상각",
+      "금리",
+      "환율",
+      "리스크",
+      "밸류에이션",
+      "회계",
+      "세무",
+      "재고자산"
+    ],
+    "commonCount": 12,
+    "jobCount": 10,
+    "mustCount": 6,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "company_industry",
+      "coverletter_based",
+      "coverletter_based",
+      "performance"
+    ],
+    "costKrw": 1.626192,
+    "latencyMs": 9974,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "재무·회계·세무 직무에 지원한 본인을 핵심 역량 중심으로 소개해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "재무·회계·세무 직무에 지원한 이유는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "본인의 강점 한 가지를 말씀해 주시고, 그 강점이 재무·회계·세무 업무에 어떻게 도움이 된다고 생각하나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "본인의 약점 한 가지를 말씀해 주시고, 업무에 미치는 영향을 줄이기 위해 어떤 노력을 하고 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": false,
+        "question": "가장 힘들었거나 실패했던 경험은 무엇이며, 그 과정에서 어떤 판단을 했고 무엇을 배웠나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "다른 사람들과 협업해 목표를 달성한 경험을 말씀해 주시고, 본인이 맡은 역할과 기여를 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "협업 과정에서 의견이 충돌하거나 이견을 조율해야 했던 경험을 말씀해 주시고, 어떤 기준으로 해결책을 판단했나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "왜 다른 금융회사가 아니라 신한은행에 지원했나요? 신한은행의 사업과 은행 산업의 특성을 고려해 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "신한은행에 입사한다면 재무·회계·세무 분야에서 어떤 역할을 하는 사람이 되고 싶나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "신한은행과 재무·회계·세무 직무에 대해 면접관에게 궁금한 점이 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 선발해야 하는 이유나 하고 싶은 말이 있다면 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "재무 업무를 수행할 때 정확성과 업무 속도가 충돌한다면 어떤 가치를 우선하고, 그 이유는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "교내 투자동아리에서 2년 동안 활동하며 반도체 3개사의 재무제표를 비교 분석했다고 했는데, 세 기업을 비교 대상으로 선정한 이유는 무엇인가요?",
+        "source_log_ids": [
+          "f1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "반도체 3개사의 재무제표 비교 분석에서 영업이익률 추이와 재고자산회전율을 밸류에이션 근거로 선택한 판단 기준은 무엇이었나요?",
+        "source_log_ids": [
+          "f1"
+        ]
+      },
+      {
+        "category": "performance",
+        "must_prepare": true,
+        "question": "투자동아리 리포트에서 본인이 맡은 분석의 결과를 어떻게 검증했으며, 분석의 정확성을 높이기 위해 어떤 정량적 근거를 추가로 확인했나요?",
+        "source_log_ids": [
+          "f1"
+        ]
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "재무상태표, 손익계산서, 현금흐름표의 연결 관계를 설명하고, 세 재무제표를 함께 봐야 하는 이유를 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "감가상각비가 손익계산서와 현금흐름표에 각각 어떻게 반영되는지, 현금흐름에 어떤 영향을 미치는지 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "최근 금리와 환율 변동이 은행의 수익성과 재무 리스크에 어떤 영향을 미칠 수 있는지 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "은행의 재무·회계 업무에서 중요하게 관리해야 할 리스크를 하나 선정하고, 그 리스크를 어떤 지표와 절차로 관리할지 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "관심 있게 본 기업 하나를 선정해 재무적으로 어떤 점을 분석했는지, 그리고 그 기업을 관심 있게 본 이유는 무엇인지 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "반도체 3개사의 영업이익률과 재고자산회전율이 서로 다른 방향으로 움직였다면, 밸류에이션을 판단할 때 어떤 요소를 추가로 확인했을까요?",
+        "source_log_ids": [
+          "f1"
+        ]
+      },
+      {
+        "category": "performance",
+        "must_prepare": false,
+        "question": "재무 분석 결과를 다른 동아리원이나 청중에게 설명할 때, 분석 결과에 대한 신뢰를 얻기 위해 어떤 수치와 논리를 우선적으로 제시했나요?",
+        "source_log_ids": [
+          "f1"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "JF-research",
+    "jobCategory": "의료·제약·바이오",
+    "fork": "research",
+    "total": 20,
+    "offDomain": [],
+    "onDomainHits": [
+      "실험",
+      "대조군",
+      "가설",
+      "재현",
+      "임상",
+      "GMP",
+      "GLP"
+    ],
+    "commonCount": 12,
+    "jobCount": 8,
+    "mustCount": 8,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "failure",
+      "company_industry",
+      "domain_knowledge",
+      "domain_knowledge",
+      "domain_knowledge",
+      "coverletter_based"
+    ],
+    "costKrw": 1.599696,
+    "latencyMs": 8530,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "본인의 전공 및 연구 경험을 중심으로 1분 이내 자기소개를 해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "의료·제약·바이오 연구개발 직무에 지원한 동기는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "연구개발 직무를 수행할 때 본인의 가장 큰 강점은 무엇이며, 실제 경험을 들어 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "연구개발 직무를 수행할 때 보완해야 할 본인의 약점은 무엇이며, 이를 개선하기 위해 어떤 노력을 했나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": true,
+        "question": "MTT assay에서 대조군 설정 오류로 1차 결과를 폐기하고 재설계했다고 했는데, 오류를 어떻게 발견했고 이후 재발을 막기 위해 무엇을 바꾸었나요?",
+        "source_log_ids": [
+          "r1"
+        ]
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "학부 연구실에서 다른 연구원이나 지도교수와 협업하여 실험을 수행한 경험을 설명해 주세요. 본인은 어떤 역할을 맡았나요?",
+        "source_log_ids": [
+          "r1"
+        ]
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "연구실에서 실험 조건이나 결과 해석에 대해 본인과 다른 의견이 나왔을 때, 근거를 바탕으로 이견을 조율한 경험을 설명해 주세요.",
+        "source_log_ids": [
+          "r1"
+        ]
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "왜 다른 제약·바이오 기업이 아니라 셀트리온인가요? 셀트리온의 사업과 제약·바이오 산업의 특성을 고려해 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "셀트리온에 입사한다면 연구개발 직무에서 어떤 전문성을 갖춘 사람으로 성장하고 싶나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "셀트리온의 연구개발 직무와 관련해 면접관에게 궁금한 점을 질문해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 면접관에게 하고 싶은 말을 해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "연구개발 과정에서 성과와 연구윤리 또는 데이터의 신뢰성이 충돌하는 상황이 발생한다면, 어떤 기준으로 판단하겠나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": true,
+        "question": "항암 후보물질의 세포독성 평가에 사용한 MTT assay의 원리와 결과가 의미하는 바를 비전공자에게 설명해 주세요.",
+        "source_log_ids": [
+          "r1"
+        ]
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": true,
+        "question": "MTT assay를 설계할 때 대조군은 어떻게 설정해야 하며, 각 대조군이 필요한 이유는 무엇인가요?",
+        "source_log_ids": [
+          "r1"
+        ]
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": true,
+        "question": "세포독성 실험에서 예상과 다른 결과가 나왔다면, 실험 오류와 실제 생물학적 현상을 어떻게 구분하고 해석하겠나요?",
+        "source_log_ids": [
+          "r1"
+        ]
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "제약·바이오 연구에서 실험 데이터의 재현성을 확보하기 위해 실험 전·중·후에 어떤 관리를 해야 하나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "GMP와 GLP의 차이를 설명하고, 연구개발 직무에서 각각이 왜 중요한지 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "신약 후보물질의 임상 1상, 2상, 3상은 각각 어떤 목적과 평가 기준을 가지나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "대조군 설정 오류를 발견한 뒤 1차 결과를 폐기하고 재설계했다고 했는데, 결과를 살리는 대신 폐기하기로 판단한 기준은 무엇이었나요?",
+        "source_log_ids": [
+          "r1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "항암 후보물질 세포독성 실험을 수행하면서 세운 가설은 무엇이었고, 그 가설을 검증하기 위해 실험 조건과 측정 지표를 어떻게 정했나요?",
+        "source_log_ids": [
+          "r1"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "JF-manufacturing",
+    "jobCategory": "제조·생산·품질·SCM",
+    "fork": "manufacturing",
+    "total": 22,
+    "offDomain": [],
+    "onDomainHits": [
+      "공정",
+      "불량",
+      "수율",
+      "품질",
+      "4M",
+      "5Why",
+      "원가",
+      "재고",
+      "리드타임",
+      "안전",
+      "교대"
+    ],
+    "commonCount": 12,
+    "jobCount": 10,
+    "mustCount": 7,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "company_industry",
+      "coverletter_based",
+      "coverletter_based",
+      "domain_knowledge",
+      "domain_knowledge"
+    ],
+    "costKrw": 1.7514270000000003,
+    "latencyMs": 10408,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "제조·생산·품질·SCM 직무에 지원한 지원자 본인을 1분 이내로 소개해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "LG에너지솔루션의 제조·생산·품질·SCM 직무에 지원한 동기는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "제조 현장에서 발휘할 수 있는 본인의 강점 한 가지를 구체적인 경험과 함께 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "제조·생산·품질 업무를 수행할 때 보완해야 할 본인의 약점 한 가지와 이를 개선하기 위해 어떤 노력을 했는지 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": false,
+        "question": "지금까지 가장 힘들었거나 실패했다고 느낀 경험은 무엇이며, 그 경험에서 무엇을 배웠나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "여러 사람과 협업하여 목표를 달성했던 경험을 말씀해 주시고, 본인은 어떤 역할을 맡았는지 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "협업 과정에서 작업 방식이나 우선순위에 대한 이견을 조율했던 경험이 있다면, 상대방을 설득하기 위해 어떤 근거를 사용했는지 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "왜 다른 제조·생산 기업이 아니라 LG에너지솔루션에 지원했나요? 회사와 배터리 산업의 관점에서 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "입사 후 제조·생산·품질·SCM 직무에서 어떤 역량을 갖춘 사람으로 성장하고 싶나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "이번 면접에서 면접관에게 궁금한 점이나 확인하고 싶은 점이 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 하고 싶은 말을 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "제조 현장에서 성과와 원칙이 충돌할 때, 지원자는 어떤 기준으로 의사결정을 하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "자동차부품 공장 현장실습에서 조립 라인 불량률을 2.1%에서 1.4%로 개선했다고 했는데, 개선 전후 수치를 어떻게 측정하고 개선 효과가 실제로 유효하다고 판단했나요?",
+        "source_log_ids": [
+          "m1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "조립 라인 불량의 원인을 4M 관점으로 나누었다고 했는데, 네 가지 요인 중 어떤 순서와 기준으로 원인을 좁혀 갔는지 설명해 주세요.",
+        "source_log_ids": [
+          "m1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "작업자 교육 표준을 다시 만들었다고 했는데, 기존 표준의 어떤 문제가 불량으로 이어진다고 판단했으며 새 표준에는 무엇을 어떻게 반영했나요?",
+        "source_log_ids": [
+          "m1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "작업자 교육 표준을 변경한 뒤 현장 작업자들이 새 방식에 잘 따르도록 하기 위해 어떤 방식으로 소통하고 정착 여부를 확인했나요?",
+        "source_log_ids": [
+          "m1"
+        ]
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": true,
+        "question": "현장에서 불량이 반복적으로 발생한다면 4M과 5Why를 활용해 원인을 분석하는 절차를 실제 업무 흐름에 맞춰 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "수율, 불량률, Cpk는 각각 무엇을 의미하며, 공정 개선 상황에서 세 지표를 어떻게 함께 해석하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "원가 절감을 위해 공정이나 자재를 변경했을 때 품질이 저하될 가능성이 있다면, 어떤 기준과 검증 절차로 의사결정하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "생산계획을 맞추면서도 재고와 리드타임을 안정적으로 관리하기 위해 어떤 항목을 모니터링하고 어떻게 대응하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "제조 현장에서 안전과 생산성이 충돌하는 상황이 발생한다면 어떻게 판단하고 조치하겠습니까? 중대재해 예방 관점에서 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": true,
+        "question": "제조·생산 직무는 현장 근무와 교대 근무가 발생할 수 있는데, 이에 대해 어떤 태도를 가지고 있으며 교대 환경에서 업무 정확도와 컨디션을 어떻게 관리하겠습니까?",
+        "source_log_ids": []
+      }
+    ]
+  },
+  {
+    "id": "JF-corporate",
+    "jobCategory": "인사·HR·노무",
+    "fork": "corporate",
+    "total": 19,
+    "offDomain": [],
+    "onDomainHits": [
+      "근로기준법",
+      "노동",
+      "노무",
+      "채용",
+      "규정",
+      "내부통제",
+      "개인정보",
+      "이해관계자",
+      "조율",
+      "인사"
+    ],
+    "commonCount": 12,
+    "jobCount": 7,
+    "mustCount": 8,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "collaboration",
+      "collaboration",
+      "company_industry",
+      "domain_knowledge",
+      "domain_knowledge",
+      "coverletter_based"
+    ],
+    "costKrw": 1.641924,
+    "latencyMs": 9860,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "인사·HR·노무 직무에 지원한 지원자로서 본인의 강점과 경험을 중심으로 자기소개해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "CJ제일제당의 인사·HR·노무 직무에 지원한 동기는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "인사·HR·노무 직무를 수행할 때 가장 큰 강점은 무엇이며, 실제 경험을 들어 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "인사·HR·노무 직무를 수행하는 데 있어 본인이 보완해야 할 약점은 무엇이며, 이를 개선하기 위해 어떤 노력을 하고 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": false,
+        "question": "지금까지 가장 힘들었거나 실패했다고 느꼈던 경험은 무엇이며, 그 경험에서 무엇을 배웠나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": true,
+        "question": "학생회 인사팀장으로 근로장학생 40명의 근무표를 작성했다고 했는데, 근무표를 만들 때 어떤 기준으로 우선순위를 정하고 이해관계자를 조율했나요?",
+        "source_log_ids": [
+          "c1"
+        ]
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": true,
+        "question": "근로장학생들이 수업 시간과 근무 시간이 겹친다고 항의했을 때, 기존 배정 규칙을 그대로 적용하지 않고 다시 합의하기로 판단한 이유는 무엇인가요?",
+        "source_log_ids": [
+          "c1"
+        ]
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "인사 담당자가 조직에서 원칙을 지켜야 하는 상황과 구성원의 사정을 배려해야 하는 상황이 충돌한다면, 어떤 기준으로 판단하시겠어요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "왜 다른 식품·제조 기업이 아니라 CJ제일제당의 인사·HR·노무 직무를 선택했나요? 회사와 산업의 특성을 고려해 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "입사 후 인사·HR·노무 분야에서 어떤 역할을 맡을 수 있는 사람으로 성장하고 싶나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "이번 면접을 통해 면접관에게 질문하고 싶은 점이 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 선발해야 하는 이유나 하고 싶은 말이 있다면 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": true,
+        "question": "현업 부서에서 법정 기준에 맞지 않는 근무 방식이나 인사 운영을 요청한다면, 근로기준법과 노동관계법을 기준으로 어떻게 검토하고 대응하시겠어요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "채용 프로세스를 설계할 때 공정성, 직무 적합성, 지원자 경험을 함께 확보하기 위해 어떤 절차와 평가 기준을 고려하시겠어요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": true,
+        "question": "회사의 기존 인사 규정과 현업 부서의 운영상 요구가 충돌한다면, 어떤 사실을 확인하고 어떤 기준으로 허용 가능한 융통성의 범위를 정하시겠어요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "인사 업무에서 개인정보를 수집·보관·제공할 때 발생할 수 있는 위험은 무엇이며, 이를 예방하기 위해 어떤 내부통제가 필요하다고 생각하나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "근로장학생 40명의 근무표를 다시 조정할 때, 단순히 항의를 반영하는 것과 전체 구성원에게 적용할 수 있는 배정 원칙을 만드는 것 사이에서 어떤 선택을 했고 그 판단 근거는 무엇인가요?",
+        "source_log_ids": [
+          "c1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "학생회 인사팀장으로서 근무표를 운영하며 예상하지 못했던 문제나 추가로 발생한 이슈는 무엇이었고, 이를 어떻게 해결했나요?",
+        "source_log_ids": [
+          "c1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "근로장학생들의 요구를 반영해 배정 규칙을 다시 합의하는 과정에서 본인의 의견과 다른 의견이 나왔다면, 최종안을 어떤 방식으로 결정했을까요?",
+        "source_log_ids": [
+          "c1"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "JF-service",
+    "jobCategory": "승무원",
+    "fork": "service",
+    "total": 22,
+    "offDomain": [],
+    "onDomainHits": [
+      "고객",
+      "응대",
+      "불만",
+      "안전",
+      "감정",
+      "CS",
+      "NPS",
+      "서비스 품질"
+    ],
+    "commonCount": 13,
+    "jobCount": 9,
+    "mustCount": 6,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "company_industry",
+      "coverletter_based",
+      "coverletter_based",
+      "customer_handling"
+    ],
+    "costKrw": 1.686429,
+    "latencyMs": 9753,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "지원자 본인을 승무원 직무와 연결해 1분 이내로 소개해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "대한항공 승무원 직무에 지원한 동기는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "승무원 업무에 가장 도움이 될 본인의 강점 한 가지를 구체적인 경험과 함께 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "승무원 업무를 수행하는 데 보완이 필요하다고 생각하는 본인의 약점 한 가지와 개선 노력을 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "감정적으로 힘든 고객을 연속해서 응대한 뒤에도 서비스 품질을 유지하기 위해 본인의 감정을 어떻게 회복하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": false,
+        "question": "지금까지 가장 힘들었거나 실패했다고 느꼈던 경험은 무엇이며, 그 경험에서 무엇을 배웠나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "여러 사람과 협력해 고객의 문제를 해결했던 경험을 말씀해 주시고, 본인은 어떤 역할을 맡았나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "동료와 고객 응대 방식에 이견이 생겼을 때, 어떤 기준으로 의견을 조율하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "왜 다른 항공사가 아니라 대한항공의 승무원이 되고 싶은가요? 대한항공과 항공 서비스 산업의 특성을 고려해 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "대한항공에 입사한다면 어떤 승무원으로 성장하고 싶으며, 입사 후 가장 먼저 갖추고 싶은 역량은 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "대한항공과 승무원 직무에 대해 면접관에게 궁금한 점이 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 하고 싶은 말이 있다면 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "승무원에게 가장 중요한 직업적 가치가 무엇이라고 생각하며, 그 가치를 실제 업무에서 어떻게 실천하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "호텔 프런트 아르바이트 중 예약 착오로 객실이 없던 고객을 응대했다고 했는데, 당시 여러 해결 방법 중 인근 호텔 이동과 요금 조정을 안내한 이유는 무엇이었나요?",
+        "source_log_ids": [
+          "s1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "호텔 프런트에서 예약 착오 상황을 처리할 때 고객의 불만을 먼저 파악하기 위해 어떤 순서로 대화했으며, 본인이 가장 중요하다고 판단한 대응 원칙은 무엇이었나요?",
+        "source_log_ids": [
+          "s1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "예약 착오로 객실이 없었던 고객이 인근 호텔 이동과 요금 조정 모두를 거부했다면, 그다음에는 어떻게 대응했겠습니까?",
+        "source_log_ids": [
+          "s1"
+        ]
+      },
+      {
+        "category": "customer_handling",
+        "must_prepare": true,
+        "question": "기내에서 화가 난 승객이 큰 목소리로 항의한다면, 승무원으로서 어떤 순서로 상황을 파악하고 대응하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "customer_handling",
+        "must_prepare": false,
+        "question": "승객이 안전 규정상 불가능한 요구를 강하게 요청한다면, 고객의 감정을 존중하면서도 규정을 지키기 위해 어떻게 설명하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "customer_handling",
+        "must_prepare": false,
+        "question": "기내에서 여러 승객의 요청과 불편 신고가 동시에 발생한다면, 어떤 기준으로 우선순위를 정하고 대응하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "customer_handling",
+        "must_prepare": false,
+        "question": "같은 승객의 불만이 반복적으로 접수된다면, 일회성 사과를 넘어 근본적인 원인을 파악하기 위해 무엇을 확인하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "기내에서 승객이 갑자기 의식을 잃거나 호흡 곤란을 호소한다면, 승무원으로서 어떤 순서로 대처해야 한다고 생각하나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "domain_knowledge",
+        "must_prepare": false,
+        "question": "승무원의 서비스 품질을 평가할 때 NPS, CSAT, 응대시간과 같은 지표를 어떻게 이해하고, 이 지표들이 서로 낮거나 높게 나타날 때 무엇을 점검하겠습니까?",
+        "source_log_ids": []
+      }
+    ]
+  },
+  {
+    "id": "IV-01",
+    "jobCategory": "백엔드",
+    "fork": "developer",
+    "total": 21,
+    "offDomain": [],
+    "onDomainHits": [
+      "자료구조",
+      "인덱스",
+      "TCP",
+      "스레드",
+      "장애",
+      "트래픽",
+      "설계"
+    ],
+    "commonCount": 12,
+    "jobCount": 9,
+    "mustCount": 8,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "failure",
+      "company_industry",
+      "coverletter_based",
+      "coverletter_based",
+      "coverletter_based",
+      "cs_tech"
+    ],
+    "costKrw": 1.855341,
+    "latencyMs": 11097,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "백엔드 개발자로서 본인의 강점과 주요 경험을 중심으로 자기소개해 주세요.",
+        "source_log_ids": [
+          "l1",
+          "l2",
+          "l3"
+        ]
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "현대오토에버의 백엔드 직무에 지원한 동기는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "본인의 강점 한 가지를 말씀해 주시고, 백엔드 개발 업무에서 그 강점이 발휘된 경험을 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "본인의 약점 한 가지를 말씀해 주시고, 이를 개선하기 위해 어떤 노력을 해왔는지 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": true,
+        "question": "장애 대응 중 로그가 없어 원인을 3시간 동안 찾지 못했던 경험을 말씀해 주시고, 당시 무엇이 가장 큰 문제였다고 판단했는지 설명해 주세요.",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "팀에서 다른 개발자들과 협업하며 공동의 결과를 만들어 낸 경험을 말씀해 주세요. 본인은 어떤 역할을 했나요?",
+        "source_log_ids": [
+          "l3"
+        ]
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "팀 코드 리뷰 규칙이 없어 PR이 일주일씩 묶였던 상황에서 리뷰어 2명 지정 규칙을 제안했다고 했는데, 팀원들의 이견이나 우려를 어떻게 조율했는지 설명해 주세요.",
+        "source_log_ids": [
+          "l3"
+        ]
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "왜 다른 회사가 아니라 현대오토에버인가요? 현대오토에버의 산업과 사업 특성 측면에서 본인이 이 회사에 지원한 이유를 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "현대오토에버에 입사한다면 백엔드 개발자로서 어떤 역량을 갖춘 사람이 되고 싶나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "현대오토에버의 백엔드 실무와 관련해 면접관에게 궁금한 점을 질문해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 하고 싶은 말을 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "개발자가 기술적 완성도와 일정 준수 사이에서 충돌하는 상황을 마주한다면, 어떤 기준으로 우선순위를 판단하겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "주문 처리 API 응답 속도를 850ms에서 210ms로 개선했다고 했는데, 매 요청마다 재고 테이블을 전체 조회하는 구조가 병목이라고 판단한 근거는 무엇이었나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "Redis 캐시를 도입하기로 결정한 이유는 무엇이며, 데이터 정합성이나 캐시 만료·갱신 문제는 어떻게 검토했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "Redis 캐시 도입 후 일 12만 건 트래픽을 처리했다고 했는데, 캐시 적중률이나 장애 상황 등 도입 효과를 어떤 방식으로 검증했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "구조화 로깅을 팀에 도입하자 평균 장애 복구 시간이 절반으로 줄었다고 했는데, 기존 로그의 어떤 한계를 해결하기 위해 어떤 로그 항목과 형식을 제안했나요?",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": false,
+        "question": "주문 처리 API에서 재고 조회 결과를 빠르게 찾기 위해 Hash 기반 자료구조를 활용할 때, 평균 조회 시간과 해시 충돌 문제를 어떻게 설명할 수 있나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": true,
+        "question": "재고 테이블 전체 조회를 줄이기 위해 데이터베이스 인덱스를 설계한다면, 어떤 컬럼을 인덱스로 선택하고 그 판단 기준은 무엇인가요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": false,
+        "question": "주문 생성과 재고 차감이 함께 처리되는 상황에서 트랜잭션의 원자성과 격리 수준이 왜 중요한지, 동시 요청이 발생하는 경우를 들어 설명해 주세요.",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": false,
+        "question": "주문 처리 백엔드에서 프로세스와 스레드의 차이가 중요해지는 상황을 설명하고, 동시 요청을 처리할 때 각각 어떤 영향을 주는지 말씀해 주세요.",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": false,
+        "question": "주문 처리 API를 외부 클라이언트가 호출하는 상황을 가정할 때, TCP 3-way handshake와 HTTP 요청이 각각 어떤 역할을 하는지 설명해 주세요.",
+        "source_log_ids": [
+          "l1"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "IV-02",
+    "jobCategory": "마케팅",
+    "fork": "marketer",
+    "total": 22,
+    "offDomain": [],
+    "onDomainHits": [
+      "ROAS",
+      "CPA",
+      "전환율",
+      "지표",
+      "캠페인",
+      "가설"
+    ],
+    "commonCount": 13,
+    "jobCount": 9,
+    "mustCount": 7,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "company_industry",
+      "coverletter_based",
+      "coverletter_based",
+      "coverletter_based",
+      "data_metrics"
+    ],
+    "costKrw": 1.7723339999999999,
+    "latencyMs": 10771,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "마케팅 직무에 지원한 지원자로서 본인의 강점과 경험을 중심으로 1분 내외로 자기소개해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "마케팅 직무에 지원한 동기는 무엇인가요? 본인의 경험과 연결해 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "마케팅 업무를 수행할 때 본인의 가장 큰 강점은 무엇이며, 실제 경험을 통해 어떻게 발휘되었는지 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "마케팅 업무를 수행할 때 본인이 보완해야 할 가장 큰 약점은 무엇이며, 이를 개선하기 위해 어떤 노력을 하고 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": false,
+        "question": "마케팅 활동이나 프로젝트에서 기대한 결과를 얻지 못했던 경험을 말씀해 주세요. 당시 무엇을 잘못 판단했고, 이후 어떻게 개선했나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "다른 사람들과 함께 목표를 정하고 실행한 협업 경험을 말씀해 주세요. 본인이 맡은 역할과 협업 과정에서 기여한 점을 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "협업 중 목표나 실행 방향에 대해 의견이 엇갈렸던 경험을 말씀해 주세요. 상대방의 의견을 어떻게 이해하고 최종 방향을 조율했나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "음식 배달 중개 플랫폼으로서 가게, 라이더, 이용자를 연결하는 3면 시장 구조를 가진 회사 중에서, 왜 다른 회사가 아니라 배달의민족인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "culture_fit",
+        "must_prepare": false,
+        "question": "배달의민족의 핵심 가치인 ‘규율 위의 자율’과 ‘스스로 몰입하는 사람’ 중 본인과 더 밀접하게 연결되는 가치는 무엇이며, 이를 보여주는 경험이 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "배달의민족에 입사한다면 어떤 마케터로 성장하고 싶으며, 입사 후 가장 먼저 기여하고 싶은 영역은 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "배달의민족의 마케팅 실무와 관련해 면접관에게 질문하고 싶은 것이 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 면접에서 미처 말씀드리지 못한 내용을 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "마케팅 성과와 고객에게 제공하는 가치가 충돌하는 상황에서, 마케터로서 어떤 기준으로 의사결정하시겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "교내 동아리 신입 모집 홍보에서 인스타그램 계정을 운영하고 게시물 12개를 올려 지원자를 전년 20명에서 34명으로 늘렸다고 했는데, 이 목표와 콘텐츠 운영 방향을 정한 근거는 무엇이었나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "교내 동아리 홍보 결과 지원자가 20명에서 34명으로 증가했다고 했는데, 지원자 증가가 인스타그램 게시물의 효과라고 판단하기 위해 어떤 요인을 확인하거나 통제했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "인스타그램 게시물 12개를 운영하면서 게시물별 성과를 비교했다면 어떤 지표를 기준으로 다음 콘텐츠를 개선했을지, 실제로는 어떤 판단 기준을 사용했는지 설명해 주세요.",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "data_metrics",
+        "must_prepare": true,
+        "question": "교내 동아리 홍보처럼 예산과 데이터가 제한된 캠페인에서 핵심 KPI를 하나만 정해야 한다면 지원자 수, 전환율, 도달률 중 무엇을 선택하겠으며 그 이유는 무엇인가요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "data_metrics",
+        "must_prepare": false,
+        "question": "ROAS와 CPA의 차이를 설명하고, 음식 배달 플랫폼의 신규 이용자 확보 캠페인에서는 두 지표를 어떤 상황에서 각각 우선적으로 보시겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "data_metrics",
+        "must_prepare": false,
+        "question": "마케팅 캠페인의 전환율이 예상보다 낮을 때, 가설을 세우고 원인을 검증하는 과정을 단계별로 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "trend_ai",
+        "must_prepare": false,
+        "question": "AI 마케팅 시대에 자동화할 수 있는 마케팅 업무와 마케터가 직접 판단하고 보완해야 하는 업무를 각각 구분해 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "trend_ai",
+        "must_prepare": false,
+        "question": "배달 플랫폼의 그로스와 리텐션을 높이는 데 AI를 활용한다면 어떤 고객 데이터를 바탕으로 어떤 가설을 세우고 검증하시겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "data_metrics",
+        "must_prepare": false,
+        "question": "배달의민족의 마케팅 캠페인에서 신규 이용자 확보보다 재방문과 리텐션이 더 중요해질 수 있는 상황은 언제이며, 이를 판단하기 위해 어떤 지표를 보시겠습니까?",
+        "source_log_ids": []
+      }
+    ]
+  },
+  {
+    "id": "IV-03",
+    "jobCategory": "백엔드",
+    "fork": "developer",
+    "total": 22,
+    "offDomain": [],
+    "onDomainHits": [
+      "자료구조",
+      "인덱스",
+      "스레드",
+      "장애",
+      "설계"
+    ],
+    "commonCount": 13,
+    "jobCount": 9,
+    "mustCount": 7,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "failure",
+      "company_industry",
+      "coverletter_based",
+      "coverletter_based",
+      "cs_tech"
+    ],
+    "costKrw": 1.932552,
+    "latencyMs": 11042,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "백엔드 개발자로서 본인을 소개해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "결제 정산 배치 시간을 40분에서 5분으로 줄인 경험과 금융 도메인에 대한 관심을 바탕으로, 토스 백엔드 직무에 지원한 동기를 설명해 주세요.",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "백엔드 개발자로서 본인의 가장 큰 강점은 무엇이며, 실제 업무에서 어떻게 발휘되었나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "본인의 약점은 무엇이며, 이를 개선하기 위해 어떤 노력을 하고 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": true,
+        "question": "동시 요청 시 중복 결제가 발생하는 버그를 배포 후에 발견했다고 했는데, 당시 문제를 어떻게 분석하고 해결했으며 같은 문제가 재발하지 않도록 무엇을 바꾸었나요?",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "다른 개발자 또는 유관 직군과 협업하여 결과를 만든 경험을 하나 설명해 주세요. 본인은 어떤 역할을 했나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "개발 방향이나 기술 선택에 대해 팀원과 의견이 달랐던 경험이 있다면, 어떤 기준으로 이견을 조율했는지 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "송금·결제·증권·보험 등 금융 생활 전반을 하나의 앱에서 제공하는 토스의 사업 특성을 고려할 때, 왜 다른 금융 플랫폼이나 회사가 아니라 토스에서 백엔드 개발자로 일하고 싶나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "토스에 입사한다면 첫 1년 동안 어떤 백엔드 개발자로 성장하고 싶나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "토스의 백엔드 개발 업무와 팀에 대해 면접관에게 궁금한 점을 질문해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 면접관에게 하고 싶은 말을 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "금융 서비스를 개발하는 백엔드 엔지니어에게 가장 중요한 업무 가치관은 무엇이라고 생각하나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "culture_fit",
+        "must_prepare": false,
+        "question": "토스의 핵심 가치인 자율과 책임, 그리고 문제 정의부터 하는 사람이라는 관점에서 본인이 일할 때 중요하게 생각하는 방식은 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "결제 정산 배치의 처리 시간을 40분에서 5분으로 줄이기 위해 인덱스 2개를 추가했다고 했는데, 어떤 쿼리 문제를 확인했고 두 인덱스를 선택한 판단 기준은 무엇이었나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "인덱스를 추가한 뒤 쓰기 성능이나 저장 공간, 다른 쿼리의 실행 계획에는 어떤 영향이 생길 수 있으며 이를 어떻게 검증했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": true,
+        "question": "동시 요청으로 중복 결제가 발생하는 문제를 멱등키로 해결했다고 했는데, 멱등키의 저장 위치와 유효 범위, 결제 처리 상태 관리는 어떻게 설계했나요?",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "재현 테스트 1000건에서 중복 결제가 0건이었다고 했는데, 테스트가 실제 운영 환경의 동시성을 충분히 검증한다고 판단한 근거는 무엇인가요?",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "외부 API 장애로 전체 서비스가 멈춘 상황에서 서킷 브레이커를 도입했다고 했는데, 어떤 장애 전파 경로를 차단했으며 임계값과 복구 조건은 어떻게 정했나요?",
+        "source_log_ids": [
+          "l4"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": false,
+        "question": "결제 요청의 중복 방지나 멱등성 키를 구현할 때 Hash 자료구조를 활용할 수 있는 이유와, Hash 충돌 및 동시성 문제를 어떻게 고려해야 하는지 설명해 주세요.",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": true,
+        "question": "중복 결제를 방지하기 위해 멱등키를 사용할 때 데이터베이스 트랜잭션의 원자성이 왜 중요한지, 결제 생성과 멱등키 기록이 각각 성공하거나 실패하도록 어떻게 보장할지 설명해 주세요.",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": false,
+        "question": "결제 정산 배치의 쿼리 성능을 개선할 때 인덱스가 동작하는 원리와 인덱스를 사용하더라도 풀 스캔이 발생할 수 있는 상황을 설명해 주세요.",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "cs_tech",
+        "must_prepare": false,
+        "question": "결제 서버에서 프로세스와 스레드의 차이가 중요해지는 상황을 설명하고, 동시 요청을 처리할 때 각각의 방식이 갖는 장단점을 말씀해 주세요.",
+        "source_log_ids": []
+      }
+    ]
+  },
+  {
+    "id": "IV-04",
+    "jobCategory": "프로덕트 디자이너",
+    "fork": "designer",
+    "total": 21,
+    "offDomain": [],
+    "onDomainHits": [
+      "의사결정",
+      "디자인"
+    ],
+    "commonCount": 12,
+    "jobCount": 9,
+    "mustCount": 5,
+    "mustCats": [
+      "self_intro",
+      "motivation",
+      "company_industry",
+      "portfolio_decision",
+      "design_process"
+    ],
+    "costKrw": 1.81539,
+    "latencyMs": 10957,
+    "questions": [
+      {
+        "category": "self_intro",
+        "must_prepare": true,
+        "question": "프로덕트 디자이너로서 본인을 소개해 주세요. 특히 사용자 문제를 발견하고 디자인으로 해결해 온 방식을 중심으로 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "motivation",
+        "must_prepare": true,
+        "question": "무신사의 프로덕트 디자이너 직무에 지원한 동기는 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "프로덕트 디자이너로서 본인의 가장 큰 강점은 무엇이며, 실제 프로젝트에서 어떻게 발휘되었나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "personality",
+        "must_prepare": false,
+        "question": "프로덕트 디자이너로서 본인의 약점은 무엇이며, 이를 보완하기 위해 어떤 노력을 하고 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "failure",
+        "must_prepare": false,
+        "question": "디자인 프로젝트에서 가장 힘들었거나 실패했다고 느낀 경험을 말씀해 주세요. 당시 어떤 판단을 했고, 그 결과에서 무엇을 배웠나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "다른 직군과 협업해 제품이나 화면을 개선한 경험을 말씀해 주세요. 본인이 맡은 역할과 협업 과정에서 중요하게 생각한 기준은 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "collaboration",
+        "must_prepare": false,
+        "question": "디자인 방향에 대해 개발자나 기획자와 의견이 달랐던 경험이 있나요? 서로 다른 의견을 어떤 근거로 조율했는지 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "company_industry",
+        "must_prepare": true,
+        "question": "왜 다른 회사가 아니라 무신사에서 프로덕트 디자이너로 일하고 싶으신가요? 무신사와 패션 커머스 산업의 관점에서 설명해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "aspiration",
+        "must_prepare": false,
+        "question": "무신사에 입사한다면 어떤 프로덕트 디자이너로 성장하고 싶으며, 입사 후 가장 먼저 기여하고 싶은 부분은 무엇인가요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "reverse_question",
+        "must_prepare": false,
+        "question": "이번 면접을 통해 실무진에게 확인하고 싶은 점이나 궁금한 점이 있나요?",
+        "source_log_ids": []
+      },
+      {
+        "category": "closing_remark",
+        "must_prepare": false,
+        "question": "마지막으로 이번 면접에서 꼭 전달하고 싶은 말이 있다면 말씀해 주세요.",
+        "source_log_ids": []
+      },
+      {
+        "category": "executive",
+        "must_prepare": false,
+        "question": "좋은 프로덕트 디자인을 판단할 때 사용자 가치와 비즈니스 목표가 충돌한다면, 어떤 기준으로 우선순위를 정하시겠습니까?",
+        "source_log_ids": []
+      },
+      {
+        "category": "portfolio_decision",
+        "must_prepare": true,
+        "question": "상품 상세 화면 개편에서 사용자 인터뷰 8명을 통해 이미지보다 사이즈 정보를 먼저 찾는다는 점을 확인하고 정보 순서를 바꾸었다고 했는데, 왜 정보 순서를 바꾸는 것이 가장 적절한 해결책이라고 판단했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "portfolio_decision",
+        "must_prepare": false,
+        "question": "상품 상세 화면에서 사이즈 정보를 이미지보다 앞에 배치할 때, 사용자의 탐색 편의성 외에 어떤 비즈니스 또는 제품 관점을 함께 고려했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "portfolio_decision",
+        "must_prepare": false,
+        "question": "디자인 시스템이 없는 상황에서 컴포넌트 24개를 정리해 토큰으로 묶었다고 했는데, 어떤 기준으로 컴포넌트를 분류하고 토큰화할 대상을 결정했나요?",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "design_process",
+        "must_prepare": true,
+        "question": "상품 상세 화면 개편을 위해 사용자 인터뷰 8명을 진행했다고 했는데, 인터뷰 대상자를 어떻게 선정했고 어떤 질문을 통해 사이즈 정보를 먼저 찾는다는 인사이트를 도출했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "design_process",
+        "must_prepare": false,
+        "question": "상품 상세 화면 개편 이후 장바구니 전환율이 3%p 올랐다고 했는데, 이 결과가 정보 순서 변경의 효과라고 판단하기 위해 어떤 방식으로 측정하고 다른 영향 요인을 어떻게 고려했나요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "design_process",
+        "must_prepare": false,
+        "question": "디자인 시스템을 구축할 때 기존 화면의 버튼 스타일이 서로 달랐다고 했는데, 현황을 어떻게 파악하고 새로운 컴포넌트와 토큰의 적용 범위를 정했나요?",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "상품 상세 화면 개편에서 인터뷰 결과와 기존 화면의 관성이 충돌했다면, 어떤 근거를 바탕으로 기존 디자인을 바꾸도록 설득했을까요?",
+        "source_log_ids": [
+          "l1"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "컴포넌트 24개를 정리하는 과정에서 디자인 시스템에 포함하지 않기로 한 요소가 있었다면, 어떤 기준으로 제외했을까요?",
+        "source_log_ids": [
+          "l2"
+        ]
+      },
+      {
+        "category": "coverletter_based",
+        "must_prepare": false,
+        "question": "장바구니 전환율을 높이는 것과 디자인 시스템의 일관성을 유지하는 일이 동시에 중요할 때, 두 목표의 우선순위를 어떻게 정하고 의사결정하시겠습니까?",
+        "source_log_ids": [
+          "l1",
+          "l2"
+        ]
+      }
+    ]
+  }
+]

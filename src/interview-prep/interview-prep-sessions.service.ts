@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -11,6 +12,27 @@ import { ApplicationCoverletter } from '../applications/application-coverletter.
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
+import { assertJobTextPresent } from '../applications/job-text';
+
+/**
+ * `in_progress` **stale 보정** — 서버가 중간에 죽으면 상태가 그대로 남아 사용자가
+ * 영원히 못 만든다. 생성은 ~10초라 **2분 초과면 죽은 것으로 보고 `idle` 로 내려**
+ * 응답한다 (DB 는 건드리지 않는다 — 다음 생성의 atomic UPDATE 가 자연 회수한다).
+ * 공고 파싱(`withJobPostingStatusGuard`)과 같은 방식이다.
+ */
+const GENERATION_STALE_MS = 2 * 60 * 1000;
+
+function resolveGenerationStatus(
+  s: InterviewPrepSession,
+): 'idle' | 'in_progress' | 'completed' | 'failed' {
+  const status = s.generationStatus ?? 'idle';
+  if (status !== 'in_progress') return status;
+  const started = s.generationStartedAt?.getTime();
+  if (started === undefined || started < Date.now() - GENERATION_STALE_MS) {
+    return 'idle';
+  }
+  return 'in_progress';
+}
 
 export interface SessionRefsExpanded {
   coverletters: Array<{
@@ -50,6 +72,11 @@ export interface SessionResponse {
   myMemo: string | null;
   jobDescription: string | null;
   emphasisPoints: string | null;
+  /**
+   * 질문 생성 진행 상태 — 화면이 새로고침 후에도 "생성 중" 을 다시 보여주는 근거다.
+   * 🔴 응답에 안 실으면 컬럼이 있어도 화면은 모른다 (`category` 가 그랬다).
+   */
+  generationStatus: 'idle' | 'in_progress' | 'completed' | 'failed';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -133,9 +160,39 @@ export class InterviewPrepSessionsService {
     userId: string,
     dto: CreateSessionDto,
   ): Promise<SessionResponse> {
-    await this.assertOwnsApplication(userId, dto.applicationId);
+    const app = await this.assertOwnsApplication(userId, dto.applicationId);
     const coverletterIds = dto.coverletterIds ?? [];
     const extraLogIds = dto.extraLogIds ?? [];
+
+    /**
+     * v2 (2026-08-06, CEO 결정) — **자소서 없이는 세션을 못 만든다.**
+     *
+     * 이 기능의 값어치는 "내 자소서를 파고드는 질문" 이다. 자소서가 없으면 검색하면 나오는
+     * 일반 면접 질문지가 되고, 그건 이 서비스를 쓸 이유가 못 된다. 동시에 자소서를 등록할
+     * 이유를 만드는 장치이기도 하다 (PRD 의 "내 정보 창고를 채울 이유" 선순환).
+     *
+     * 🔴 **프론트 차단만으로는 부족하다** — devtools·직접 호출로 우회된다. 여기가 진짜 경계다.
+     * 막는 지점을 "질문 생성" 이 아니라 **"세션 생성"** 으로 둔 이유: 질문 생성에서 막으면
+     * 쓸 수 없는 빈 세션이 목록에 남아 막다른 길이 된다.
+     */
+    if (coverletterIds.length === 0) {
+      throw new BadRequestException(
+        '자소서를 1개 이상 선택해 주세요. 자소서를 바탕으로 예상 질문을 만듭니다.',
+      );
+    }
+
+    /**
+     * v2 (2026-08-06) — **직무 없이는 세션을 못 만든다.**
+     *
+     * 직무는 10개 fork 중 무엇을 물을지 정하는 기준이다 (개발=CS / 재무=재무제표 /
+     * 연구=실험설계 …). 비어 있으면 fork 가 통째로 죽고 자소서 추궁만 남는다.
+     * dev 실측: 카드 93장 중 16장이 직무 없이 남아 있었다 — 안내만 있고 그 자리에서
+     * 고칠 수단이 없어서였다. 프론트가 모달 안에서 바로 고르게 바뀌었으므로 여기서 막는다.
+     *
+     * 🔴 판정 기준은 `resolveJobText` 와 **같아야 한다** — jobCategory 없어도 jobTitle 이
+     * 있으면 fork 가 잡히므로 통과시킨다. 여기만 엄격하면 멀쩡한 카드가 막힌다.
+     */
+    assertJobTextPresent(app);
     await this.assertCoverlettersBelongToUser(
       userId,
       dto.applicationId,
@@ -297,6 +354,7 @@ export class InterviewPrepSessionsService {
       myMemo: s.myMemo,
       jobDescription: s.jobDescription,
       emphasisPoints: s.emphasisPoints,
+      generationStatus: resolveGenerationStatus(s),
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
     };
