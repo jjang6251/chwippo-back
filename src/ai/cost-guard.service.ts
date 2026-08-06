@@ -25,6 +25,24 @@ import { AlertThresholds } from '../admin/entities/alert-thresholds.entity';
  * - alert_thresholds 0건 (첫 운영) → cap 무제한 (호출 통과)
  * - thresholds.enabled = false → guard skip (운영 중 kill switch)
  */
+/**
+ * 캡 값 해석 — **`0` 이하는 "무제한"** 이다 (2026-08-06 실사고).
+ *
+ * 🔴 예전엔 0 을 그대로 캡으로 썼다. 판정이 `total >= cap` 이라 **0원을 써도
+ * `0 >= 0` 으로 즉시 차단**됐고, 그 결과 **전 기능 AI 가 조용히 죽었다.**
+ * dev 에서 사흘간 아무도 몰랐다 — 호출을 안 했기 때문이다.
+ *
+ * admin 이 "제한 없음" 뜻으로 0 을 넣는 건 자연스러운 기대이고, 반대로
+ * "전부 차단" 은 `enabled: false` 라는 전용 스위치가 이미 있다. 0 을 전면 차단으로
+ * 두면 **의도한 적 없는 전면 장애만 만들어진다.**
+ *
+ * NaN·음수도 같은 취급 — 판정 불가한 값으로 사용자를 막지 않는다.
+ */
+function capOrUnlimited(raw: number | string): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : Infinity;
+}
+
 @Injectable()
 export class CostGuardService {
   private readonly logger = new Logger(CostGuardService.name);
@@ -134,8 +152,8 @@ export class CostGuardService {
       };
     }
 
-    const perUserCap = Number(thresholds.perUserDailyCostUsd);
-    const perFeatureCap = Number(thresholds.perFeatureDailyCostUsd);
+    const perUserCap = capOrUnlimited(thresholds.perUserDailyCostUsd);
+    const perFeatureCap = capOrUnlimited(thresholds.perFeatureDailyCostUsd);
     const { userTotal, featureTotal } = await this.getUserDailyCost(
       userId,
       feature,

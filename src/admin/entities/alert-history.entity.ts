@@ -23,7 +23,18 @@ export type AlertType =
   /** `finish_reason='length'` — 출력이 잘렸는데 **성공으로 기록**된 호출 */
   | 'output_truncation'
   /** **코인은 나갔는데 결과가 실패** — 돈만 잃는 가장 나쁜 실패 */
-  | 'charged_failure';
+  | 'charged_failure'
+  /**
+   * 2026-08-06 실사고 — **설정 때문에 AI 가 전면 차단된 상태**.
+   *
+   * `per_feature_daily_cost_usd` 가 admin 화면 입력 결함으로 0 이 되어 전 기능 AI 가
+   * **사흘간 조용히 죽어 있었다.** 에러가 아니라 "정상적인 차단" 이라 기존 알람
+   * (error rate·outage·cost 급증)에 하나도 걸리지 않았다.
+   *
+   * 차단 자체는 정상 기능이지만 **소비 없이(0원·0회) 차단되는 건 설정 오류뿐**이다.
+   * 그 신호를 잡는다.
+   */
+  | 'blocked_by_config';
 
 export type WebhookStatus =
   | 'sent'

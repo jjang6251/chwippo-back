@@ -299,6 +299,7 @@ describe('ThresholdCheckService', () => {
       jest.spyOn(service, 'checkVsYesterday').mockResolvedValue();
       jest.spyOn(service, 'checkOutputTruncation').mockResolvedValue();
       jest.spyOn(service, 'checkChargedFailure').mockResolvedValue();
+      jest.spyOn(service, 'checkBlockedByConfig').mockResolvedValue();
       const spy = jest
         .spyOn(service, 'checkAbnormalCoinUsage')
         .mockResolvedValue();
@@ -314,6 +315,64 @@ describe('ThresholdCheckService', () => {
    * "0 이 아니면 이상하다" 가 판단 기준이다. 그래서 경계값(`threshold-1` / `threshold`)을
    * 양쪽 다 못 박는다 — `<` 를 `<=` 로 바꾸는 실수가 곧 알람 1건 유실이다.
    */
+  /**
+   * 🔴 2026-08-06 실사고 회귀 — 설정 오류로 전 기능 AI 가 **사흘간 조용히** 죽어 있었다.
+   *    에러가 아니라 "정상 차단" 이라 기존 알람에 하나도 안 걸렸고, 사용량이 0이라
+   *    비용 알람은 오히려 조용해졌다 — **죽을수록 안 울리는 구조**였다.
+   */
+  describe('checkBlockedByConfig', () => {
+    it('차단 0건 → 무알림', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(makeQb<LlmCallLog>([]));
+      await service.checkBlockedByConfig();
+      expect(discord.notify).not.toHaveBeenCalled();
+      expect(historyRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('🔴 1건만 있어도 발화 — 그 feature 는 지금 아무도 못 쓴다', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([{ feature: 'coverletter_chat', cnt: '1' }]),
+      );
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
+      discord.notify.mockResolvedValue('sent');
+      await service.checkBlockedByConfig();
+      expect(historyRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ alertType: 'blocked_by_config' }),
+      );
+    });
+
+    it('알림 문구에 feature 와 확인할 곳이 담긴다', async () => {
+      logRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<LlmCallLog>([
+          { feature: 'coverletter_chat', cnt: '4' },
+          { feature: 'interview_prep_session', cnt: '9' },
+        ]),
+      );
+      historyRepo.createQueryBuilder.mockReturnValueOnce(
+        makeQb<AlertHistory>([], null, 0),
+      );
+      discord.notify.mockResolvedValue('sent');
+      await service.checkBlockedByConfig();
+      const msg = discord.notify.mock.calls[0][0] as string;
+      expect(msg).toContain('coverletter_chat: 4건');
+      expect(msg).toContain('interview_prep_session: 9건');
+      expect(msg).toContain('cost cap');
+    });
+
+    it('🔴 쿼리가 "소비 0" 조건을 건다 — 정상 한도 도달은 알리지 않는다', async () => {
+      // 소비가 쌓여 cap 에 닿은 건 정상이다. 그걸 알리면 소음이 되어 진짜 신호를 덮는다.
+      const qb = makeQb<LlmCallLog>([]);
+      logRepo.createQueryBuilder.mockReturnValueOnce(qb);
+      await service.checkBlockedByConfig();
+      const whereSql = (qb.andWhere as jest.Mock).mock.calls
+        .map((c) => String(c[0]))
+        .join(' ');
+      expect(whereSql).toContain('blocked_cost_quota');
+      expect(whereSql).toContain('cost_usd > 0');
+    });
+  });
+
   describe('checkOutputTruncation', () => {
     it('잘림 0건 → 무알림', async () => {
       logRepo.createQueryBuilder.mockReturnValueOnce(makeQb<LlmCallLog>([]));
