@@ -23,8 +23,16 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { matchJobFork } from '../../src/interview-prep/interview-context-builder';
+import {
+  filterAttributableLogIds,
+  findUnsupportedTechAssertions,
+  measureJobPostingCoverage,
+} from '../../src/interview-prep/interview-output-guards';
 
-const IN = join(__dirname, 'results', 'audit.json');
+/** 하니스와 같은 규칙으로 세트별 파일을 읽는다 — `score-audit.ts B` */
+const ONLY = process.argv[2]?.trim();
+const IN = join(__dirname, 'results', ONLY ? `audit-${ONLY}.json` : 'audit.json');
 
 /** 개발 직무가 아닌데 나오면 오답인 표현 */
 const CS_TERMS = [
@@ -130,21 +138,24 @@ function main(): void {
           where: `Q${q.no}`,
           detail: `로그 ${logTexts.length}개 전부 참조 — "${q.text.slice(0, 34)}…"`,
         });
-      } else if (q.sourceLogIds.length > 0) {
-        // 참조한 로그 중 **어느 것과도** 겹치지 않으면 오귀속 후보
-        const best = Math.max(...logTexts.map((l) => overlap(q.text, l)));
-        if (best < 0.15) {
-          flags.push({
-            axis: 'E1 오귀속 의심',
-            caseId: c.caseId,
-            where: `Q${q.no}`,
-            detail: `어느 로그와도 겹침 ${(best * 100).toFixed(0)}% — "${q.text.slice(0, 34)}…"`,
-          });
-        }
       }
+      /**
+       * 🔴 **`E1 오귀속 의심` 을 없앴다** (2026-08-07 3회차 심사).
+       *
+       * 어절 겹침 비율로 보는 자체 로직이라 한국어 조사를 못 벗겼고(`리포트를` ≠ `리포트`),
+       * B 세트에서 잡은 2건이 **전부 오탐**이었다 — 질문이 로그 내용 그대로였는데도
+       * 겹침이 10%로 계산됐다. 같은 판정을 **G2 가 운영 코드(`filterAttributableLogIds`)로**
+       * 하므로, 더 나쁜 사본을 남겨 둘 이유가 없다. 판정 로직을 두 벌 두면 갈라진다.
+       */
 
-      // ── CS 누출 (기존 축) ──
-      if (c.jobCategory !== 'IT개발') {
+      /**
+       * ── CS 누출 (기존 축) ──
+       *
+       * 🔴 `jobCategory !== 'IT개발'` 로 보면 **`데이터·AI` 엔지니어가 비개발로 오판**된다
+       * (B5 에서 정당한 기술 질문 5건이 전부 위반으로 잡혔다). 운영이 쓰는 fork 판정을
+       * 그대로 쓴다 — 직무 판정 로직을 채점기가 따로 갖지 않는다.
+       */
+      if (matchJobFork(c.jobTitle) !== 'developer') {
         const hit = CS_TERMS.filter((t) => q.text.includes(t));
         if (hit.length) {
           flags.push({
@@ -199,6 +210,95 @@ function main(): void {
           });
           break;
         }
+      }
+    }
+  }
+
+  /**
+   * ── G 축: 런타임 가드가 실제로 잡는지 (2026-08-07 신설) ──
+   *
+   * 🔴 위 E 축들은 **패턴 매칭**이라 "이 패턴으로는 안 걸림" 을 못 가른다.
+   * G 축은 운영 코드가 쓰는 **바로 그 함수**를 감사 결과에 다시 돌린다 — 두 곳이
+   * 갈라지면 여기서 드러난다 (측정 로직을 복제하지 않는다).
+   */
+  for (const c of d.cases) {
+    if (c.error) continue;
+    const material = [
+      ...c.coverletters.map((x: any) => `${x.question} ${x.answer}`),
+      ...c.logs,
+    ].join(' ');
+    /**
+     * 🔴 **실제 id ↔ 본문**으로 풀을 만든다. 처음엔 `L0·L1…` 가짜 id 로 만들고
+     * "앞에서 N개를 참조했다고 치고" 대조했는데, 그건 측정이 아니라 인공물이었다 —
+     * 맞게 단 참조까지 불일치로 세어 13건이 나왔다.
+     */
+    const ids: string[] = c.logIds ?? [];
+    const pool: Array<{ id: string; body: string }> = c.logs.map(
+      (body: string, i: number) => ({ id: ids[i] ?? `L${i}`, body }),
+    );
+
+    for (const q of c.questions) {
+      // G1 — 자료에 없는 기술을 "했다" 고 단정
+      for (const tok of findUnsupportedTechAssertions({
+        text: q.text,
+        userMaterial: material,
+      })) {
+        flags.push({
+          axis: 'G1 자료 밖 기술 단정',
+          caseId: c.caseId,
+          where: `Q${q.no}`,
+          detail: `"${tok}" 가 자료에 없는데 했다고 단정 — "${q.text.slice(0, 40)}…"`,
+        });
+      }
+      const a: string = q.answer ?? '';
+      if (a && !a.startsWith('⛔')) {
+        for (const tok of findUnsupportedTechAssertions({
+          text: a,
+          userMaterial: material,
+        })) {
+          flags.push({
+            axis: 'G1 자료 밖 기술 단정',
+            caseId: c.caseId,
+            where: `Q${q.no} 답변`,
+            detail: `"${tok}" 가 자료에 없다`,
+          });
+        }
+      }
+
+      // G2 — 저장된 참조가 **런타임 필터를 통과할 내용인가**.
+      //   `logIds` 가 없는 구 회차 데이터는 판정 불가라 건너뛴다 (가짜 매핑 금지)
+      if (q.sourceLogIds.length > 0 && pool.length > 1 && ids.length > 0) {
+        const kept = filterAttributableLogIds({
+          text: [q.text, a].filter(Boolean).join(' '),
+          claimedIds: q.sourceLogIds,
+          pool,
+        });
+        if (kept.length < q.sourceLogIds.length) {
+          flags.push({
+            axis: 'G2 내용 일치 실패',
+            caseId: c.caseId,
+            where: `Q${q.no}`,
+            detail: `참조 ${q.sourceLogIds.length}건 중 ${q.sourceLogIds.length - kept.length}건이 내용 불일치 — "${q.text.slice(0, 34)}…"`,
+          });
+        }
+      }
+    }
+
+    // G3 — 공고 요건 커버리지 (측정 전용)
+    const reqs: string[] = c.jobPostingRequirements ?? [];
+    if (reqs.length > 0) {
+      const cov = measureJobPostingCoverage(
+        c.questions.map((q: any) => q.text),
+        reqs,
+      );
+      const missed = cov.filter((r) => !r.covered);
+      if (missed.length > 0) {
+        flags.push({
+          axis: 'G3 공고 요건 미커버',
+          caseId: c.caseId,
+          where: `${cov.length - missed.length}/${cov.length} 커버`,
+          detail: missed.map((m) => m.requirement).join(' · '),
+        });
       }
     }
   }

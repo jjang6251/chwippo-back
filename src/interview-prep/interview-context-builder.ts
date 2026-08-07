@@ -126,11 +126,17 @@ export interface StepNoteInput {
  * 8 항목 (businessSummary·coreValues·visionMission·recentTrends·jobInsights·interviewKeywords 등) — 있는 것만.
  */
 export interface CompanyResearchInput {
-  businessSummary?: string | null;
-  coreValues?: string | null;
-  visionMission?: string | null;
-  recentTrends?: string | null;
-  jobInsights?: string | null;
+  /**
+   * 🔴 **`unknown` 인 이유** — 이 값들은 `company_research_cache.ai_research` (JSONB) 에서
+   * 온다. LLM 조사 출력이라 문자열일 수도, 배열일 수도, 없을 수도 있다. `string | null`
+   * 로 선언해 두면 **타입이 거짓말을 하고 tsc 가 무방비가 된다** (실제로 배열이 와서
+   * `trim is not a function` 으로 세션 생성이 죽었다). 읽을 땐 `researchText` 를 통과시킨다.
+   */
+  businessSummary?: unknown;
+  coreValues?: unknown;
+  visionMission?: unknown;
+  recentTrends?: unknown;
+  jobInsights?: unknown;
   interviewKeywords?: string[] | null;
   // 그 외 필드 ignore
 }
@@ -188,7 +194,52 @@ export interface BuildInterviewContextOutput {
     estimatedInputTokens: number;
     /** 컨텍스트에 들어간 activity_log id 배열 — hallucination 방어 candidate 풀로 caller 가 사용 */
     candidateLogIds: string[];
+    /**
+     * 후보 로그의 **본문까지** — `source_log_ids` 내용 일치 검증에 쓴다.
+     * id 만으로는 "그 로그가 실존하는가" 밖에 못 본다 (오귀속이 그렇게 통과했다).
+     */
+    candidateLogs: Array<{ id: string; body: string }>;
   };
+}
+
+/**
+ * 회사 조사 필드를 **표시 문자열로 정규화** (2026-08-07 감사에서 발견).
+ *
+ * 🔴 `company_research_cache.ai_research` 는 **JSONB** 이고 내용은 LLM 조사 출력이다.
+ * 타입은 `string | null` 이라 선언해 놓고 `r.coreValues?.trim()` 을 바로 불렀는데,
+ * 값이 배열로 오면 `trim is not a function` 으로 **세션 생성이 통째로 죽는다.**
+ * `coreValues` 는 의미상 목록이라 모델이 배열로 낼 가능성이 특히 높다.
+ *
+ * 타입 선언은 아무것도 보증하지 않는다 — 2026-08-01 자소서 크래시와 같은 부류다.
+ * 배열은 이어 붙이고, 그 외 타입은 버린다 (실패 방향은 "이 줄을 빼는" 쪽).
+ */
+export function researchText(v: unknown): string | null {
+  if (typeof v === 'string') return v.trim() || null;
+  if (Array.isArray(v)) {
+    const joined = v
+      .filter((x): x is string => typeof x === 'string')
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .join(' · ');
+    return joined || null;
+  }
+  return null;
+}
+
+/**
+ * `source_log_ids` 내용 일치 판정에 쓸 **본문 텍스트**.
+ *
+ * 🔴 `serializeLog` 결과를 쓰면 안 된다 — 거기엔 `(id:uuid)` 와 날짜가 붙어 있고,
+ * uuid 조각은 로그마다 다르니 **"이 로그만의 토큰" 으로 잡힌다.** 생성 텍스트에는 절대
+ * 안 나오는 토큰이라 판정 분모만 부풀려, 일치 기준을 통과하기 어렵게 만든다.
+ *
+ * 프롬프트 직렬화와 판정 텍스트가 갈리지 않게 **같은 파일에 나란히 둔다.**
+ */
+export function logMatchText(log: ActivityLog): string {
+  const parts = [log.noteSummary?.trim() || log.content?.trim() || ''];
+  if (log.cat) parts.push(log.cat);
+  if (log.comps && log.comps.length > 0) parts.push(log.comps.join(' '));
+  return parts.filter(Boolean).join(' ');
 }
 
 function serializeLog(log: ActivityLog): string {
@@ -698,6 +749,7 @@ export function buildInterviewContext(
 ): BuildInterviewContextOutput {
   const droppedCount = { value: 0 };
   const candidateLogIds: string[] = [];
+  const candidateLogs: Array<{ id: string; body: string }> = [];
 
   // dedup: extraLogs 에서 sourceLogs 와 같은 id 제거
   const sourceLogIdSet = new Set(input.sourceLogs.map((l) => l.id));
@@ -749,15 +801,15 @@ export function buildInterviewContext(
   if (input.companyResearch) {
     const r = input.companyResearch;
     const lines: string[] = [];
-    if (r.businessSummary?.trim())
-      lines.push(`- 사업 요약: ${r.businessSummary.trim()}`);
-    if (r.coreValues?.trim()) lines.push(`- 핵심 가치: ${r.coreValues.trim()}`);
-    if (r.visionMission?.trim())
-      lines.push(`- 비전·미션: ${r.visionMission.trim()}`);
-    if (r.recentTrends?.trim())
-      lines.push(`- 최근 동향: ${r.recentTrends.trim()}`);
-    if (r.jobInsights?.trim())
-      lines.push(`- 직무 인사이트: ${r.jobInsights.trim()}`);
+    const put = (label: string, v: unknown): void => {
+      const t = researchText(v);
+      if (t) lines.push(`- ${label}: ${t}`);
+    };
+    put('사업 요약', r.businessSummary);
+    put('핵심 가치', r.coreValues);
+    put('비전·미션', r.visionMission);
+    put('최근 동향', r.recentTrends);
+    put('직무 인사이트', r.jobInsights);
     if (r.interviewKeywords && r.interviewKeywords.length > 0) {
       lines.push(`- 면접 키워드: ${r.interviewKeywords.join(', ')}`);
     }
@@ -823,6 +875,7 @@ export function buildInterviewContext(
     }
     includedLogs.push(log);
     candidateLogIds.push(log.id);
+    candidateLogs.push({ id: log.id, body: logMatchText(log) });
     tokensSoFar += tokens;
   }
   if (includedLogs.length > 0) {
@@ -912,6 +965,7 @@ export function buildInterviewContext(
       droppedCount: droppedCount.value,
       estimatedInputTokens: tokensSoFar,
       candidateLogIds,
+      candidateLogs,
     },
   };
 }

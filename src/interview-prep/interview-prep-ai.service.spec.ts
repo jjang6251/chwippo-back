@@ -23,7 +23,9 @@ import {
   ANSWER_SYSTEM_PROMPT,
   FOLLOWUP_SYSTEM_PROMPT,
   InterviewPrepAiService,
+  MATERIAL_GAP_MAX_CHARS,
   MIN_PROBEABLE_ANSWER_CHARS,
+  normalizeMaterialGap,
   resolveFollowupBasis,
 } from './interview-prep-ai.service';
 import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
@@ -92,12 +94,25 @@ describe('InterviewPrepAiService', () => {
       jobCategory: '백엔드',
     }) as Application;
 
+  /**
+   * 🔴 `content` 를 id 별로 다르게 준다 — 전부 `'로그'` 로 같으면
+   * `source_log_ids` **내용 일치 판정이 원리적으로 성립하지 않는다**
+   * (어느 로그가 근거인지 구분할 토큰이 없다). 실제 데이터는 서로 다르다.
+   */
+  const LOG_BODIES: Record<string, string> = {
+    'log-A': '카카오 백엔드 인턴 정산 배치 성능 개선 인덱스 추가',
+    'log-B': '교내 동아리 신입생 멘토링 프로그램 운영 발표 진행',
+  };
+  const LOG_SUMMARIES: Record<string, string> = {
+    'log-A': '정산 배치 성능 개선 — 인덱스 추가로 처리 시간 단축',
+    'log-B': '신입생 멘토링 프로그램 운영 및 발표 진행',
+  };
   const makeLog = (id: string): ActivityLog =>
     ({
       id,
       userId: USER_ID,
       activityId: 'act-1',
-      content: '로그',
+      content: LOG_BODIES[id] ?? `활동 기록 ${id}`,
       occurredAt: '2026-05-01',
       cat: null,
       comps: [],
@@ -106,7 +121,10 @@ describe('InterviewPrepAiService', () => {
       mood: null,
       keywords: [],
       note: null,
-      noteSummary: '요약',
+      // 🔴 예전엔 모든 로그가 `'요약'` 로 같았다. `logMatchText` 는 noteSummary 를
+      //    우선하므로 두 로그가 **같은 텍스트**가 돼 내용 일치 판정이 성립하지 않았다.
+      //    운영에서는 로그마다 다른 AI 요약이 붙는다.
+      noteSummary: LOG_SUMMARIES[id] ?? null,
       noteSummaryHash: null,
       noteSummaryAt: null,
       archivedAt: null,
@@ -1303,6 +1321,78 @@ describe('InterviewPrepAiService', () => {
       questionsService.assertCanCreateFollowup.mockResolvedValue(parentEntity);
     });
 
+    /**
+     * 🔴 중복 차단 (2026-08-07 3회차 심사 — 실측 2쌍).
+     *
+     * 형제 블록에 앞 꼬리를 넣어주고 "재진술 금지" 를 명시했는데도 재생산됐다.
+     * 프롬프트 지시가 이 축에서 세 번째로 실패해 코드로 내렸다.
+     *
+     * 🔴 **`llm.call` 을 두 번 부르지 않는다** — 그러면 사용자가 한 번 누른 요청에
+     * 코인이 두 번(6→12) 나간다. `validateResult` 로 넘겨 LlmService 의 내부 재시도를
+     * 쓴다 (차감은 최종 ok 경로에서만).
+     */
+    describe('중복 차단', () => {
+      const DUP = '배치 크기를 결정할 때 고려한 기준은 무엇이었나요?';
+      const NEAR_DUP =
+        '배치 크기를 결정할 때 어떤 기준을 고려하셨는지 말씀해 주세요.';
+      const FRESH = '팀원과 의견이 갈렸을 때 합의를 어떻게 이끌어 내셨나요?';
+
+      function withExistingFollowup(): void {
+        questionRepo.find.mockResolvedValue([
+          { id: 'q-parent', questionText: 'parent q', parentQuestionId: null },
+          {
+            id: 'q-prev-followup',
+            questionText: DUP,
+            parentQuestionId: 'q-other',
+          },
+        ] as InterviewPrepQuestion[]);
+      }
+      /** 실제 호출 없이 `validateResult` 만 꺼내 계약을 검증한다 */
+      async function captureValidator(): Promise<
+        (json: unknown) => string | null
+      > {
+        withExistingFollowup();
+        qQb.getRawOne.mockResolvedValue({ maxIdx: null });
+        llm.call.mockResolvedValue({
+          status: 'ok',
+          text: '',
+          json: { question: FRESH, source_log_ids: [] },
+          promptTokens: 30,
+          completionTokens: 15,
+          costUsd: 0.0001,
+          latencyMs: 100,
+          callLogId: 'log-f',
+          outputRedacted: false,
+        } as never);
+        await service.generateFollowup(USER_ID, 'q-parent');
+        const fn = llm.call.mock.calls[0][0].validateResult;
+        if (!fn) throw new Error('validateResult 미전달');
+        return fn;
+      }
+
+      it('🔴 코인이 두 번 나가지 않는다 — llm.call 은 1회', async () => {
+        await captureValidator();
+        expect(llm.call).toHaveBeenCalledTimes(1);
+      });
+
+      it('🔴 중복이면 거부 사유를 돌려준다 (LlmService 가 재시도)', async () => {
+        const validate = await captureValidator();
+        expect(validate({ question: NEAR_DUP, source_log_ids: [] })).toContain(
+          '같은 질문',
+        );
+      });
+
+      it('중복이 아니면 통과시킨다', async () => {
+        const validate = await captureValidator();
+        expect(validate({ question: FRESH, source_log_ids: [] })).toBeNull();
+      });
+
+      it('빈 응답은 여기서 막지 않는다 — 아래 분기가 처리한다', async () => {
+        const validate = await captureValidator();
+        expect(validate({ source_log_ids: [] })).toBeNull();
+      });
+    });
+
     it('정상: parent depth=0 → child depth=1 + orderIndex max+1', async () => {
       qQb.getRawOne.mockResolvedValueOnce({ maxIdx: 2 });
       llm.call.mockResolvedValue({
@@ -1395,7 +1485,10 @@ describe('InterviewPrepAiService', () => {
         status: 'ok',
         text: '',
         json: {
-          question: 'f',
+          // log-A(정산 배치 인덱스)를 실제로 인용한다 — 내용 일치를 통과해야
+          //  "풀 밖 id 만 걸러진다" 를 검증할 수 있다
+          question:
+            '정산 배치 성능 개선에서 인덱스 추가를 선택한 근거는 무엇인가요?',
           suggested_answer: 'a',
           source_log_ids: ['log-A', 'FAKE'],
         },
@@ -1653,10 +1746,17 @@ describe('InterviewPrepAiService', () => {
  * 만들어 실패담으로 쓰는 사례를 못 막았다. 지시가 빠지면 조용히 되돌아간다.
  */
 describe('ANSWER_SYSTEM_PROMPT — 답변 본문 오염 방지', () => {
-  it('🔴 코치 문장을 넣으라고 시키지 않는다', () => {
+  /**
+   * 🔴 **금지 예문을 프롬프트에 그대로 쓰지 않는다** — 두 번 밟은 함정이다.
+   *
+   * 금지할 문구를 예시로 박아 넣으면 ⓐ 이 spec 이 자기 프롬프트에 걸려 깨지고
+   * ⓑ 모델에게 그 표현을 프라이밍한다. 금지는 **형태를 설명**하고, 실물 문구는
+   * 여기 spec 에만 둔다.
+   */
+  it('🔴 코치 문장 금지가 살아 있고, 금지 예문을 프롬프트에 심지 않는다', () => {
     expect(ANSWER_SYSTEM_PROMPT).not.toMatch(/설득력이 커집니다/);
-    expect(ANSWER_SYSTEM_PROMPT).toMatch(/코치 문장도 쓰지 마라/);
-    expect(ANSWER_SYSTEM_PROMPT).toMatch(/그대로 말할 1인칭 발화/);
+    expect(ANSWER_SYSTEM_PROMPT).toMatch(/코치 문장을 쓰지 마라/);
+    expect(ANSWER_SYSTEM_PROMPT).toMatch(/그대로 소리 내어 말할 문장/);
   });
 
   it('플레이스홀더 금지는 유지된다 (이전 회귀)', () => {
@@ -1676,6 +1776,85 @@ describe('ANSWER_SYSTEM_PROMPT — 답변 본문 오염 방지', () => {
 
   it('짧게 끝내는 것이 늘리는 것보다 낫다고 명시한다', () => {
     expect(ANSWER_SYSTEM_PROMPT).toMatch(/짧아도 된다/);
+  });
+
+  /**
+   * 🔴 자료 부족의 **출구**를 본문 밖에 낸다 (2026-08-07).
+   *
+   * 금지 문장을 세 번 썼는데 세 번 다 형태만 바꿔 나왔다:
+   * 대괄호 → 코치 문장 → "자료상 ~한 사례가 있었던 것은 아니지만".
+   * 셋은 같은 일(자료 부족을 본문에서 말하기)을 하고 있었고, 모델이 규칙을 어긴 게 아니라
+   * **그 정보를 내보낼 출구가 본문밖에 없었다.** 네 번째 금지 대신 필드를 만들었다.
+   */
+  it('🔴 네 누출 형태를 모두 금지한다 (하나만 막으면 다음 형태가 나온다)', () => {
+    for (const shape of [
+      /대괄호 템플릿을 쓰지 마라/, // 1차
+      /코치 문장을 쓰지 마라/, // 2차
+      /자료를 가리키는 말을 쓰지 마라/, // 3차 — "자료상 …"
+      /작성 과정을 드러내는 말을 쓰지 마라/, // 예상되는 4차
+    ]) {
+      expect(ANSWER_SYSTEM_PROMPT).toMatch(shape);
+    }
+  });
+
+  /**
+   * 🔴 이 spec 은 처음에 `/material_gap 에/` 하나만 봤는데, **지시 줄을 통째로 지워도
+   * 통과했다** — 같은 문구가 섹션 제목에도 있었기 때문이다(mutation 으로 발견).
+   * 토큰이 아니라 **지시의 내용**을 본다.
+   */
+  it('🔴 자료 부족은 material_gap 에 적으라고 지시한다', () => {
+    expect(ANSWER_SYSTEM_PROMPT).toMatch(/전면 금지/);
+    // 지시 본문 — "무엇을 적는가" 가 있어야 모델이 채운다
+    expect(ANSWER_SYSTEM_PROMPT).toMatch(
+      /material_gap 에 사용자에게 할 말을 한 문장\*\* 적는다/,
+    );
+    // 예시 — 지시만 있고 예시가 없으면 형식이 흔들린다
+    expect(ANSWER_SYSTEM_PROMPT).toMatch(/실패 경험이 자료에 없어/);
+    // 충분할 때는 null
+    expect(ANSWER_SYSTEM_PROMPT).toMatch(
+      /충분하면 material_gap 은 \*\*null\*\*/,
+    );
+    // 남발 방지 — 매번 뜨면 사용자가 배지를 무시하게 된다
+    expect(ANSWER_SYSTEM_PROMPT).toMatch(/남발하지 마라/);
+  });
+});
+
+/**
+ * 🔴 `material_gap` 은 LLM 이 준 값이라 그대로 저장하지 않는다.
+ *
+ * 빈 문자열은 null 과 뜻이 같은데 타입이 다르다 — 그대로 두면 화면이 "자료 부족" 배지를
+ * **내용 없이** 띄운다. 길이 상한은 배지 한 줄 레이아웃 보호 + 모델이 답변을 통째로
+ * 복사해 넣는 실패 차단용이다.
+ */
+describe('normalizeMaterialGap', () => {
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['빈 문자열', ''],
+    ['공백만', '   \n  '],
+    ['숫자(타입 위반)', 123],
+    ['객체(타입 위반)', { a: 1 }],
+  ])('%s → null', (_label, input) => {
+    expect(normalizeMaterialGap(input)).toBeNull();
+  });
+
+  it('정상 문자열은 trim 해서 그대로', () => {
+    expect(normalizeMaterialGap('  실패 경험이 자료에 없어요.  ')).toBe(
+      '실패 경험이 자료에 없어요.',
+    );
+  });
+
+  it(`🔴 ${MATERIAL_GAP_MAX_CHARS}자를 넘으면 자른다 — 배지 한 줄이 깨지지 않게`, () => {
+    const long = '가'.repeat(MATERIAL_GAP_MAX_CHARS + 50);
+    const out = normalizeMaterialGap(long);
+    expect(out).toHaveLength(MATERIAL_GAP_MAX_CHARS);
+    expect(out?.endsWith('…')).toBe(true);
+  });
+
+  it('경계 — 상한 정확히면 자르지 않는다', () => {
+    const exact = '가'.repeat(MATERIAL_GAP_MAX_CHARS);
+    expect(normalizeMaterialGap(exact)).toBe(exact);
+    expect(normalizeMaterialGap(exact)?.endsWith('…')).toBe(false);
   });
 });
 

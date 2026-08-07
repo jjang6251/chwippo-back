@@ -47,6 +47,16 @@ interface CaseResult {
   logs: string[];
   allowedFacts: string[];
   jobPostingSummary: string | null;
+  /** 공고 요건 **줄 단위** — 커버리지 측정용 (요약 한 덩어리로는 셀 수 없다) */
+  jobPostingRequirements: string[];
+  /**
+   * 시딩한 활동 로그의 **실제 id** — `logs` 와 같은 순서.
+   *
+   * 🔴 이게 없으면 `sourceLogIds` 가 **어느 로그를 가리키는지 알 수 없다.** 처음엔
+   * "앞에서 N개를 참조했다고 치고" 대조했는데, 그건 측정이 아니라 인공물이었다
+   * (실제로 맞게 단 참조까지 불일치로 나왔다).
+   */
+  logIds: string[];
   /**
    * 🔴 boolean 만 담았더니 **그 축의 판정이 불가능**했다 (2026-08-07 교차검증 지적).
    * "조사 자료를 인용하는가 / 자료 밖으로 나가는가" 를 보려면 대조군이 있어야 한다.
@@ -61,6 +71,8 @@ interface CaseResult {
     text: string;
     sourceLogIds: string[];
     answer: string | null;
+    /** 자료 부족 사유 (v2.2) — 담지 않으면 "0건" 이 "안 쓰였다" 로 잘못 읽힌다 */
+    materialGap: string | null;
     followups: Array<{ text: string; basis: string | null }>;
   }>;
   error?: string;
@@ -101,7 +113,28 @@ async function main(): Promise<void> {
 
   const results: CaseResult[] = [];
 
-  for (const c of AUDIT_CASES) {
+  /**
+   * 케이스 선택 — `npx ts-node … run-quality-audit.ts B` 처럼 접두사를 넘긴다.
+   *
+   * 🔴 **12개를 매번 다 돌리면 안 된다.** 케이스당 약 11원이라 전량이 ~130원이고,
+   * 더 중요한 건 **A 세트로는 이제 판정이 안 된다**는 것이다 — 프롬프트가 A 의 실패
+   * 문장을 실명으로 인용하고 있어 답을 본 시험이다. 판정은 B, 회귀 확인만 A 로 한다.
+   * 인자 없으면 전량 (릴리즈 전 1회용).
+   */
+  const only = process.argv[2]?.trim();
+  const cases = only
+    ? AUDIT_CASES.filter((c) => c.id.startsWith(only))
+    : AUDIT_CASES;
+  if (cases.length === 0) {
+    throw new Error(
+      `"${only}" 로 시작하는 케이스가 없다. 있는 것: ${AUDIT_CASES.map((c) => c.id).join(', ')}`,
+    );
+  }
+  console.log(
+    `대상 ${cases.length}/${AUDIT_CASES.length} 케이스 — ${cases.map((c) => c.id).join(', ')}`,
+  );
+
+  for (const c of cases) {
     console.log(`\n▶ ${c.id} — ${c.companyName} · ${c.jobTitle}`);
     try {
       // ── 2. 시딩 ──
@@ -182,12 +215,20 @@ async function main(): Promise<void> {
       for (let i = 0; i < tree.length; i++) {
         const q = tree[i];
         let answer: string | null = null;
+        /**
+         * 🔴 **답변 생성이 질문 행을 갱신한다.** `tree` 는 답변 생성 **전** 스냅샷이라
+         * `materialGap`·`sourceLogIds` 를 여기서 읽으면 **항상 답변 이전 값**이다.
+         * 실제로 DB 엔 gap 11건이 있는데 리포트엔 0건으로 찍혀 "회귀" 로 오독했다.
+         * 생성 결과(`r.question`)가 있으면 그걸 우선한다.
+         */
+        let after: typeof q | null = null;
         if (i < ANSWERS_PER_CASE) {
           const r = await ai.generateAnswer(BENCH_USER_ID, q.id);
           answer =
             r.status === 'ok'
               ? (r.question?.suggestedAnswer ?? null)
               : `⛔ ${r.reason ?? 'blocked'}`;
+          if (r.status === 'ok' && r.question) after = r.question;
         }
         questions.push({
           id: q.id,
@@ -195,7 +236,8 @@ async function main(): Promise<void> {
           category: q.category,
           mustPrepare: q.mustPrepare,
           text: q.questionText,
-          sourceLogIds: q.sourceLogIds,
+          sourceLogIds: after?.sourceLogIds ?? q.sourceLogIds,
+          materialGap: after?.materialGap ?? q.materialGap,
           answer,
           followups: [],
         });
@@ -238,6 +280,16 @@ async function main(): Promise<void> {
               .filter(Boolean)
               .join(' · ')
           : null,
+        // 🔴 요건을 **줄 단위로** 따로 담는다 — 위 요약은 ' · ' 로 이어 붙인 한 덩어리라
+        //    "6요건 중 몇 개가 질문에 반영됐나" 를 셀 수 없다 (Kafka 0건을 못 잡은 이유)
+        logIds,
+        jobPostingRequirements: c.jobPosting
+          ? [
+              ...c.jobPosting.requirements,
+              ...c.jobPosting.preferred,
+              ...c.jobPosting.qualifications,
+            ].filter(Boolean)
+          : [],
         companyResearch: c.companyResearch,
         questions,
       });
@@ -255,6 +307,8 @@ async function main(): Promise<void> {
         logs: c.logs,
         allowedFacts: c.allowedFacts,
         jobPostingSummary: null,
+        jobPostingRequirements: [],
+        logIds: [],
         companyResearch: c.companyResearch,
         questions: [],
         error: (e as Error).message,
@@ -280,7 +334,11 @@ async function main(): Promise<void> {
     usage,
     cases: results,
   };
-  const out = join(OUT_DIR, 'audit.json');
+  /**
+   * 🔴 **세트별로 파일을 나눈다.** 하나로 덮어쓰면 B 를 돌리는 순간 A 결과가 날아가
+   * 비교가 불가능해진다 (회귀 방어용으로 남기는 의미가 사라진다).
+   */
+  const out = join(OUT_DIR, only ? `audit-${only}.json` : 'audit.json');
   writeFileSync(out, JSON.stringify(payload, null, 2));
 
   console.log(`\n${'='.repeat(70)}\n실측 사용량\n${'='.repeat(70)}`);

@@ -17,6 +17,7 @@ import {
 import {
   buildInterviewContext,
   matchJobFork,
+  researchText,
   resolveJobFork,
   resolveJobText,
   type JobFork,
@@ -397,6 +398,67 @@ describe('buildInterviewContext — 종류별 system 프롬프트', () => {
  * 를 심어 실제 호출했고 누출 0건이었다. 다만 그건 실제 LLM 호출이라 CI 에서 못 돈다.
  * 이 spec 은 **그 방어가 사라지는 것**을 막는 용도다.
  */
+/**
+ * 🔴 회사 조사 JSONB 타입 방어 (2026-08-07 감사 실행 중 크래시).
+ *
+ * `company_research_cache.ai_research` 는 JSONB 이고 내용은 LLM 조사 출력이다.
+ * 타입만 `string | null` 로 선언하고 `.trim()` 을 바로 불렀는데, 값이 배열로 오자
+ * `trim is not a function` 으로 **세션 생성이 통째로 죽었다.** 임원 면접 케이스가
+ * 그렇게 실패했고, `coreValues` 는 의미상 목록이라 모델이 배열로 낼 개연성이 높다.
+ *
+ * 2026-08-01 자소서 크래시(`strengths: string[]` 가 런타임엔 없었다)와 같은 부류다 —
+ * **타입이 거짓말을 하면 tsc 도 프론트도 무방비**가 된다.
+ */
+describe('researchText — 회사 조사 필드 정규화', () => {
+  it('문자열은 trim', () => {
+    expect(researchText('  현장 중심  ')).toBe('현장 중심');
+  });
+
+  it('🔴 배열이 와도 죽지 않고 이어 붙인다 (실측 크래시 케이스)', () => {
+    expect(researchText(['현장에서 답을 찾는다', '길게 본다'])).toBe(
+      '현장에서 답을 찾는다 · 길게 본다',
+    );
+  });
+
+  it('배열 안 비문자열은 버린다', () => {
+    expect(researchText(['정상', 42, null, '  ', '둘째'])).toBe('정상 · 둘째');
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['빈 문자열', ''],
+    ['공백만', '   '],
+    ['빈 배열', []],
+    ['숫자', 123],
+    ['객체', { a: 1 }],
+  ])('%s → null (그 줄을 빼는 쪽으로 실패)', (_l, v) => {
+    expect(researchText(v)).toBeNull();
+  });
+
+  it('🔴 배열 회사 조사로 컨텍스트를 만들어도 예외가 안 난다', () => {
+    const out = buildInterviewContext({
+      application: { companyName: '세움에너지', jobCategory: '경영기획' },
+      round: '임원 면접',
+      interviewType: 'executive',
+      jobDescription: null,
+      emphasisPoints: null,
+      jobPosting: null,
+      userResearchNotes: null,
+      companyResearch: {
+        coreValues: ['현장에서 답을 찾는다', '숫자로 합의한다'],
+        businessSummary: '산업용 태양광 발전소 개발·운영.',
+      },
+      coverletters: [],
+      sourceLogs: [],
+      extraLogs: [],
+      stepNotes: [],
+      sessionMemo: null,
+    });
+    expect(out.userPrompt).toContain('현장에서 답을 찾는다 · 숫자로 합의한다');
+  });
+});
+
 describe('system 프롬프트 — 인젝션 guard (전 면접 종류)', () => {
   function sys(interviewType: string | null) {
     return buildInterviewContext({

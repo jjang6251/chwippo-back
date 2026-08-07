@@ -98,6 +98,16 @@ export class InterviewPrepQuestion {
   })
   followupBasis: string | null;
 
+  /**
+   * AI 답변의 **자료 부족 사유**. NULL = 자료 충분.
+   *
+   * 🔴 이 값이 답변 본문에 섞이면 안 된다 — `suggested_answer` 는 면접장에서 그대로 말할
+   * 1인칭 발화라, "자료가 없어서" 같은 말이 들어가면 사용자가 그것까지 외운다.
+   * 화면은 이걸 **배지로 따로** 그린다.
+   */
+  @Column({ name: 'material_gap', type: 'text', nullable: true })
+  materialGap: string | null;
+
   @Column({ name: 'suggested_answer', type: 'text', nullable: true })
   suggestedAnswer: string | null;
 

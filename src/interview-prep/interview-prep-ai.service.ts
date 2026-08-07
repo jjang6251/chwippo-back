@@ -19,11 +19,16 @@ import {
   type CoverletterInput,
   type StepNoteInput,
   buildInterviewJobPostingBlock,
+  logMatchText,
 } from './interview-context-builder';
 import { assertJobTextPresent, resolveJobText } from '../applications/job-text';
 import { CompanyResearchService } from './company-research.service';
 import { InterviewPrepQuestion } from './entities/interview-prep-question.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
+import {
+  filterAttributableLogIds,
+  isDuplicateFollowup,
+} from './interview-output-guards';
 import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
 
 /**
@@ -115,6 +120,27 @@ export function resolveFollowupBasis(parent: {
 interface AiAnswerResponse {
   suggested_answer: string;
   source_log_ids: string[];
+  /** 자료 부족 사유. null = 충분. 답변 본문 밖으로 빼는 출구 */
+  material_gap: string | null;
+}
+
+/** 화면 배지 한 줄에 들어갈 상한. 넘으면 자른다 */
+export const MATERIAL_GAP_MAX_CHARS = 200;
+
+/**
+ * `material_gap` 정규화 — **외부 응답이라 그대로 저장하지 않는다.**
+ *
+ * 빈 문자열·공백만은 `null` 과 같은 뜻인데 타입은 다르다. 그대로 두면 화면이
+ * "자료 부족" 배지를 **내용 없이** 띄운다. 길이도 여기서 자른다 — 배지 한 줄이라
+ * 길면 레이아웃이 깨지고, 모델이 답변을 통째로 복사해 넣는 실패도 막는다.
+ */
+export function normalizeMaterialGap(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (t.length === 0) return null;
+  return t.length > MATERIAL_GAP_MAX_CHARS
+    ? `${t.slice(0, MATERIAL_GAP_MAX_CHARS - 1)}…`
+    : t;
 }
 
 /**
@@ -303,8 +329,18 @@ export const ANSWER_JSON_SCHEMA = {
         description:
           '답변 근거 활동 로그 id (받은 후보 풀 안 id 만, 없으면 빈 배열)',
       },
+      /**
+       * 🔴 자료 부족을 **본문 밖으로 빼는 출구.** 이게 없으면 모델이 "자료상 …" 처럼
+       * 본문 안에서 말하고, 사용자가 그걸 외워서 면접장에서 말한다.
+       * strict 스키마라 nullable 은 union 으로 쓰고 required 에도 넣는다.
+       */
+      material_gap: {
+        type: ['string', 'null'],
+        description:
+          '자료가 부족해 답변을 뼈대만 쓴 경우, 사용자에게 무엇을 채우라고 할지 한 문장. 충분하면 null',
+      },
     },
-    required: ['suggested_answer', 'source_log_ids'],
+    required: ['suggested_answer', 'source_log_ids', 'material_gap'],
     additionalProperties: false,
   },
 };
@@ -339,15 +375,24 @@ export const ANSWER_SYSTEM_PROMPT = `너는 한국 취준생의 면접 답변을
   있는 경험에서 **아쉬웠던 지점**을 짚거나, 보완하고 싶은 역량을 앞으로의 계획으로 말한다.
   없는 과거 잘못을 창작하면 면접관이 한 번만 파고들어도 무너진다.
 
-# 자료가 부족할 때
-- **대괄호 템플릿을 쓰지 마라.** "[본인 경험 채우기]" 같은 표기는 금지다.
-- 🔴 **코치 문장도 쓰지 마라.** "~를 덧붙이면 좋습니다" 처럼 지원자에게 조언하는
-  3인칭 문장을 답변 본문에 넣지 마라. answer 는 **면접장에서 그대로 말할 1인칭 발화**여야
-  한다. 조언이 섞이면 사용자가 그것까지 외워서 면접에서 말한다.
-- 대신 **자료로 뒷받침되는 만큼만 쓰고 거기서 끝낸다.** 짧아도 된다. 길이를 채우려고
-  자료에 없는 내용으로 늘리는 것이 훨씬 나쁘다.
-- 자료가 아예 없는 주제면 **지어내지 말고**, 자료로 말할 수 있는 범위 안에서
-  가장 가까운 내용으로 답한다.
+# 자료가 부족할 때 — 본문이 아니라 material_gap 에 적는다
+🔴 **suggested_answer 안에서 자료 부족을 언급하는 것을 전면 금지한다.**
+이 필드는 면접장에서 **그대로 소리 내어 말할 문장**이다. 면접관은 "자료"·"자소서"·
+"기록" 이 무엇인지 모른다. 다음은 전부 금지다 — 형태만 다를 뿐 같은 위반이다:
+- 대괄호 템플릿을 쓰지 마라 — "[본인 경험 채우기]" 같은 자리표시자
+- 3인칭 코치 문장을 쓰지 마라 — 지원자에게 무엇을 덧붙이라고 조언하는 문장
+- 자료를 가리키는 말을 쓰지 마라 — "자료상 ~한 사례가 있었던 것은 아니지만", "기록에는 없지만"
+- 작성 과정을 드러내는 말을 쓰지 마라 — "구체적인 수치는 확인이 필요합니다"
+
+**대신 이렇게 한다:**
+- 본문은 **자료로 뒷받침되는 만큼만 쓰고 거기서 끝낸다.** 짧아도 된다.
+  길이를 채우려고 자료에 없는 내용으로 늘리는 것이 훨씬 나쁘다.
+- 그리고 **material_gap 에 사용자에게 할 말을 한 문장** 적는다. 사용자를 "당신" 이 아니라
+  2인칭 없이 부르고, **무엇을 채우면 되는지** 구체적으로 말한다.
+  - 예: "실패 경험이 자료에 없어 강점 위주로 썼어요. 실제로 아쉬웠던 일을 메모에 적으면 다시 만들어 드려요."
+  - 예: "지원하신 직무 관련 수치가 자료에 없어요. 담당했던 규모나 기간을 활동 기록에 남겨 주세요."
+- 자료가 충분하면 material_gap 은 **null** 이다. 조금 부족한 정도로 남발하지 마라 —
+  매번 뜨면 사용자가 배지를 무시하게 되고, 진짜 부족할 때도 안 보게 된다.
 
 # 근거
 - source_log_ids 는 받은 후보 풀의 id 중 **실제로 답변에 쓴 것만**. 없으면 빈 배열.
@@ -610,10 +655,19 @@ export class InterviewPrepAiService {
       };
     }
 
-    // hallucination 방어 — candidate 풀 안 id 만 filter
-    const validIds = new Set(ctx.meta.candidateLogIds);
-    const filterIds = (ids: string[]): string[] =>
-      ids.filter((id) => validIds.has(id));
+    /**
+     * hallucination 방어 — **id 실존 + 내용 일치** 2단.
+     *
+     * 🔴 예전엔 id 실존만 봤다. 그래서 "장애 로그가 없어 3시간 헤맸다" 질문에
+     * **코드 리뷰 로그**가 달려도 통과했다. 화면이 "이 기록에서 나온 질문" 으로
+     * 표시하므로, 틀리면 사용자가 자기 활동 기록 자체를 못 믿게 된다.
+     */
+    const filterIds = (ids: string[], text: string): string[] =>
+      filterAttributableLogIds({
+        text,
+        claimedIds: ids,
+        pool: ctx.meta.candidateLogs,
+      });
 
     // 기존 질문 모두 삭제 (재생성) — 트랜잭션
     //
@@ -634,7 +688,7 @@ export class InterviewPrepAiService {
           mustPrepare: main.must_prepare === true,
           questionText: main.question.trim(),
           suggestedAnswer: null,
-          sourceLogIds: filterIds(main.source_log_ids ?? []),
+          sourceLogIds: filterIds(main.source_log_ids ?? [], main.question),
           myMemo: null,
         });
         await em.save(InterviewPrepQuestion, mainRow);
@@ -871,13 +925,15 @@ export class InterviewPrepAiService {
       };
     }
 
-    // hallucination 방어 — 컨텍스트에 넣어준 id 만 남긴다
-    const validIds = new Set(ctx.meta.candidateLogIds);
-    const filtered = (parsed.source_log_ids ?? []).filter((id) =>
-      validIds.has(id),
-    );
+    // hallucination 방어 — id 실존 + **답변에 그 로그 내용이 실제로 등장**해야 남긴다
+    const filtered = filterAttributableLogIds({
+      text: parsed.suggested_answer,
+      claimedIds: parsed.source_log_ids ?? [],
+      pool: ctx.meta.candidateLogs,
+    });
 
     question.suggestedAnswer = parsed.suggested_answer.trim();
+    question.materialGap = normalizeMaterialGap(parsed.material_gap);
     question.sourceLogIds = filtered;
     const saved = await this.questionRepo.save(question);
 
@@ -1030,6 +1086,24 @@ export class InterviewPrepAiService {
       // v2 — **질문만** 만든다. 예전 문구는 "모범 답안을" 도 만들라고 해 system 과 어긋났다.
       `위 정보를 모두 활용해 부모를 한 단계 더 깊이 파고드는 추궁형 꼬리질문 **1개만** 만드세요.`;
 
+    /**
+     * 🔴 **중복이면 다시 뽑는다** (2026-08-07 3회차 심사).
+     *
+     * 형제 질문 블록에 앞 꼬리를 **이미 넣어주고** "재진술 금지" 를 명시했는데도
+     * 4o-mini 가 그대로 재생산했다 (실측 2쌍). 프롬프트 지시가 이 축에서 세 번째로
+     * 실패한 것이라, 생성 결과를 **코드로 검사한다.**
+     *
+     * 🔴 **`llm.call` 을 직접 두 번 부르면 안 된다.** 처음엔 그렇게 짰는데, 차감이
+     * 호출마다 일어나서 사용자가 한 번 누른 요청에 **코인이 두 번**(6→12) 나갔다.
+     * `validateResult` 는 내부 재시도(`attempts < 2`)를 쓰고 **차감은 최종 ok 경로에서만**
+     * 일어난다 — 재시도분은 `retry_parsing` audit row 로 tokens=0·cost=0 으로 남는다.
+     *
+     * 두 번째도 중복이면 `status='error'` 가 되고 **차감도 없다.** 사용자에겐 재시도
+     * 안내가 나간다 — 중복을 주는 것보다 낫고, 무엇보다 돈을 안 받는다.
+     */
+    const existingFollowups = siblings
+      .filter((q) => q.parentQuestionId !== null)
+      .map((q) => q.questionText);
     const result = await this.llm.call({
       userId,
       feature: 'interview_prep_followup',
@@ -1038,6 +1112,13 @@ export class InterviewPrepAiService {
       jsonSchema: FOLLOWUP_JSON_SCHEMA,
       resourceType: 'interview_prep_session',
       resourceId: session.id,
+      validateResult: (json) => {
+        const q = (json as AiFollowupResponse | undefined)?.question;
+        if (!q) return null; // 빈 응답은 아래 분기가 처리한다
+        return isDuplicateFollowup(q, existingFollowups)
+          ? '이미 나온 꼬리질문과 같은 질문이다'
+          : null;
+      },
     });
 
     if (result.status !== 'ok') {
@@ -1062,10 +1143,11 @@ export class InterviewPrepAiService {
       };
     }
 
-    const validIds = new Set(candidates.map((c) => c.id));
-    const filtered = (parsed.source_log_ids ?? []).filter((id) =>
-      validIds.has(id),
-    );
+    const filtered = filterAttributableLogIds({
+      text: parsed.question,
+      claimedIds: parsed.source_log_ids ?? [],
+      pool: candidates.map((c) => ({ id: c.id, body: logMatchText(c) })),
+    });
 
     // 같은 parent 의 마지막 orderIndex + 1
     const siblingMax = await this.questionRepo
