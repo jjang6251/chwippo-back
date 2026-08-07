@@ -90,7 +90,14 @@ describe('AiCoverletterFeedbackService', () => {
     appRepo = {
       findOne: jest
         .fn()
-        .mockResolvedValue({ id: 'app-1', companyName: '카카오' }),
+        // 직무 게이트(2026-08-06) — 실제 카드에는 직무가 있다. 없는 카드 시나리오는
+        // 아래 "직무 게이트" describe 에서 따로 덮는다.
+        .mockResolvedValue({
+          id: 'app-1',
+          companyName: '카카오',
+          jobTitle: '백엔드 개발자',
+          jobCategory: 'IT개발',
+        }),
     };
     clRepo = { update: jest.fn().mockResolvedValue({ affected: 1 }) };
 
@@ -110,6 +117,30 @@ describe('AiCoverletterFeedbackService', () => {
       ],
     }).compile();
     service = module.get(AiCoverletterFeedbackService);
+  });
+
+  /**
+   * 🔴 직무 게이트 (2026-08-06) — 점검은 "이 문항이 직무와 맞나" 를 봐야 하는데
+   *    직무가 프롬프트에 아예 없었다. 이제 직무를 받고, 없으면 막는다.
+   */
+  it('직무 없음 → BadRequest + LLM 미호출 (코인 미차감)', async () => {
+    appRepo.findOne.mockResolvedValueOnce({
+      id: 'app-1',
+      companyName: '카카오',
+      jobCategory: null,
+      jobTitle: null,
+    });
+    await expect(service.review(USER_ID, CL_ID)).rejects.toThrow(
+      '지원 직무를 먼저 입력',
+    );
+    expect(llm.call).not.toHaveBeenCalled();
+  });
+
+  it('직무가 프롬프트에 실린다 — 이전엔 아예 없었다', async () => {
+    await service.review(USER_ID, CL_ID);
+    const prompt = JSON.stringify(llm.call.mock.calls[0]?.[0] ?? {});
+    expect(prompt).toContain('지원 직무');
+    expect(prompt).toContain('백엔드 개발자');
   });
 
   it('정상 — feedback json 반환 + 프롬프트에 답변·문항 포함, system 은 상수만', async () => {
@@ -359,7 +390,7 @@ describe('AiCoverletterFeedbackService', () => {
       expect(r.reason).toContain('점검이 차단됐어요');
     });
 
-    it('blocked_cost_quota (비용 가드) → 기존 범용 문구 유지', async () => {
+    it('blocked_cost_quota (비용 가드) → "내일 다시" 안내 (범용 문구로 뭉치지 않는다)', async () => {
       llm.call.mockResolvedValue({
         status: 'blocked_cost_quota',
         text: null,
@@ -367,7 +398,10 @@ describe('AiCoverletterFeedbackService', () => {
         callLogId: 'log-cc',
       });
       const r = await service.review(USER_ID, CL_ID);
-      expect(r.reason).toContain('점검이 차단됐어요');
+      // 🔴 "잠시 후 다시" 로 뭉치면 **내일까지 안 풀린다**는 걸 못 알려 재시도만 반복시킨다.
+      //    내부 사유("... 0.0000 / 0")도 노출하지 않는다.
+      expect(r.reason).toContain('오늘 AI 사용량이 한도에 도달했어요');
+      expect(r.reason).not.toContain('cost cap');
     });
   });
 

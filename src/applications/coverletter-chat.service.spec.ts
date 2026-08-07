@@ -223,6 +223,36 @@ describe('CoverletterChatService', () => {
       expect(llm.call).not.toHaveBeenCalled();
     });
 
+    /**
+     * 🔴 직무 게이트 (2026-08-06) — 직무를 모르면 직무에 맞는 조언을 할 수 없다.
+     *    프론트에도 게이트가 있지만 devtools 로 우회되므로 여기가 진짜 경계다.
+     */
+    it('직무 없음 → BadRequest + LLM 미호출 (코인 미차감)', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: null,
+        jobTitle: null,
+      } as never);
+      await expect(
+        service.chat(USER_ID, APP_ID, { userMessage: '안녕' }),
+      ).rejects.toThrow('지원 직무를 먼저 입력');
+      expect(llm.call).not.toHaveBeenCalled();
+    });
+
+    it('jobTitle 만 있어도 통과 — 태그 없이도 직무는 안다', async () => {
+      appRepo.findOne.mockResolvedValueOnce({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: null,
+        jobTitle: '백엔드 개발자',
+      } as never);
+      await service.chat(USER_ID, APP_ID, { userMessage: '안녕' });
+      expect(llm.call).toHaveBeenCalled();
+    });
+
     it('8) 다른 user IDOR → NotFound', async () => {
       appRepo.findOne.mockResolvedValueOnce(null);
       await expect(

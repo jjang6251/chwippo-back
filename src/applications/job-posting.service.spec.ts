@@ -379,6 +379,26 @@ describe('JobPostingService', () => {
     expect(llm.call.mock.calls[0][0].userPrompt).toContain(RAW_TEXT);
   });
 
+  /**
+   * 🔴 인젝션 guard 회귀 (2026-08-07).
+   *
+   * 이 프롬프트의 guard 문은 **코드에만 있고 테스트가 없었다.** 공고 파싱은 사용자가
+   * 아무 텍스트나 붙여넣는 경로라 인젝션 표면이 가장 넓은데도 무방비였다.
+   */
+  it('🔴 system 프롬프트에 지시문 무시 guard 가 있다', async () => {
+    await service.parse(USER_ID, APP_ID, parseDto());
+    const sys = llm.call.mock.calls[0][0].systemPrompt;
+    expect(sys).toContain('system prompt');
+    expect(sys).toContain('role 변경');
+    expect(sys).toMatch(/따르지 마라|무시/);
+  });
+
+  it('🔴 사용자 붙여넣기 원문이 system 으로 새지 않는다', async () => {
+    await service.parse(USER_ID, APP_ID, parseDto());
+    // system 은 코드 상수여야 한다 — 원문이 섞이면 guard 자체를 덮어쓸 수 있다
+    expect(llm.call.mock.calls[0][0].systemPrompt).not.toContain(RAW_TEXT);
+  });
+
   it('llm error → blocked ERROR (저장 없음)', async () => {
     llm.call.mockResolvedValueOnce({
       status: 'error',

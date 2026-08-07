@@ -1,0 +1,85 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "백엔드 직무와 관련된 경험을 중심으로 1분 동안 자기소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "결제 정산 배치 시간을 40분에서 5분으로 단축한 경험을 언급하셨는데, 이 경험이 토스 백엔드 직무에 지원하게 된 동기로 어떻게 이어졌는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "신입 구성원 2명의 온보딩을 맡아 첫 PR까지의 평균 기간을 9일에서 3일로 줄였다고 하셨습니다. 이 경험에서 드러나는 본인의 가장 큰 강점 한 가지와, 그 강점이 업무에서 발휘된 사례를 말씀해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지를 말씀해 주시고, 백엔드 개발 업무에서 그 약점이 문제가 되지 않도록 어떤 방식으로 보완하고 있는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "동시 요청에서 중복 결제가 발생한 버그를 배포 후 발견했다고 하셨습니다. 당시 배포 전 동시성 테스트가 빠진 이유는 무엇이었으며, 이후 개발·배포 과정은 어떻게 바꾸셨는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "신입 2명의 온보딩을 진행하며 문서를 정리했다고 하셨는데, 온보딩 대상자와 협업하면서 가장 중요하게 고려한 점과 구체적인 기여를 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "팀원과 기술적 접근 방식이나 우선순위에 대해 이견이 있었던 경험을 하나 말씀해 주시고, 어떤 근거로 의견을 조율해 합의에 이르렀는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "외부 API 장애로 전체 서비스가 멈췄던 상황에서 서킷 브레이커를 도입했다고 하셨습니다. 서비스 안정성과 개발 복잡성 사이에서 의사결정을 내려야 할 때, 본인이 가장 중요하게 두는 기준은 무엇인가요?",
+      "source_log_ids": [
+        "l4"
+      ]
+    },
+    {
+      "category": "culture_fit",
+      "question": "토스는 자율과 책임, 그리고 문제 정의부터 하는 사람을 핵심 가치로 둡니다. 주어진 해결책을 구현하는 대신 문제 자체를 다시 정의해 본 경험이 있다면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "송금·결제·증권·보험을 하나의 금융 플랫폼에서 제공하는 토스에 지원하신 이유는 무엇인가요? 다른 회사가 아니라 토스여야 하는 이유를 금융 산업과 백엔드 엔지니어의 역할 관점에서 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 금융 서비스의 정확성과 속도를 함께 높이는 백엔드 엔지니어로서, 어떤 문제를 해결하는 사람으로 성장하고 싶은지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 토스 백엔드 조직이나 실제 업무 방식에 관해 질문하고 싶은 것이 있으시면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 면접관에게 꼭 전달하고 싶은 말이 있으시면 말씀해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 2100,
+  "outputTokens": 879,
+  "stopReason": "stop",
+  "thinkingTokens": 103,
+  "latencyMs": 9489
+}

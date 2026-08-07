@@ -220,24 +220,59 @@ describe('CostGuardService', () => {
       expect(r.blocked).toBe(true);
     });
 
-    it('cap=0 (admin 강제 차단) → 1 USD 라도 즉시 blocked', async () => {
+    /**
+     * 🔴 **의도 변경 (2026-08-06 실사고)** — `cap=0` 은 이제 "강제 차단" 이 아니라 **무제한**이다.
+     *
+     * 이전 의도는 "admin 이 0 으로 강제 차단" 이었다. 그런데 판정이 `total >= cap` 이라
+     * **0원을 써도 `0 >= 0` 으로 차단**됐고, dev 에서 `perFeatureDailyCostUsd` 가 0 이 된 뒤
+     * **전 기능 AI 가 사흘간 조용히 죽어 있었다.** 사용자에게는 `0.0000 / 0` 이라는
+     * 오작동 같은 문구만 보였다.
+     *
+     * "이 기능을 완전히 막는다" 는 **`feature_quota_configs.enabled = false`** 라는
+     * 전용 kill switch 가 이미 한다 (FEATURE_DISABLED). cap=0 은 그 기능의 중복이면서,
+     * admin 이 "제한 없음" 뜻으로 넣기 쉬운 값이라 **의도한 적 없는 전면 장애**만 만든다.
+     */
+    it('🔴 cap=0 → 무제한 (차단 아님). 강제 차단은 feature enabled=false 로 한다', async () => {
       thresholdRepo.findOne.mockResolvedValue(
         makeThresholds({ perUserDailyCostUsd: 0 }),
       );
       mockCostRows([{ feature: 'note_summary', cost: '0.01' }]);
 
       const r = await service.check(USER_ID, 'note_summary');
-      expect(r.blocked).toBe(true);
+      expect(r.blocked).toBe(false);
+      expect(r.perUserCap).toBe(Infinity);
     });
 
-    it('cost 0 + cap 0 → 통과 (>= 비교지만 0 < 0 false)', async () => {
+    it('🔴 cost 0 + cap 0 → 통과 — 0원 쓰고 막히던 사고의 재발 방지', async () => {
       thresholdRepo.findOne.mockResolvedValue(
         makeThresholds({ perUserDailyCostUsd: 0, perFeatureDailyCostUsd: 0 }),
       );
       mockCostRows([]);
 
       const r = await service.check(USER_ID, 'note_summary');
-      // 0 합산 >= 0 cap → 차단 (>=). 단 코드 동작 확인 — 의도적
+      expect(r.blocked).toBe(false);
+    });
+
+    it('음수·NaN 도 무제한 — 판정 불가한 값으로 사용자를 막지 않는다', async () => {
+      thresholdRepo.findOne.mockResolvedValue(
+        makeThresholds({
+          perUserDailyCostUsd: -1,
+          perFeatureDailyCostUsd: Number.NaN,
+        }),
+      );
+      mockCostRows([{ feature: 'note_summary', cost: '99' }]);
+
+      const r = await service.check(USER_ID, 'note_summary');
+      expect(r.blocked).toBe(false);
+    });
+
+    it('양수 cap 은 그대로 동작한다 — 무제한 처리가 정상 cap 을 무력화하지 않는다', async () => {
+      thresholdRepo.findOne.mockResolvedValue(
+        makeThresholds({ perUserDailyCostUsd: 0.5 }),
+      );
+      mockCostRows([{ feature: 'note_summary', cost: '0.5' }]);
+
+      const r = await service.check(USER_ID, 'note_summary');
       expect(r.blocked).toBe(true);
     });
   });

@@ -191,6 +191,27 @@ describe('AiCoverletterDraftService', () => {
 
   // ── 1. 정상 흐름 ──
 
+  /**
+   * 🔴 직무 게이트 (2026-08-06) — 직무를 모르면 그 직무에 맞는 초안을 쓸 수 없다.
+   *    프론트 게이트는 devtools 로 우회되므로 여기가 진짜 경계다.
+   */
+  it('직무 없음 → BadRequest + LLM 미호출 (코인 미차감)', async () => {
+    clRepo.findOne.mockResolvedValue({
+      ...makeClWithApp(),
+      application: {
+        id: 'app-1',
+        companyName: '카카오',
+        jobCategory: null,
+        jobTitle: null,
+        coverletterGenerationStatus: 'completed',
+      } as Application,
+    });
+    await expect(service.generate(USER_ID, CL_ID, {})).rejects.toThrow(
+      '지원 직무를 먼저 입력',
+    );
+    expect(llm.call).not.toHaveBeenCalled();
+  });
+
   it('A1: 회사조사 미완(idle) 상태에서도 draft 정상 진행 (가드 제거 검증)', async () => {
     // 기존 가드는 completed 외 전부 차단 — 3경로 개편 후 조사 상태와 무관해야 함
     const idleCl = makeClWithApp();

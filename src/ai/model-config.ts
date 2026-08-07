@@ -112,22 +112,58 @@ const FEATURE_MATRIX: Record<ActiveLlmFeature, ModelConfig> = {
     temperature: 0.2,
   },
   interview_prep_session: {
-    // F1 v2 (2026-06-01) — anthropic 전환 + main 20 균등 분배 + streaming SSE (Phase 3)
-    provider: 'anthropic',
-    modelEnvKey: 'ANTHROPIC_MODEL_LIGHT',
-    defaultModel: 'claude-haiku-4-5',
+    /**
+     * v2 (2026-08-06) — **질문만 생성.** 벤치로 모델·호출형태를 확정했다
+     * (`scripts/bench/run-question-bench.ts`, 36콜·264원).
+     *
+     * | 모델·모드        | 자료 밀착 | 공통질문 누락 | 원/세션 | 초 |
+     * |-----------------|---------|------------|--------|----|
+     * | 4o-mini · 1콜    | 16%     | 2          | 0.9원  | 8  |
+     * | **luna · 1콜**   | **68%** | **0**      | **2.8원** | **9** |
+     * | terra · 1콜      | 57%     | 0          | 24.4원 | 12 |
+     *
+     * 🔴 **판별축은 "자료 밀착도"** — 질문이 사용자 자소서·활동 기록의 사실을 인용하는가.
+     * 4o-mini 는 16% 로 탈락했다 ("프로세스와 스레드의 차이를 설명해 주세요" 같은 검색형 질문).
+     * 그게 이 제품의 차별점이라 원가(0.9원)가 싸도 못 쓴다.
+     * terra 는 밀착이 luna 보다 낮은데 원가가 9배다 — 자소서 벤치(ADR-062)와 결론이 뒤집힌 건
+     * 축이 다르기 때문이다(그쪽은 답변 지어내기, 여기는 질문 밀착도).
+     */
+    provider: 'openai',
+    modelEnvKey: 'OPENAI_MODEL_INTERVIEW',
+    defaultModel: 'gpt-5.6-luna',
     maxInputTokens: 16_000,
-    // main 20개 × (질문 ~80자 + 답변 ~300자 = ~380자) + 일부 followup 1개 = ~8000자 JSON 필요
-    //
-    // D0 (2026-08-01) 7,000 → 12,000. **잘림이 추정이 아니라 실측으로 확인됐다** —
-    // dev llm_call_logs 기준 ok 6건 중 4건이 5,000+ 이고 1건은 `completion_tokens` 가
-    // 정확히 7,000(=cap). cap 과 정확히 일치하는 건 한도에 걸려 강제 종료됐다는 뜻이라,
-    // 사용자는 질문 20개를 요청하고 일부만 받고 있었다.
-    //   - 위 주석의 요구량 ~8,000자는 JSON 구조 오버헤드까지 더하면 상한이 8,600 토큰 근처.
-    //   - 12,000 은 그 위 여유분. claude-haiku-4-5 의 max_tokens=64,000 이라 안전.
-    //   - 출력은 **실제 생성분만 과금**되므로 cap 상향 자체의 비용 증가는 없다.
-    // 근본 해결은 prep v2 의 "질문 only + on-demand 답변" (출력 79% 감소). 그때 재조정할 것.
-    maxOutputTokens: 12_000,
+    /**
+     * v1 은 12,000 이었다 (질문 20개 + 답변 20개 = 실측 평균 6,109 토큰, cap 도달 사례 있음).
+     * v2 는 **답변을 안 만들어** 출력이 1/5 로 줄었다 — 벤치 실측 luna 1콜 최대 약 1,900 토큰.
+     *
+     * 4,000 은 그 2배 여유다. 🔴 더 줄이지 마라 — luna 는 추론 모델이라 이 예산을
+     * **추론 토큰과 본문이 나눠 쓴다** (벤치 실측 추론 164~285). 부족하면 JSON 이 잘려
+     * strict 파싱이 실패한다. 출력은 실제 생성분만 과금되므로 여유의 직접 비용은 0 이다.
+     */
+    maxOutputTokens: 4_000,
+    // ⚠️ gpt-5.6 은 기본값 1 외 temperature 를 400 으로 거부한다 →
+    //   레지스트리가 `supportsTemperature: false` 라 **전송되지 않는다**.
+    //   이 값은 다른 모델로 되돌릴 때를 위한 선언으로만 남는다.
+    temperature: 0.5,
+  },
+  /**
+   * v2 (2026-08-06) — 질문 1개의 예상 답변을 on-demand 로 만든다.
+   *
+   * 세션과 **같은 모델(luna)** 로 통일한다. 문체가 갈리면 한 화면 안에서 질문과 답변의
+   * 톤이 어긋나고, 자소서에서 `coverletter_chat` 을 Terra 로 옮긴 것과 같은 근거다.
+   * 원가는 이 규모에서 판단 근거가 못 된다 (호출당 1원 안팎).
+   *
+   * 🔴 `maxOutputTokens` 를 더 줄이지 마라 — luna 는 추론 모델이라 예산을 추론과 본문이
+   * 나눠 쓴다. 꼬리질문 벤치 실측에서 800 예산 중 488(본문 356 + 추론 132)을 썼다.
+   * 답변은 자기소개 기준 500자 ≈ 273 토큰이라 본문 자체는 작지만, 추론 몫까지 담아야 한다.
+   */
+  interview_prep_answer: {
+    provider: 'openai',
+    modelEnvKey: 'OPENAI_MODEL_INTERVIEW',
+    defaultModel: 'gpt-5.6-luna',
+    // 세션과 같은 컨텍스트(자소서·활동 로그·회사 조사)를 그대로 쓴다
+    maxInputTokens: 16_000,
+    maxOutputTokens: 2_000,
     temperature: 0.5,
   },
   interview_prep_followup: {

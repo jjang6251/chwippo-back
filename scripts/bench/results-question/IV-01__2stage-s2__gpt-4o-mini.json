@@ -1,0 +1,62 @@
+{
+  "questions": [
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API 응답 속도를 개선하기 위해 Redis 캐시를 도입했다고 하셨는데, 캐시 전략을 선택한 이유와 그 과정에서 고려한 요소는 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "장애 대응 중 로그가 없어 원인을 찾지 못했다고 하셨는데, 구조화 로깅을 도입한 이후 어떤 변화가 있었나요? 구체적인 사례를 들어 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "팀 코드 리뷰 규칙을 제안하신 경험이 있다고 하셨는데, 코드 리뷰 과정에서 발생할 수 있는 갈등을 어떻게 해결할 수 있을까요?",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "프로세스와 스레드의 차이를 설명해 주시고, 백엔드 개발에서 어떤 상황에서 각각을 선택해야 하는지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "cs_tech",
+      "question": "HTTP와 HTTPS의 차이는 무엇인지 설명해 주시고, 백엔드 개발 시 HTTPS를 사용하는 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "물류 스타트업에서의 인턴 경험 중 가장 기억에 남는 프로젝트는 무엇이었고, 그 프로젝트에서 맡은 역할은 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "주문 처리 API 개선 과정에서 어떤 기술 스택을 사용했는지, 그리고 그 선택의 이유는 무엇인지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "장애 복구 시간을 줄이기 위해 팀에 도입한 구조화 로깅의 구체적인 구현 방법과 그 결과에 대해 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1822,
+  "outputTokens": 409,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 5629
+}

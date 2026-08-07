@@ -1,0 +1,67 @@
+{
+  "questions": [
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API에서 재고 테이블 전체 조회를 Redis 캐시로 개선했다고 했는데, 캐시 키와 만료 정책은 어떤 기준으로 설계했으며 재고 변경 시 캐시와 DB 간 정합성은 어떻게 보장했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "일 12만 건 트래픽 환경에서 Redis 캐시를 사용하다가 장애나 메모리 부족으로 캐시가 비정상화될 경우, 주문 처리 API와 DB에 어떤 영향이 발생하는지, 그리고 이를 어떻게 대비할지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문과 재고를 함께 처리하는 상황에서 트랜잭션 격리 수준에 따라 발생할 수 있는 동시성 문제를 설명하고, 재고 차감의 정합성을 보장할 방안을 제시해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "구조화 로깅을 도입한 경험을 바탕으로, 여러 서버를 거치는 요청을 추적해야 한다면 어떤 식별자를 어디에 전달하고 어떤 로그 필드를 남기겠는지 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API가 외부 서비스와 HTTP 통신할 때 타임아웃이 발생했습니다. TCP 연결, HTTP 요청·응답, 애플리케이션 처리 단계 중 어디에서 문제가 발생했는지 구분하기 위한 점검 방법을 설명해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "주문 처리 API의 응답 시간을 850ms에서 210ms로 개선했다고 했는데, 병목을 재고 테이블 전체 조회로 판단하기까지 어떤 지표와 측정 과정을 거쳤는지 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "로그 부재로 장애 원인을 3시간 동안 찾지 못한 경험에서, 구조화 로깅 외에 당시 장애 대응 체계에서 보완했어야 할 부분은 무엇이라고 생각하는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "PR 리뷰어 2명 지정 규칙을 제안해 머지 리드타임을 평균 2일로 줄였다고 했는데, 리뷰 속도 향상과 코드 품질 저하 가능성 사이의 균형은 어떻게 관리했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1818,
+  "outputTokens": 581,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 6310
+}

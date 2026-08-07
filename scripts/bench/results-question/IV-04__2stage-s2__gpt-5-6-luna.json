@@ -1,0 +1,66 @@
+{
+  "questions": [
+    {
+      "category": "portfolio_decision",
+      "question": "앱 상품 상세 화면 개편에서 사용자 인터뷰 8명을 통해 이미지보다 사이즈 정보를 먼저 찾는다는 점을 확인했다고 했는데, 이 인터뷰 결과가 전체 사용자의 행동을 대표한다고 판단한 근거는 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "portfolio_decision",
+      "question": "상품 상세 화면의 정보 순서를 변경한 뒤 장바구니 전환율이 3%p 올랐다고 했는데, 전환율 상승이 정보 순서 변경의 효과라고 판단하기 위해 어떤 외부 요인이나 대안 가설을 함께 검토했나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "design_process",
+      "question": "상품 상세 화면 개편 과정에서 사용자 인터뷰 질문을 어떻게 설계했고, 인터뷰 대상자는 어떤 기준으로 선정했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "design_process",
+      "question": "사용자 인터뷰 결과와 실제 서비스 지표가 서로 다르게 나타난다면, 프로덕트 디자이너로서 어떤 자료를 우선적으로 검토하고 의사결정을 내리겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "디자인 시스템이 없어 화면마다 버튼 스타일이 달랐다고 했는데, 문제의 우선순위를 버튼 스타일로 정한 이유와 다른 일관성 문제를 제외한 기준을 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "컴포넌트 24개를 정리해 토큰으로 묶었다고 했는데, 컴포넌트와 토큰을 각각 어떤 기준으로 분류하고 설계했는지 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "디자인 시스템 도입 후 신규 화면 작업 시간이 이틀에서 반나절로 줄었다고 했는데, 이 시간은 어떤 작업 범위를 기준으로 측정했으며 실제 업무에서 개선 효과를 어떻게 검증했나요?",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "디자인 시스템을 정리하는 과정에서 기존 화면이나 개발 구현과 충돌했던 사례가 있었나요? 있었다면 관련 구성원과 어떻게 조율하고 최종안을 결정했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1678,
+  "outputTokens": 749,
+  "stopReason": "stop",
+  "thinkingTokens": 222,
+  "latencyMs": 5457
+}

@@ -1,0 +1,62 @@
+{
+  "questions": [
+    {
+      "category": "data_metrics",
+      "question": "교내 동아리 신입 모집 홍보에서 인스타그램 게시물 12개를 운영해 지원자를 전년 20명에서 34명으로 늘렸다고 했습니다. 이 성과의 핵심 KPI를 지원자 수로 설정한 이유와, 게시물별 성과를 어떤 지표로 분석했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "지원자 증가가 게시물 수 증가, 콘텐츠 주제, 업로드 시점, 혹은 다른 요인 중 무엇의 영향이 컸는지 검증하기 위해 어떤 가설과 실험을 설계하겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "data_metrics",
+      "question": "배달 플랫폼에서 신규 이용자 확보 캠페인을 맡았는데 유입은 늘었지만 첫 주문 전환율이 기대보다 낮다면, 퍼널을 어떻게 나누고 어떤 지표를 우선 확인하시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "AI가 광고 소재 제작, 타기팅, 입찰 최적화 등을 자동화하는 환경에서 마케터가 반드시 직접 판단하고 보완해야 할 영역은 무엇이라고 생각하십니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "trend_ai",
+      "question": "인스타그램 계정 운영 경험을 바탕으로, 생성형 AI를 활용해 콘텐츠 제작 효율을 높일 수 있는 부분과 사람이 최종적으로 검수해야 하는 부분을 구분해 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "신입 모집 홍보를 맡게 된 배경과 당시 가장 해결해야 한다고 판단한 문제는 무엇이었습니까? 본인이 실행한 업무를 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "게시물 12개 가운데 기대만큼 반응이 나오지 않았던 콘텐츠가 있었다면 무엇이었고, 그 결과를 바탕으로 이후 콘텐츠 운영 방식을 어떻게 조정했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "지원자가 34명으로 증가한 결과를 단순 노출 증가가 아닌 홍보 활동의 실질적 성과라고 판단한 근거는 무엇입니까? 다음 모집에서도 재현 가능한 방식으로 만들기 위해 무엇을 기록하고 개선하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1749,
+  "outputTokens": 630,
+  "stopReason": "stop",
+  "thinkingTokens": 85,
+  "latencyMs": 7578
+}

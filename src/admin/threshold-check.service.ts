@@ -50,6 +50,8 @@ export class ThresholdCheckService {
       // G-8 — 예방(QA)과 짝이 되는 탐지. 배포 후는 QA 가 못 본다.
       await this.checkOutputTruncation(cfg.outputTruncationCount1h);
       await this.checkChargedFailure(cfg.chargedFailureCount1h);
+      // 2026-08-06 실사고 — 설정 오류로 인한 전면 차단. 임계 없음(1건도 비정상)
+      await this.checkBlockedByConfig();
     } catch (err) {
       this.logger.error(`tick failed: ${(err as Error).message}`);
     }
@@ -244,6 +246,53 @@ export class ThresholdCheckService {
       increasePct,
       threshold,
       `📈 전일 대비 비용 급증\ntoday=$${todayCost.toFixed(2)} vs yesterday(same hour)=$${yesterdayCost.toFixed(2)}\nincrease=+${increasePct.toFixed(1)}% (threshold ${threshold}%)`,
+    );
+  }
+
+  /**
+   * **소비 없이 차단된 호출** 감시 (2026-08-06 실사고).
+   *
+   * 🔴 왜 필요한가 — `per_feature_daily_cost_usd` 가 0 이 되어 전 기능 AI 가
+   * 사흘간 죽어 있었는데 **알람이 하나도 울리지 않았다.** 에러가 아니라 "정상 차단"
+   * 이라 error rate·provider outage·비용 급증 어디에도 안 걸렸다. 사용량은 0 이라
+   * 비용 알람은 오히려 조용해진다 — 죽을수록 안 울리는 구조였다.
+   *
+   * 판별 규칙 — **오늘 그 feature 로 쓴 비용이 0인데 cost cap 에 걸렸다면 설정 오류다.**
+   * 정상적인 cap 도달은 반드시 그 전에 소비가 쌓여 있다. 임계값을 두지 않는 이유는
+   * 1건만으로도 "그 feature 는 지금 아무도 못 쓴다" 는 뜻이기 때문이다.
+   */
+  async checkBlockedByConfig(): Promise<void> {
+    const hourStart = new Date(Date.now() - 60 * 60 * 1000);
+    const rows = await this.logRepo
+      .createQueryBuilder('l')
+      .select('l.feature', 'feature')
+      .addSelect('COUNT(*)', 'cnt')
+      .where('l.created_at >= :start', { start: hourStart })
+      .andWhere("l.status = 'blocked_cost_quota'")
+      // 🔴 "소비 0인데 차단" 만 본다. 진짜 한도 도달(소비가 쌓인 경우)은 정상이라 제외.
+      .andWhere(
+        `NOT EXISTS (
+           SELECT 1 FROM llm_call_logs p
+           WHERE p.user_id = l.user_id
+             AND p.feature = l.feature
+             AND p.cost_usd > 0
+             AND p.created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Seoul')
+                                  AT TIME ZONE 'Asia/Seoul'
+         )`,
+      )
+      .groupBy('l.feature')
+      .getRawMany<{ feature: string; cnt: string }>();
+
+    if (rows.length === 0) return;
+    const total = rows.reduce((a, r) => a + Number(r.cnt), 0);
+    const detail = rows.map((r) => `${r.feature}: ${r.cnt}건`).join('\n');
+    await this.fireAlert(
+      'blocked_by_config',
+      total,
+      0,
+      `🚫 설정 오류로 AI 가 차단되고 있어요 (최근 1h)\n${detail}\n` +
+        `오늘 이 feature 로 쓴 비용이 0인데 cost cap 에 걸렸습니다 — 정상 한도 도달이 아닙니다.\n` +
+        `→ /ops 모니터링에서 "user 일 cost cap" · "feature 일 cost cap" 확인 (0 이면 무제한이므로 다른 값 확인).`,
     );
   }
 

@@ -1,0 +1,75 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "마케팅 직무에 지원한 지원자 본인을 핵심 경험과 강점을 중심으로 1분 내외로 소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "배달의민족의 마케팅 직무에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점 한 가지를 말씀해 주시고, 그 강점이 마케팅 업무에서 어떻게 발휘될 수 있는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지를 말씀해 주시고, 이를 보완하기 위해 어떤 노력을 해왔는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "마케팅 활동이나 프로젝트에서 가장 힘들었거나 기대한 결과를 얻지 못했던 경험을 말씀해 주시고, 원인과 이후의 개선 과정을 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "다른 사람들과 협업하여 목표를 달성한 경험을 말씀해 주시고, 본인이 맡은 역할과 기여를 구체적으로 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 과정에서 팀원과 목표나 실행 방향에 이견이 있었던 경험을 말씀해 주시고, 이를 어떻게 조율했는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "마케터로서 성과와 브랜드 가치가 충돌하는 상황에서 어떤 기준으로 의사결정을 내리시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "배달의민족의 핵심 가치인 ‘규율 위의 자율’과 ‘스스로 몰입하는 사람’ 중 본인과 더 밀접하다고 생각하는 가치는 무엇이며, 이를 보여주는 경험을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "음식 배달 중개 플랫폼이 가게, 라이더, 이용자를 잇는 3면 시장 구조라는 점을 고려할 때, 왜 다른 회사가 아니라 배달의민족에서 마케팅을 하고 싶으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "배달의민족에 입사한다면 어떤 마케터로 성장하고 싶으며, 입사 후 가장 먼저 만들어 내고 싶은 성과는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "배달의민족의 마케팅 실무와 관련해 면접관에게 궁금한 점을 질문해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로, 오늘 면접에서 충분히 말씀드리지 못했지만 꼭 전하고 싶은 내용을 말씀해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1774,
+  "outputTokens": 718,
+  "stopReason": "stop",
+  "thinkingTokens": 96,
+  "latencyMs": 5083
+}

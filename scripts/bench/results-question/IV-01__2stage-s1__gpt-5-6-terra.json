@@ -1,0 +1,80 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "백엔드 직무와 관련된 경험을 중심으로 1분 내외로 자기소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "물류 스타트업 인턴에서 주문 처리 API 성능을 개선한 경험을 바탕으로, 백엔드 개발 직무에 지원한 동기를 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "본인의 가장 큰 강점 한 가지를 백엔드 개발 업무에서 발휘한 사례와 함께 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지와 이를 보완하기 위해 지속적으로 실천하고 있는 방법을 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "장애 대응 당시 로그가 부족해 원인 파악에 3시간이 걸렸다고 했는데, 이 경험에서 본인이 가장 아쉬웠던 판단은 무엇이었으며 이후 어떻게 개선했는지 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "팀 코드 리뷰 규칙을 제안하고 도입하는 과정에서 팀원들과 어떻게 협업했는지, 본인이 맡은 역할을 중심으로 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "업무 방식이나 기술적 선택을 두고 팀원과 이견이 있었던 경험을 하나 말씀해 주시고, 어떤 근거로 의견을 조율했는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "개발자로서 성능 개선, 안정성, 개발 속도 사이에서 우선순위가 충돌한다면 어떤 기준으로 의사결정하시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "다른 회사가 아니라 현대오토에버를 선택한 이유는 무엇이며, 본인의 백엔드 경험이 현대오토에버에서 어떤 방식으로 기여할 수 있다고 생각하는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l3"
+      ]
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 백엔드 개발자로서 어떤 문제를 해결하는 사람으로 성장하고 싶은지, 단기와 중장기 목표를 나누어 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 현대오토에버의 백엔드 개발 업무나 조직에 관해 질문하고 싶은 점이 있으면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 면접관에게 꼭 전달하고 싶은 말이 있다면 말씀해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1843,
+  "outputTokens": 707,
+  "stopReason": "stop",
+  "thinkingTokens": 118,
+  "latencyMs": 7383
+}

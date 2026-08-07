@@ -1,0 +1,140 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "백엔드 개발자로서 본인을 소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "결제 정산 배치 처리 시간을 40분에서 5분으로 줄인 경험을 바탕으로, 토스 백엔드 직무에 지원한 동기를 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "느린 시스템의 원인을 분석하고 개선해 온 경험을 바탕으로, 본인의 강점 한 가지를 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "백엔드 개발자로서 본인이 인식하고 있는 약점 한 가지와 이를 개선하기 위해 실천하고 있는 방법을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "배포 후 동시 요청에서 중복 결제 버그를 발견했다고 했는데, 당시 상황과 본인이 놓친 부분, 이후 재발 방지를 위해 바꾼 점을 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "신입 2명의 온보딩을 맡아 첫 PR까지 걸리는 시간을 평균 9일에서 3일로 줄였다고 했는데, 협업 과정에서 본인이 맡은 역할과 팀에 기여한 방식을 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "개발 방향이나 기술 선택에 대해 팀원과 의견이 달랐던 경험을 말씀해 주시고, 이견을 어떤 기준으로 조율했는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "토스는 송금·결제·증권·보험을 아우르는 금융 플랫폼을 지향하고 있습니다. 금융 생활 전반을 하나의 앱에서 처리하는 환경에서, 왜 다른 회사가 아니라 토스에서 백엔드 개발을 하고 싶은지 회사와 산업 관점에서 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "토스의 핵심 가치인 ‘자율과 책임’ 또는 ‘문제 정의부터 하는 사람’과 관련해, 본인이 문제를 직접 정의하고 해결까지 이끌었던 경험을 말씀해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l4"
+      ]
+    },
+    {
+      "category": "aspiration",
+      "question": "토스에 입사한다면 금융 서비스의 정확성과 속도를 모두 높이는 백엔드 개발자로서 어떤 사람이 되고 싶은지 말씀해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "reverse_question",
+      "question": "토스 백엔드 실무와 관련해 면접관에게 궁금한 점을 질문해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 면접관에게 하고 싶은 말을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "금융 서비스 백엔드 개발에서 속도와 정확성이 충돌할 때, 어떤 원칙을 기준으로 의사결정하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "결제 정산 배치 쿼리를 분석해 인덱스 2개를 추가했다고 했는데, 인덱스의 동작 원리와 인덱스 추가 여부를 판단하는 기준, 인덱스 사용으로 발생할 수 있는 단점을 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "중복 결제 문제를 멱등키로 해결했다고 했는데, 트랜잭션의 원자성과 격리 수준이 동시 결제 요청 처리에 어떤 영향을 주는지 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "결제 서버에서 프로세스와 스레드의 차이가 중요해지는 상황을 설명하고, 동시 요청을 처리할 때 발생할 수 있는 문제와 대응 방법을 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "외부 API 장애로 전체 서비스가 멈춘 경험에서 서킷 브레이커를 도입했다고 했는데, 서킷 브레이커의 상태 전이 방식과 적용 시 고려해야 할 타임아웃·재시도 전략을 설명해 주세요.",
+      "source_log_ids": [
+        "l4"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "결제 정산 배치를 40분에서 5분으로 줄였다고 했는데, 쿼리 분석을 어떤 순서로 진행했고 인덱스 2개를 선택한 판단 기준은 무엇이었습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "동시 요청 시 중복 결제가 발생한 원인을 어떻게 재현하고 분석했는지, 멱등키를 어느 계층에 어떤 방식으로 적용했는지 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "외부 API 장애가 전체 서비스 중단으로 이어졌을 때 장애 전파 경로를 어떻게 파악했으며, 서킷 브레이커 도입 이후에도 남아 있는 장애 대응 과제는 무엇이라고 생각합니까?",
+      "source_log_ids": [
+        "l4"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1994,
+  "outputTokens": 1427,
+  "stopReason": "stop",
+  "thinkingTokens": 289,
+  "latencyMs": 8549
+}

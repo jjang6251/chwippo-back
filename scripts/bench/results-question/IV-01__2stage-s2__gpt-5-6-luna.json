@@ -1,0 +1,66 @@
+{
+  "questions": [
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API의 응답 속도를 850ms에서 210ms로 개선했다고 했는데, 매 요청마다 재고 테이블을 전체 조회하던 문제를 데이터베이스 인덱스나 쿼리 개선이 아니라 Redis 캐시 도입으로 해결한 판단 근거는 무엇입니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "재고 정보를 Redis에 캐시할 때 사용할 자료구조를 어떻게 선택하시겠습니까? Hash와 String 등 자료구조별 차이를 설명하고, 재고 조회와 수량 변경에 어떤 구조가 적합한지 말씀해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API에서 데이터베이스의 트랜잭션과 Redis 캐시의 정합성이 중요해지는 상황은 언제이며, 주문과 재고 변경 과정에서 캐시와 데이터베이스의 값이 달라졌을 때 어떻게 처리하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "일 12만 건의 트래픽을 처리하는 주문 API에서 프로세스와 스레드의 차이가 성능과 안정성에 어떤 영향을 줄 수 있는지, 동시 요청 처리 관점에서 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API를 호출하는 클라이언트와 서버 사이에서 TCP 3-way handshake가 수행되는 과정과 HTTP와 HTTPS의 차이를 설명해 주세요. API 응답 속도 개선을 검증할 때 네트워크 지연과 서버 처리 시간을 어떻게 구분하시겠습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "주문 처리 API의 응답 속도를 850ms에서 210ms로 개선했다고 했는데, 개선 전후의 성능을 어떤 방식으로 측정했으며 해당 개선이 실제 사용자 경험이나 서버 자원 사용량에 미친 영향은 어떻게 검증하셨습니까?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "장애 대응 중 로그가 없어 원인을 3시간 동안 찾지 못한 경험 이후 구조화 로깅을 도입했다고 했는데, 어떤 로그 항목과 형식을 정의했으며 기존 방식보다 장애 원인 파악에 효과적이라고 판단한 근거는 무엇입니까?",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "코드 리뷰 규칙이 없어 PR이 일주일씩 묶이던 상황에서 리뷰어 2명 지정 규칙을 제안했다고 했는데, 팀원들의 동의를 어떻게 얻었고 리뷰 품질이 저하되지 않으면서 머지 시간이 평균 2일로 줄었는지 어떻게 확인하셨습니까?",
+      "source_log_ids": [
+        "l3"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1818,
+  "outputTokens": 842,
+  "stopReason": "stop",
+  "thinkingTokens": 207,
+  "latencyMs": 6123
+}

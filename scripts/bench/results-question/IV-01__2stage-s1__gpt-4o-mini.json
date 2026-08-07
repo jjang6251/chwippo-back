@@ -1,0 +1,91 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "자기소개 해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "현대오토에버에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점은 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점은 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었던 경험이나 실패했던 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 경험 중 기억에 남는 사례를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "갈등이나 이견을 조율했던 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "개발자로서 가장 중요하게 생각하는 가치관은 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API 응답 속도를 개선하기 위해 Redis 캐시를 도입했다고 하셨는데, 그 과정에서 어떤 점을 고려하셨나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "장애 대응 중 로그가 없었던 상황을 말씀하셨는데, 구조화 로깅을 도입한 이유와 그 효과에 대해 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "팀 코드 리뷰 규칙을 제안하셨다고 하셨는데, 그 과정에서 어떤 어려움이 있었고 어떻게 해결하셨나요?",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "company_industry",
+      "question": "현대오토에버의 비전이나 핵심가치 중 무엇이 본인과 가장 잘 맞는다고 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 어떤 개발자가 되고 싶으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관님께 하고 싶은 질문이 있으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 하고 싶은 말이 있으신가요?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1847,
+  "outputTokens": 474,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 5405
+}

@@ -1,0 +1,308 @@
+{
+  "ranAt": "2026-08-06T22:52:15.245Z",
+  "krwPerUsd": 1380,
+  "usage": [
+    {
+      "feature": "interview_prep_answer",
+      "model": "gpt-5.6-luna",
+      "calls": 5,
+      "in_tokens": 2349,
+      "out_tokens": 3812,
+      "cost_usd": "0.005185"
+    },
+    {
+      "feature": "interview_prep_session",
+      "model": "gpt-5.6-luna",
+      "calls": 1,
+      "in_tokens": 423,
+      "out_tokens": 1666,
+      "cost_usd": "0.002128"
+    },
+    {
+      "feature": "interview_prep_followup",
+      "model": "gpt-4o-mini",
+      "calls": 3,
+      "in_tokens": 4986,
+      "out_tokens": 305,
+      "cost_usd": "0.000931"
+    }
+  ],
+  "cases": [
+    {
+      "caseId": "B6-executive",
+      "probes": "임원 면접 + 회사 조사 있음 — 조사 자료를 정확히 인용하는가, 조사에 **없는** 회사 사실을 덧칠하는가. A2 가 통과한 축을 다른 종류·다른 직무로 재확인",
+      "companyName": "세움에너지",
+      "jobTitle": "경영기획 담당",
+      "jobCategory": "경영기획",
+      "interviewType": "executive",
+      "sessionId": "e588a306-1607-435d-8437-579fdc291810",
+      "coverletters": [
+        {
+          "category": "지원동기",
+          "question": "본사 지원 동기와 입사 후 목표를 서술해 주세요.",
+          "answer": "에너지 산업의 사업성을 숫자로 판단하는 일을 하고 싶습니다. 학부에서 경영학을 전공하며 산업 리포트를 읽고 사업 구조를 정리하는 연습을 해왔습니다.",
+          "charLimit": 600
+        }
+      ],
+      "logs": [
+        "경영학회 2년. 산업 리포트 요약·발표 담당. 에너지 산업 리포트 3편 작성."
+      ],
+      "allowedFacts": [
+        "2년",
+        "3편",
+        "경영학회",
+        "산업 리포트",
+        "에너지"
+      ],
+      "jobPostingSummary": null,
+      "logIds": [
+        "6db29cd7-3aad-45ea-ab55-a98216ce8d04"
+      ],
+      "jobPostingRequirements": [],
+      "companyResearch": {
+        "businessSummary": "산업용 태양광 발전소 개발·운영. 발전소 설계부터 유지보수까지 직접 수행한다.",
+        "coreValues": [
+          "현장에서 답을 찾는다",
+          "길게 본다",
+          "숫자로 합의한다"
+        ],
+        "recentTrends": "2026년 영농형 태양광 실증 사업을 처음 시작했다."
+      },
+      "questions": [
+        {
+          "id": "ddbf384f-e293-422f-9360-2153927efd2a",
+          "no": 1,
+          "category": "self_intro",
+          "mustPrepare": true,
+          "text": "간단하게 자기소개를 해 주세요.",
+          "sourceLogIds": [],
+          "answer": "안녕하십니까. 에너지 산업의 사업성을 구조적으로 파악하고, 이를 경영 의사결정에 연결하고 싶은 경영기획 지원자입니다. 저는 경영학을 전공하며 산업별 사업 구조를 정리하는 데 관심을 가져왔고, 경영학회에서 2년 동안 산업 리포트 요약과 발표를 담당했습니다. 특히 에너지 산업 리포트를 3편 작성하며 시장과 기업의 사업 내용을 읽고 핵심을 정리해 전달하는 경험을 쌓았습니다. 리포트를 작성하고 발표할 때는 산업의 특성과 사업 구조를 기준으로 중요한 내용을 선별하고, 듣는 사람이 이해하기 쉽도록 논리를 구성했습니다. 세움에너지가 산업용 태양광 발전소를 설계부터 유지보수까지 직접 수행하고, 최근 영농형 태양광 실증 사업도 시작했다는 점에 관심이 있습니다. 저는 학회에서 길러온 산업 분석과 전달 역량을 바탕으로 현장의 사업 내용을 이해하고, 숫자에 근거한 기획과 판단을 지원하겠습니다. 장기적으로는 에너지 사업의 변화를 꾸준히 관찰하며, 세움에너지의 사업 방향을 구체적인 실행 과제로 연결하는 경영기획 담당자로 성장하겠습니다. 감사합니다.",
+          "followups": [
+            {
+              "text": "산업 리포트를 작성하며 핵심 내용을 정리하고 전달하는 경험을 쌓았다고 하셨는데, 구체적으로 어떤 기준이나 방법론을 사용하여 중요한 내용을 선별했는지, 그리고 그 과정에서 어려움이 있었던 부분과 이를 어떻게 극복했는지 설명해 주시겠습니까?",
+              "basis": "ai_answer"
+            }
+          ]
+        },
+        {
+          "id": "966d5215-3383-4bf0-bd33-521f34d60c2e",
+          "no": 2,
+          "category": "motivation",
+          "mustPrepare": true,
+          "text": "에너지 산업의 사업성을 숫자로 판단하는 일을 하고 싶다고 했는데, 경영기획 직무에 지원한 구체적인 이유를 설명해 주세요.",
+          "sourceLogIds": [],
+          "answer": "제가 경영기획 직무에 지원한 이유는 에너지 산업에 대한 분석을 실제 사업 의사결정으로 연결하는 역할이라고 생각했기 때문입니다. 경영학회에서 2년간 산업 리포트를 요약·발표하고, 에너지 산업 리포트 3편을 작성하며 산업 구조를 정리하는 연습을 했습니다. 사업성을 판단할 때는 먼저 시장과 사업의 범위를 정하고, 매출에 영향을 주는 발전량·가격과 비용에 영향을 주는 개발·운영 요소를 나눈 뒤, 각 변수가 수익성에 미치는 영향을 비교해야 한다고 생각합니다. 세움에너지는 산업용 태양광 발전소의 설계부터 유지보수까지 직접 수행하고 있어 이런 분석을 현장과 숫자로 연결하기에 적합한 곳이라고 판단했습니다. 입사 후에는 숫자에 근거해 사업을 검토하고, 실행 가능한 계획으로 구체화하는 기획 담당자가 되겠습니다.",
+          "followups": [
+            {
+              "text": "에너지 산업에 대한 분석을 사업 의사결정으로 연결하는 역할이 중요하다고 하셨는데, 그렇다면 경영기획 직무에서 본인이 어떤 구체적인 분석 기법이나 도구를 사용하여 사업성을 판단할 계획인지, 그리고 그 과정에서 예상되는 도전 과제는 무엇이라고 생각하는지 설명해 주시겠습니까?",
+              "basis": "ai_answer"
+            }
+          ]
+        },
+        {
+          "id": "7d70f517-05b0-4cc1-b0dd-9853bee11fc3",
+          "no": 3,
+          "category": "personality",
+          "mustPrepare": false,
+          "text": "본인의 강점 한 가지를 말씀해 주시고, 그 강점이 경영기획 업무에서 어떻게 발휘될 수 있는지 설명해 주세요.",
+          "sourceLogIds": [],
+          "answer": "제 강점은 복잡한 산업 정보를 구조화해 사업의 핵심을 정리하는 힘입니다. 경영학회에서 2년간 산업 리포트 요약·발표를 담당했고, 에너지 산업 리포트도 3편 작성하며 산업의 흐름과 사업 구조를 정리하는 연습을 했습니다. 경영기획 업무에서는 이 강점을 사업성 판단과 KPI 관리에 활용하겠습니다. 예를 들어 영농형 태양광과 같은 신규 사업을 검토할 때는 먼저 시장과 고객을 정의하고, 발전량·매출·투자비·운영비를 주요 변수로 구분하겠습니다. 이후 가정별 수익성과 실행 가능성을 비교해 우선순위를 정하고, 계획 대비 실적을 확인할 핵심 지표를 설정하겠습니다. 설계부터 유지보수까지 직접 수행하는 세움에너지의 사업 구조를 고려해, 정리한 정보를 숫자와 실행 과제로 연결하는 기획자가 되겠습니다.",
+          "followups": []
+        },
+        {
+          "id": "449bcce3-b681-465a-b106-7e4df7addcbe",
+          "no": 4,
+          "category": "personality",
+          "mustPrepare": false,
+          "text": "본인의 약점 한 가지를 말씀해 주시고, 이를 개선하기 위해 어떤 노력을 하고 있는지 설명해 주세요.",
+          "sourceLogIds": [],
+          "answer": "저의 약점은 산업 리포트로 사업 구조를 분석해 왔지만, 발전소의 설계·운영 현장에서 발생하는 데이터를 직접 다뤄본 경험이 많지 않다는 점입니다. 경영학회에서 2년간 산업 리포트를 요약·발표하고 에너지 산업 리포트 3편을 작성하며 시장과 사업 구조를 숫자로 정리하는 연습을 해왔습니다. 다만 분석 결과를 실제 운영과 연결하는 역량은 더 보완해야 한다고 생각합니다. 입사 후에는 발전량, 가동률, 유지보수 비용 등 운영 지표를 현장 담당자와 확인하고 계획과 실제의 차이를 비교하겠습니다. 이를 바탕으로 현장에서 답을 찾고 숫자로 합의하는 기획자로 성장하겠습니다.",
+          "followups": []
+        },
+        {
+          "id": "22f3f2c1-c92c-418f-96f5-c04f9c7774c0",
+          "no": 5,
+          "category": "failure",
+          "mustPrepare": false,
+          "text": "지금까지 가장 힘들었거나 실패했다고 느낀 경험을 말씀해 주시고, 그 경험에서 무엇을 배웠는지 설명해 주세요.",
+          "sourceLogIds": [],
+          "answer": "가장 힘들었던 경험은 경영학회에서 2년 동안 산업 리포트를 요약하고 발표한 일입니다. 산업 리포트는 자료의 양이 많아 핵심 내용을 선별하고, 산업 구조와 주요 쟁점을 다른 사람에게 이해하기 쉽게 전달해야 했습니다. 저는 에너지 산업 리포트 3편을 작성하며 자료를 단순히 요약하는 데 그치지 않고, 사업이 어떤 구조로 수익을 만들고 어떤 변수가 영향을 주는지 정리하려고 했습니다. 이 경험을 통해 복잡한 정보를 구조화하고, 근거를 바탕으로 핵심을 전달하는 역량을 배웠습니다. 경영기획 업무에서도 숫자와 산업 구조를 바탕으로 쟁점을 정리하고, 조직이 합의할 수 있는 방향을 제시하겠습니다.",
+          "followups": []
+        },
+        {
+          "id": "8e2a1ad2-5b12-4cf8-812b-08fcb2982924",
+          "no": 6,
+          "category": "collaboration",
+          "mustPrepare": false,
+          "text": "다른 사람들과 협업하여 목표를 달성한 경험을 말씀해 주세요. 본인이 맡은 역할과 기여를 구체적으로 설명해 주세요.",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "f5ca4455-7976-4624-a5e9-59a01ed27f4f",
+          "no": 7,
+          "category": "collaboration",
+          "mustPrepare": false,
+          "text": "협업 과정에서 의견이 달랐던 사람을 설득하거나 이견을 조율한 경험을 말씀해 주세요.",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "5e6df8a4-4868-455c-8778-1866e908f100",
+          "no": 8,
+          "category": "company_industry",
+          "mustPrepare": true,
+          "text": "산업용 태양광 발전소의 설계부터 유지보수까지 직접 수행하고, 영농형 태양광 실증 사업을 시작한 세움에너지를 다른 회사보다 선택한 이유는 무엇인가요?",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "67ddf4c2-069d-48c9-b28b-639dcdfa8cf9",
+          "no": 9,
+          "category": "aspiration",
+          "mustPrepare": false,
+          "text": "세움에너지에 입사한다면 경영기획 담당자로서 어떤 성과를 만들고, 장기적으로 어떤 사람이 되고 싶은가요?",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "76db1862-bd38-4056-8232-be60bb1ec07f",
+          "no": 10,
+          "category": "reverse_question",
+          "mustPrepare": false,
+          "text": "세움에너지와 경영기획 직무에 대해 면접관에게 궁금한 점이 있다면 질문해 주세요.",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "36e5b8ae-7222-498e-bd82-06d248436875",
+          "no": 11,
+          "category": "closing_remark",
+          "mustPrepare": false,
+          "text": "마지막으로 본인을 꼭 선발해야 하는 이유나 하고 싶은 말을 말씀해 주세요.",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "5a7b5382-7a75-479a-8ff9-b03abb26983f",
+          "no": 12,
+          "category": "executive",
+          "mustPrepare": true,
+          "text": "경영기획 업무에서 단기적인 성과와 장기적인 사업 경쟁력이 충돌한다면, 어떤 기준으로 판단하고 의사결정하시겠습니까?",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "8777a717-5e57-4c45-b313-a14d640f3ce1",
+          "no": 13,
+          "category": "culture_fit",
+          "mustPrepare": false,
+          "text": "세움에너지의 핵심 가치인 ‘현장에서 답을 찾는다’, ‘길게 본다’, ‘숫자로 합의한다’ 중 본인과 가장 잘 맞는 가치를 하나 고르고, 그 이유를 설명해 주세요.",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "738dce6f-4912-4d3c-9328-ff5ec6738a26",
+          "no": 14,
+          "category": "business_reasoning",
+          "mustPrepare": false,
+          "text": "세움에너지가 새로운 태양광 사업의 시장 규모를 추정해야 한다면, top-down 방식과 bottom-up 방식으로 각각 어떤 가정과 변수를 사용해 시장 규모를 산정하시겠습니까?",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "97da79ec-9049-4d11-b5d3-11a2538e975e",
+          "no": 15,
+          "category": "business_reasoning",
+          "mustPrepare": false,
+          "text": "산업용 태양광 발전소 신규 사업의 우선순위를 정해야 한다면, 수익성 외에 어떤 지표를 검토하고 어떤 순서로 판단하시겠습니까?",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "9017fe28-a375-4516-8d77-5677256aafc5",
+          "no": 16,
+          "category": "business_reasoning",
+          "mustPrepare": true,
+          "text": "태양광 발전소 사업의 성과를 관리하기 위한 KPI를 설정한다면 어떤 지표를 선정하시겠습니까? 각 지표의 산식 또는 측정 방법과 모니터링 주기를 함께 설명해 주세요.",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "f8fb2458-dcd6-4d53-a65c-bf243d9c3266",
+          "no": 17,
+          "category": "business_reasoning",
+          "mustPrepare": false,
+          "text": "태양광 발전소 사업을 분석할 때 손익계산서, 재무상태표, 현금흐름표에서 각각 어떤 항목을 중점적으로 확인하고, 사업성을 어떻게 판단하시겠습니까?",
+          "sourceLogIds": [],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "4a8bf1a9-994f-4414-b710-dda602782c05",
+          "no": 18,
+          "category": "coverletter_based",
+          "mustPrepare": true,
+          "text": "학부에서 산업 리포트를 읽고 사업 구조를 정리하는 연습을 했다고 했는데, 산업 리포트를 분석할 때 시장·경쟁·수익성 중 어떤 항목을 어떤 방식으로 검토했는지 설명해 주세요.",
+          "sourceLogIds": [
+            "6db29cd7-3aad-45ea-ab55-a98216ce8d04"
+          ],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "84a0f7e1-5bee-4d49-8499-bc9798213132",
+          "no": 19,
+          "category": "coverletter_based",
+          "mustPrepare": false,
+          "text": "경영학회에서 2년 동안 산업 리포트 요약과 발표를 담당했다고 했는데, 자료의 핵심 내용을 짧은 시간 안에 정리하고 청중에게 전달하기 위해 어떤 기준을 사용했나요?",
+          "sourceLogIds": [
+            "6db29cd7-3aad-45ea-ab55-a98216ce8d04"
+          ],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "dd65e7e2-e519-440a-9164-b5a9244645cb",
+          "no": 20,
+          "category": "coverletter_based",
+          "mustPrepare": false,
+          "text": "에너지 산업 리포트 3편을 작성했다고 했는데, 그중 가장 분석하기 어려웠던 주제는 무엇이었으며 자료의 신뢰성을 어떻게 검토했는지 말씀해 주세요.",
+          "sourceLogIds": [
+            "6db29cd7-3aad-45ea-ab55-a98216ce8d04"
+          ],
+          "answer": null,
+          "followups": []
+        },
+        {
+          "id": "ae59bdbd-76fc-431c-af42-9a48ca2ebc21",
+          "no": 21,
+          "category": "coverletter_based",
+          "mustPrepare": false,
+          "text": "산업 리포트를 작성하거나 발표하면서 숫자와 해석이 일치하지 않았던 경험이 있다면, 어떤 방식으로 원인을 확인하고 결론을 수정했는지 설명해 주세요.",
+          "sourceLogIds": [
+            "6db29cd7-3aad-45ea-ab55-a98216ce8d04"
+          ],
+          "answer": null,
+          "followups": [
+            {
+              "text": "산업 리포트를 작성하면서 숫자와 해석이 일치하지 않았던 경험을 구체적으로 말씀해 주셨다면, 그 과정에서 어떤 데이터를 수집하고 분석했는지, 그리고 그 데이터의 신뢰성을 어떻게 확보했는지에 대해 좀 더 자세히 설명해 주실 수 있나요?",
+              "basis": "question"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

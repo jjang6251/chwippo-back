@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -87,7 +91,10 @@ describe('InterviewPrepSessionsService', () => {
     clQb.innerJoin.mockReturnThis();
     clQb.where.mockReturnThis();
     clQb.andWhere.mockReturnThis();
-    clQb.getCount.mockReset().mockResolvedValue(0);
+    // v2 — 세션 생성에 자소서가 **필수**가 되면서, 대부분의 create 테스트가
+    //   자소서 1개를 넘긴다. 기본값을 1 로 두면 각 테스트가 IDOR mock 을 매번 안 세워도 된다.
+    //   (0개 케이스는 아래 전용 테스트에서 명시적으로 다룬다)
+    clQb.getCount.mockReset().mockResolvedValue(1);
 
     appRepo.createQueryBuilder.mockReturnValue(appQb);
     clRepo.createQueryBuilder.mockReturnValue(clQb);
@@ -127,14 +134,15 @@ describe('InterviewPrepSessionsService', () => {
 
   // ── create ──
   describe('create', () => {
-    it('정상: application 본인 + 빈 arrays → 저장 + 응답 user_id 노출 0', async () => {
+    it('정상: application 본인 + 자소서 1개 → 저장 + 응답 user_id 노출 0', async () => {
       const r = await service.create(USER_ID, {
         applicationId: APP_ID,
         round: '1차',
+        coverletterIds: ['cl-1'],
       });
       expect(r.applicationId).toBe(APP_ID);
       expect(r.round).toBe('1차');
-      expect(r.coverletterIds).toEqual([]);
+      expect(r.coverletterIds).toEqual(['cl-1']);
       expect(r.extraLogIds).toEqual([]);
       // user_id strip 검증 — response 에 userId 키 없어야 함
       expect('userId' in r).toBe(false);
@@ -157,6 +165,7 @@ describe('InterviewPrepSessionsService', () => {
       const r = await service.create(USER_ID, {
         applicationId: APP_ID,
         round: '1차',
+        coverletterIds: ['cl-1'],
       });
       expect(r.interviewType).toBeNull();
     });
@@ -166,6 +175,7 @@ describe('InterviewPrepSessionsService', () => {
         applicationId: APP_ID,
         round: '1차',
         interviewType: 'technical',
+        coverletterIds: ['cl-1'],
       });
       expect(r.interviewType).toBe('technical');
     });
@@ -202,24 +212,76 @@ describe('InterviewPrepSessionsService', () => {
         service.create(USER_ID, {
           applicationId: APP_ID,
           round: '1차',
+          coverletterIds: ['cl-1'],
           extraLogIds: ['log-1', 'log-2', 'log-other'],
         }),
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
-    it('빈 coverletterIds[] → IDOR 검증 skip (불필요한 쿼리 안 함)', async () => {
+    /**
+     * 🔴 v2 (2026-08-06 CEO 결정) — **자소서 없이는 세션을 만들 수 없다.**
+     *
+     * 이 기능의 값어치가 "내 자소서를 파고드는 질문" 이라 자소서가 없으면 검색으로 되는
+     * 일반 질문지가 된다. 동시에 자소서를 등록할 이유를 만드는 장치다.
+     *
+     * **프론트 버튼 disabled 만으로는 부족하다** — devtools·직접 호출로 우회된다.
+     * 여기가 진짜 경계이므로 서버에서 막는 걸 고정한다.
+     */
+    it('🔴 자소서 0건 → BadRequest (프론트 우회 방어) + 저장 안 함', async () => {
+      await expect(
+        service.create(USER_ID, {
+          applicationId: APP_ID,
+          round: '1차',
+          coverletterIds: [],
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(sessionRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('🔴 coverletterIds 자체를 안 보내도 BadRequest (undefined 우회 방어)', async () => {
+      await expect(
+        service.create(USER_ID, { applicationId: APP_ID, round: '1차' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(sessionRepo.save).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 직무 게이트 — 직무는 10 fork 중 무엇을 물을지 정하는 기준이다.
+     *    비면 fork 가 죽고 자소서 추궁만 남는다. 판정은 `resolveJobText` 와 같아야 한다.
+     */
+    it.each([
+      ['jobCategory null', { jobCategory: null, jobTitle: null }],
+      ['공백만', { jobCategory: '   ', jobTitle: '  ' }],
+    ])('🔴 직무 없음(%s) → BadRequest + 저장 안 함', async (_label, patch) => {
+      appQb.getOne.mockResolvedValue(makeApp(patch));
+      // 🔴 메시지까지 본다 — BadRequest 만 보면 자소서 게이트가 대신 던져도 통과한다
+      await expect(
+        service.create(USER_ID, {
+          applicationId: APP_ID,
+          round: '1차',
+          coverletterIds: ['cl-1'],
+        }),
+      ).rejects.toThrow('지원 직무를 먼저 입력해 주세요');
+      expect(sessionRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('jobCategory 없어도 jobTitle 있으면 통과 — 여기만 엄격하면 멀쩡한 카드가 막힌다', async () => {
+      appQb.getOne.mockResolvedValue(
+        makeApp({ jobCategory: null, jobTitle: '백엔드 개발자' }),
+      );
       await service.create(USER_ID, {
         applicationId: APP_ID,
         round: '1차',
-        coverletterIds: [],
+        coverletterIds: ['cl-1'],
       });
-      expect(clQb.getCount).not.toHaveBeenCalled();
+      expect(sessionRepo.save).toHaveBeenCalled();
     });
 
     it('빈 extraLogIds[] → IDOR 검증 skip', async () => {
       await service.create(USER_ID, {
         applicationId: APP_ID,
         round: '1차',
+        coverletterIds: ['cl-1'],
         extraLogIds: [],
       });
       expect(logRepo.count).not.toHaveBeenCalled();
@@ -229,10 +291,12 @@ describe('InterviewPrepSessionsService', () => {
       const r1 = await service.create(USER_ID, {
         applicationId: APP_ID,
         round: '1차',
+        coverletterIds: ['cl-1'],
       });
       const r2 = await service.create(USER_ID, {
         applicationId: APP_ID,
         round: '1차',
+        coverletterIds: ['cl-1'],
       });
       // 둘 다 새 entity 로 save 호출
       expect(sessionRepo.save).toHaveBeenCalledTimes(2);
@@ -281,6 +345,61 @@ describe('InterviewPrepSessionsService', () => {
       const r = await service.findOne(USER_ID, 'sess-1');
       expect(r.id).toBe('sess-1');
       expect('userId' in r).toBe(false);
+    });
+
+    /**
+     * 🔴 stale 회수 (15축 ④ · 2026-08-07).
+     *
+     * 서버가 생성 도중 죽으면 `in_progress` 가 DB 에 남는다. 읽기 시점 보정이 없으면
+     * 화면은 영원히 "생성 중" 이고 사용자는 **다시 만들 수단이 없다** — cron 도 없으므로
+     * 스스로는 절대 안 풀린다. 생성이 ~10초라 2분 초과를 죽은 것으로 본다.
+     *
+     * 경계를 양쪽으로 잡는 이유: 한쪽만 두면 부등호가 뒤집혀도 통과한다.
+     */
+    it.each([
+      ['2분 초과 (죽은 서버)', 3 * 60 * 1000, 'idle'],
+      ['2분 이내 (진짜 생성 중)', 30 * 1000, 'in_progress'],
+    ])('🔴 in_progress %s → %s', async (_label, agoMs, expected) => {
+      sessionRepo.findOne.mockResolvedValueOnce(
+        makeSession({
+          generationStatus: 'in_progress',
+          generationStartedAt: new Date(Date.now() - agoMs),
+        }),
+      );
+      const r = await service.findOne(USER_ID, 'sess-1');
+      expect(r.generationStatus).toBe(expected);
+    });
+
+    it('🔴 in_progress 인데 시작 시각이 없으면 idle — 영구 잠김 방지', async () => {
+      sessionRepo.findOne.mockResolvedValueOnce(
+        makeSession({
+          generationStatus: 'in_progress',
+          generationStartedAt: null,
+        }),
+      );
+      const r = await service.findOne(USER_ID, 'sess-1');
+      expect(r.generationStatus).toBe('idle');
+    });
+
+    it('generationStatus 가 없는 구 데이터는 idle 로 읽는다', async () => {
+      sessionRepo.findOne.mockResolvedValueOnce(
+        makeSession({ generationStatus: null as never }),
+      );
+      const r = await service.findOne(USER_ID, 'sess-1');
+      expect(r.generationStatus).toBe('idle');
+    });
+
+    it('completed·failed 는 시각과 무관하게 그대로 읽는다', async () => {
+      for (const st of ['completed', 'failed'] as const) {
+        sessionRepo.findOne.mockResolvedValueOnce(
+          makeSession({
+            generationStatus: st,
+            generationStartedAt: new Date(Date.now() - 3 * 60 * 1000),
+          }),
+        );
+        const r = await service.findOne(USER_ID, 'sess-1');
+        expect(r.generationStatus).toBe(st);
+      }
     });
 
     it('다른 user → NotFound', async () => {

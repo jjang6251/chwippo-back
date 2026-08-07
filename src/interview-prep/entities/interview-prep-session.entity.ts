@@ -51,6 +51,38 @@ export class InterviewPrepSession {
   round: string;
 
   /** 면접 종류 — null 또는 enum 3종 (technical/personality/etc). PT·토론·코딩은 F-후속 별도 기능 */
+  /**
+   * 질문 생성 진행 상태 (v2.1, 2026-08-07).
+   *
+   * 🔴 **새로고침 복귀용이다.** 생성은 ~10초 걸리는데, 그 사이 새로고침하면 화면이
+   * "아직 질문이 없어요" 로 돌아가 사용자가 실패한 줄 알고 다시 누른다. 그러면
+   * in-flight lock 에 막혀 엉뚱한 문구를 보고, 잠시 뒤 새로고침하면 질문이 있다.
+   * (결과가 유실되진 않지만 무슨 일이 일어난 건지 알 수 없다.)
+   *
+   * 자소서 `coverletter_generation_status` 와 같은 구조다.
+   */
+  @Column({
+    name: 'generation_status',
+    type: 'varchar',
+    length: 20,
+    default: 'idle',
+  })
+  generationStatus: 'idle' | 'in_progress' | 'completed' | 'failed';
+
+  /**
+   * `in_progress` 진입 시각 — **stale 회수 기준**이다.
+   *
+   * 서버가 중간에 죽으면 상태가 `in_progress` 로 남아 사용자가 영원히 못 만든다.
+   * 생성은 ~10초라 별도 cron 없이 **조회 시점에 2분 초과면 idle 로 간주**한다
+   * (jobposting-parse 와 같은 방식).
+   */
+  @Column({
+    name: 'generation_started_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  generationStartedAt: Date | null;
+
   @Column({
     name: 'interview_type',
     type: 'varchar',
