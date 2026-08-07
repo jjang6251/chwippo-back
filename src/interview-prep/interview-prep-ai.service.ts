@@ -211,6 +211,27 @@ export const INTERVIEW_CATEGORIES = [
   'discussion_topic', // 토론 — 찬반 논제 (양쪽 논거를 다 준비하는 형태)
 ] as const;
 
+/**
+ * 🔴 **LLM 이 만든 카테고리를 enum 안으로 좁힌다** (2026-08-07).
+ *
+ * 스키마에 `enum` 이 있어도 **강제력은 provider 마다 다르다.** OpenAI strict json_schema 는
+ * 제약 디코딩이라 벗어날 수 없지만, 장애 시 넘어가는 Anthropic `tool_use` 에서는 권고일
+ * 뿐이다 — 같은 스키마의 `maxItems 12` 를 무시하고 16개를 낸 전적이 아래에 기록돼 있다.
+ *
+ * enum 밖 값이 저장되면 답변 생성의 `# 문항 유형` 에 그대로 실려 **유형별 표의 어느 줄과도
+ * 매칭되지 않는다** — 길이·형식 규칙이 조용히 안 걸린다. 규칙이 있는데 안 지켜지는 상태가
+ * 가장 찾기 어렵다.
+ *
+ * 🔴 **버리지 않고 `null` 로 떨어뜨린다.** 질문 본문 자체는 멀쩡하므로 쓸 수 있어야 한다.
+ * `null` 은 옛 세션에도 있는 정상값이고, 답변 프롬프트의 `?? '(미분류)'` 가 받는다.
+ */
+export function normalizeCategory(raw: unknown): string | null {
+  return typeof raw === 'string' &&
+    (INTERVIEW_CATEGORIES as readonly string[]).includes(raw)
+    ? raw
+    : null;
+}
+
 /** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
 export const SESSION_JSON_SCHEMA = {
   name: 'interview_prep_session',
@@ -358,7 +379,33 @@ export const ANSWER_SYSTEM_PROMPT = `너는 한국 취준생의 면접 답변을
 
 # 답변 작성 규칙
 - 한국어 "~습니다/~합니다" 격식체. 1인칭.
-- 길이 — 자기소개는 450-500자(45-60초), 나머지는 350-400자(1분). 면접에서 말할 분량이다.
+- 길이 — **문항 유형마다 다르다.** 위에서 받은 "문항 유형" 에 맞춰 쓴다.
+  - self_intro (자기소개): **300-350자**
+  - closing_remark (마지막 한마디): **120-180자**
+  - 그 외: **280-350자**
+  🔴 기준: **공백 포함 350자 = 약 1분** ("1분 자기소개 원고 350자" 관용과 같다).
+  이 환산을 임의로 바꾸지 마라 — 예전엔 "450-500자(45-60초)" 라고 적혀 있었는데
+  450자는 실제로 **77초**다. 모델은 괄호가 아니라 글자수를 따르므로, 1분 이내로
+  답하라는 질문에 **1분 11초짜리 답변**이 나왔다.
+
+# 문항 유형별 형식
+- **자기소개** — 🔴 **첫 문장에 핵심 강점을 박는다.** 인사 뒤에 경험부터 나열하면
+  첫 10초에 기억할 게 없다. "무엇을 하는 사람인지" 를 한 문장으로 먼저 말하고 근거를 붙인다.
+  "안녕하십니까" 로 연다 ("안녕하세요" 는 면접 격식에 약하다).
+  🔴 **마지막 문장은 회사·직무와 연결된 다짐이어야 한다.** 자기소개는 면접의 시작이고,
+  마지막 문장이 가장 오래 남는다 — 그 자리를 인사말에 내주지 마라. 끝맺음 인사를 붙일
+  거라면 다짐 **뒤에** 짧게 붙인다.
+- **마지막 한마디** — 🔴 **앞에서 이미 말한 소재를 반복하지 마라.** 면접 끝에 자기소개를
+  되풀이하면 인상이 나빠진다. 못 다 한 말·지원 의지를 **짧게** 담는 자리다.
+  인사말 없이 바로 시작한다.
+  🔴 **여기가 면접이 실제로 끝나는 자리다** — 면접 기회에 대한 감사를 담아 닫는다.
+  단 감사만 덩그러니 놓지 말고 기여 의지를 함께 담는다.
+  🔴 **감사 인사는 맨 끝에 둔다** — 여기가 대화를 닫는 신호다. 감사부터 하고 의지를
+  이어 말하면 끝난 줄 알았다가 다시 시작하는 인상이 된다.
+- **그 외 문항** — 인사말 없이 바로 답한다. 질문에 답하는 것이 먼저다.
+- 🔴 **자기를 낮추는 말을 쓰지 마라** — "지망생"·"부족하지만"·"미숙하지만" 류.
+  실제로 "프로덕트 디자이너 지망생입니다" 가 나왔는데, 면접에서 스스로를 지망생이라
+  부르면 준비된 사람으로 안 읽힌다.
 - 구조 — 경험·역량·실패 질문은 STAR(상황→과제→행동→결과), 의견·지원동기·역질문은
   PREP(주장→이유→사례→주장 재진술).
 - 🔴 **내용의 원천은 사용자 자료뿐이다.** 자소서·활동 기록에 없는 경험·수치·고유명사를
@@ -684,7 +731,7 @@ export class InterviewPrepAiService {
           parentQuestionId: null,
           depth: 0,
           orderIndex: mi,
-          category: main.category ?? null,
+          category: normalizeCategory(main.category),
           mustPrepare: main.must_prepare === true,
           questionText: main.question.trim(),
           suggestedAnswer: null,
@@ -885,6 +932,7 @@ export class InterviewPrepAiService {
 
     const userPrompt =
       `${ctx.userPrompt}\n\n` +
+      `# 문항 유형\n${question.category ?? '(미분류)'}\n\n` +
       `# 답변할 질문\n${question.questionText}\n\n` +
       (question.myMemo?.trim()
         ? `# 사용자가 직접 쓴 초안 (있으면 이 방향을 살려서 다듬을 것)\n\`\`\`\n${question.myMemo.trim()}\n\`\`\`\n\n`
