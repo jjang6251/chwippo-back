@@ -47,6 +47,16 @@ export type LlmErrorKind = 'provider_outage' | 'internal';
 export const PROVIDER_OUTAGE_USER_MESSAGE =
   'AI 제공사 일시 장애예요. 잠시 후 다시 시도해주세요 (코인은 차감되지 않았어요)';
 
+/**
+ * cost guard 차단 시 **사용자에게** 내려주는 문구.
+ *
+ * 🔴 내부 사유(`per-feature daily cost cap 도달 (coverletter_chat: 0.0000 / 0)`)를
+ * 그대로 노출하고 있었다. 사용자는 자기가 뭘 잘못했는지 알 수 없고, "0.0000 / 0" 은
+ * 오히려 오작동처럼 읽힌다. 상세는 `llm_call_logs.error_message` 와 admin 에만 남긴다.
+ */
+export const COST_CAP_USER_MESSAGE =
+  '오늘 AI 사용량이 한도에 도달했어요. 내일 다시 시도해 주세요 (코인은 차감되지 않았어요)';
+
 export interface LlmCallInput {
   userId: string;
   /**

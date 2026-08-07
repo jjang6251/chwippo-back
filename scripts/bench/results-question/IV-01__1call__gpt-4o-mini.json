@@ -1,0 +1,116 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "자기소개 해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "현대오토에버에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "자신의 강점 한 가지를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "자신의 약점 한 가지를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었던 경험이나 실패했던 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 경험 중 기억에 남는 사례를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "갈등이나 이견을 조율한 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "현대오토에버가 다른 회사와 차별화되는 점은 무엇이라고 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 어떤 포부를 가지고 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 하고 싶은 질문이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 하고 싶은 말이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "cs_tech",
+      "question": "주문 처리 API 응답 속도를 개선하기 위해 Redis 캐시를 도입했다고 했는데, 이 선택의 이유는 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "장애 대응 중 구조화 로깅을 도입한 이유와 그 효과에 대해 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "팀 코드 리뷰 규칙을 제안했다고 하셨는데, 어떤 문제를 해결하기 위해서였나요?",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "HTTP와 HTTPS의 차이점에 대해 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "cs_tech",
+      "question": "프로세스와 스레드의 차이를 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "본인의 프로젝트에서 가장 중요한 기술적 결정을 내린 사례에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "어떤 기술 스택을 사용했는지와 그 이유에 대해 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "프로젝트의 성공을 위해 어떤 KPI를 설정하고 관리했는지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "프로젝트 진행 중 발생한 주요 문제와 그 해결 방안에 대해 이야기해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1741,
+  "outputTokens": 595,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 9176
+}

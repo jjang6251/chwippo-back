@@ -38,16 +38,24 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
  * - preBlocked 분기 (consent 보다 우선)
  */
 /**
- * 🔴 **anthropic 경로 테스트용 feature.**
+ * 🔴 **anthropic 경로 테스트용 feature — 이제 resolver 로 강제한다.**
  *
- * 이전엔 `coverletter_draft_v2` 를 "anthropic feature" 대용으로 14곳에 흩뿌려 썼는데,
- * Phase 1 에서 그 feature 가 Terra(openai)로 옮겨가자 **30개 테스트가 한 번에 깨졌다.**
- * 테스트가 "이 feature 는 anthropic 이다" 라는 **바뀔 수 있는 사실**에 결합돼 있었던 것 —
- * 단가 만료 cron·admin 스트리밍 spec 과 같은 취약점이다.
+ * 이력이 두 번이다:
+ * 1. 원래 `coverletter_draft_v2` 를 "anthropic feature" 대용으로 14곳에 흩뿌려 썼는데,
+ *    Phase 1 에서 Terra(openai)로 옮겨가자 **30개 테스트가 한 번에 깨졌다.** 그래서 상수로 모았다.
+ * 2. 2026-08-06 면접 v2 에서 `interview_prep_session` 까지 Luna(openai)로 옮기자
+ *    **`FEATURE_MATRIX` 에 anthropic feature 가 하나도 남지 않았다.** 상수만으로는 못 버틴다.
  *
- * 상수 한 줄로 모아, 다음에 모델이 또 바뀌면 **여기만 고치면 된다.**
+ * 그래서 **feature 를 고르는 대신 resolver mock 이 provider 를 강제한다** (아래 providers 배열).
+ * 이 spec 이 검증하는 건 "어떤 feature 가 anthropic 인가"(바뀌는 사실)가 아니라
+ * **"provider 가 anthropic 일 때 LlmService 가 어떻게 동작하는가"**(바뀌지 않는 계약)이기 때문이다.
+ * 이제 프로덕션에서 모든 feature 가 openai 로 가도 이 테스트들은 안 깨진다.
+ *
+ * ⚠️ 프로덕션에서 anthropic 은 **fallback 전용**이 됐다 (`getFallbackConfig`: openai → haiku).
+ *    admin 이 화면에서 Claude 모델을 고르면 다시 primary 가 될 수 있으므로 경로는 살아 있다.
  */
 const ANTHROPIC_FEATURE = 'interview_prep_session' as const;
+const ANTHROPIC_TEST_MODEL = 'claude-haiku-4-5-20251001';
 
 describe('LlmService', () => {
   let service: LlmService;
@@ -218,11 +226,24 @@ describe('LlmService', () => {
         { provide: ProviderOutageAlertService, useValue: outageAlert },
         // G-1 — 모델 해석이 서비스로 분리됐다. spec 에서는 DB 행이 없는 상태를
         //   재현한다 → env → 코드 기본값 폴백 (= 이 spec 들의 기존 전제 그대로).
+        //
+        // 🔴 단 `ANTHROPIC_FEATURE` 만은 **provider 를 강제**한다. FEATURE_MATRIX 에
+        //   anthropic feature 가 더는 없어서, 매트릭스를 그대로 쓰면 anthropic 경로가
+        //   통째로 테스트 밖으로 나간다 (위 상수 주석 참조).
+        //   admin 이 Claude 모델을 고른 상태 = DB 행이 anthropic 인 상태를 재현하는 것이기도 하다.
         {
           provide: ModelConfigService,
           useValue: {
             resolve: (f: LlmFeature) =>
-              Promise.resolve(getModelConfig(f, config)),
+              Promise.resolve(
+                f === ANTHROPIC_FEATURE
+                  ? {
+                      ...getModelConfig(f, config),
+                      provider: 'anthropic' as const,
+                      model: ANTHROPIC_TEST_MODEL,
+                    }
+                  : getModelConfig(f, config),
+              ),
           },
         },
       ],
@@ -377,7 +398,7 @@ describe('LlmService', () => {
       expect(anthropic.complete).not.toHaveBeenCalled();
     });
 
-    it('coverletter_draft_v2 → anthropic provider 호출 (light claude-haiku-4-5)', async () => {
+    it('provider=anthropic 인 feature → anthropic provider 호출 (openai 미호출)', async () => {
       anthropic.complete.mockResolvedValue({
         text: '자소서 초안',
         promptTokens: 100,
@@ -391,7 +412,7 @@ describe('LlmService', () => {
         userPrompt: 'u',
       });
       expect(anthropic.complete).toHaveBeenCalledWith(
-        expect.objectContaining({ model: 'claude-haiku-4-5-20251001' }),
+        expect.objectContaining({ model: ANTHROPIC_TEST_MODEL }),
       );
       expect(openai.complete).not.toHaveBeenCalled();
       expect(logRepo.save).toHaveBeenCalledWith(
@@ -403,7 +424,10 @@ describe('LlmService', () => {
       );
     });
 
-    it('interview_prep_session → openai light gpt-4o-mini (모든 feature light 강제)', async () => {
+    // `note_summary` 를 쓰는 이유 — FEATURE_MATRIX 에서 openai + gpt-4o-mini 인 feature 중
+    // 모델 교체 대상이 아니었던 것. 여기 assert 는 매트릭스 값을 그대로 확인하는 것이라
+    // feature 를 바꾸면 값도 함께 바꿔야 한다.
+    it('provider=openai 인 feature → openai provider 호출 (매트릭스 모델 그대로)', async () => {
       openai.complete.mockResolvedValue({
         text: 'q',
         promptTokens: 50,
@@ -412,13 +436,14 @@ describe('LlmService', () => {
       });
       await service.call({
         userId: 'u-1',
-        feature: 'interview_prep_session',
+        feature: 'note_summary',
         systemPrompt: 's',
         userPrompt: 'u',
       });
       expect(openai.complete).toHaveBeenCalledWith(
         expect.objectContaining({ model: 'gpt-4o-mini' }),
       );
+      expect(anthropic.complete).not.toHaveBeenCalled();
     });
 
     it('provider isAvailable=false → status=error ("..._API_KEY 미설정")', async () => {

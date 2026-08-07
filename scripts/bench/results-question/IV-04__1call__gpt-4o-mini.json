@@ -1,0 +1,103 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "자기소개 해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "무신사에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점 하나를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 하나를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었던 경험에 대해 이야기해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "갈등이나 이견을 조율한 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "무신사 외에 다른 회사가 아닌 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 어떤 사람으로 성장하고 싶으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 하고 싶은 질문이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 하고 싶은 말이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "자소서에 언급한 사용자 인터뷰를 통해 얻은 인사이트에 대해 더 자세히 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "사이즈 정보의 우선순위를 바꾼 결과에 대해 구체적으로 말씀해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "디자인 시스템을 구축하면서 겪은 어려움은 무엇이었나요?",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "24개의 컴포넌트를 정리하면서 어떤 기준으로 우선순위를 정했나요?",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "디자인 시스템이 없는 상황에서의 디자인 일관성 유지 방법은 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "business_reasoning",
+      "question": "디자인 개선이 매출에 미치는 영향을 어떻게 분석하나요?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1601,
+  "outputTokens": 482,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 6044
+}

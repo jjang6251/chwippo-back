@@ -28,8 +28,27 @@ export interface QuestionNode {
   parentQuestionId: string | null;
   depth: number;
   orderIndex: number;
+  /**
+   * 질문 유형 (`INTERVIEW_CATEGORIES`). 화면이 문항마다 태그로 보여준다.
+   *
+   * 🔴 저장은 되는데 **응답에서 빠져 있었다** (2026-08-07 발견). 프론트는
+   * `CATEGORY_LABEL[question.category]` 로 칩을 그리는데 값이 없으니 조건부 렌더가
+   * 항상 거짓이라 **태그가 한 번도 보인 적이 없다.** 컬럼 select 누락이었다.
+   */
+  category: string | null;
+  /** 우선 준비 대상 (v2.1) — 20문항 중 먼저 할 5~7개 */
+  mustPrepare: boolean;
+  /** 꼬리질문이 무엇을 파고들었는지 (v2.1). 메인은 null */
+  followupBasis: string | null;
   questionText: string;
   suggestedAnswer: string | null;
+  /**
+   * AI 답변의 자료 부족 사유 (v2.2). null = 충분.
+   *
+   * 🔴 이건 **답변 본문에 들어가면 안 되는 내용**이라 필드를 나눴다 — `suggestedAnswer` 는
+   * 면접장에서 그대로 말할 문장이고, 여기는 사용자에게 하는 안내다. 화면이 배지로 그린다.
+   */
+  materialGap: string | null;
   sourceLogIds: string[];
   myMemo: string | null;
   createdAt: Date;
@@ -64,8 +83,12 @@ export class InterviewPrepQuestionsService {
       parent_question_id: string | null;
       depth: number;
       order_index: number;
+      category: string | null;
+      must_prepare: boolean;
+      followup_basis: string | null;
       question_text: string;
       suggested_answer: string | null;
+      material_gap: string | null;
       source_log_ids: string[];
       my_memo: string | null;
       created_at: Date;
@@ -83,7 +106,8 @@ export class InterviewPrepQuestionsService {
         INNER JOIN tree t ON q.parent_question_id = t.id
       )
       SELECT id, session_id, parent_question_id, depth, order_index,
-             question_text, suggested_answer, source_log_ids, my_memo,
+             category, must_prepare, followup_basis,
+             question_text, suggested_answer, material_gap, source_log_ids, my_memo,
              created_at, updated_at
       FROM tree
       ORDER BY depth ASC, order_index ASC, created_at ASC
@@ -100,8 +124,12 @@ export class InterviewPrepQuestionsService {
         parentQuestionId: r.parent_question_id,
         depth: r.depth,
         orderIndex: r.order_index,
+        category: r.category,
+        mustPrepare: r.must_prepare === true,
+        followupBasis: r.followup_basis,
         questionText: r.question_text,
         suggestedAnswer: r.suggested_answer,
+        materialGap: r.material_gap,
         sourceLogIds: Array.isArray(r.source_log_ids) ? r.source_log_ids : [],
         myMemo: r.my_memo,
         createdAt: r.created_at,
@@ -180,8 +208,12 @@ export class InterviewPrepQuestionsService {
       parentQuestionId: q.parentQuestionId,
       depth: q.depth,
       orderIndex: q.orderIndex,
+      category: q.category,
+      mustPrepare: q.mustPrepare,
+      followupBasis: q.followupBasis,
       questionText: q.questionText,
       suggestedAnswer: q.suggestedAnswer,
+      materialGap: q.materialGap,
       sourceLogIds: Array.isArray(q.sourceLogIds) ? q.sourceLogIds : [],
       myMemo: q.myMemo,
       createdAt: q.createdAt,

@@ -1,0 +1,110 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "자기소개 해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "무신사에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점은 무엇이라고 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점은 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었던 경험이나 실패했던 경험에 대해 이야기해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 경험에 대해 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "갈등이나 이견을 조율했던 경험이 있다면 이야기해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "디자이너로서 가장 중요하게 생각하는 가치관은 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "무신사의 핵심 가치와 비전에 대해 어떻게 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "왜 다른 회사가 아니라 무신사인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 어떤 디자이너가 되고 싶으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관님께 하고 싶은 질문이 있으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 하고 싶은 말이 있으신가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "앱 상품 상세 화면 개편 과정에서 어떤 점을 가장 중요하게 생각하셨나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "디자인 시스템을 정리하는 과정에서의 어려움과 극복 방법에 대해 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "사용자 인터뷰를 통해 어떤 인사이트를 얻으셨나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "컴포넌트를 정리한 후 팀원들의 반응은 어땠나요?",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "장바구니 전환율을 올리기 위해 어떤 추가적인 노력을 하셨나요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1707,
+  "outputTokens": 520,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 6608
+}

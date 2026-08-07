@@ -1,0 +1,86 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "프로덕트 디자이너로서 본인을 소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "무신사의 프로덕트 디자이너 직무에 지원한 동기는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "프로덕트 디자이너로 일할 때 본인의 가장 큰 강점은 무엇인가요? 실제 경험을 들어 설명해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "프로덕트 디자이너로서 보완해야 할 약점은 무엇이며, 이를 개선하기 위해 어떤 노력을 해왔나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "디자인 업무를 진행하면서 기대한 결과를 얻지 못했거나 가장 어려웠던 경험은 무엇이며, 그 경험에서 무엇을 배웠나요?",
+      "source_log_ids": [
+        "l1",
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "다른 직군과 협업해 제품이나 화면을 개선한 경험을 설명해 주세요. 본인은 어떤 역할을 맡았나요?",
+      "source_log_ids": [
+        "l1",
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "사용자 인터뷰 결과를 바탕으로 앱 상품 상세 화면의 정보 순서를 바꿨다고 했는데, 이 과정에서 팀 내 이견이 있었다면 어떻게 조율했을까요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "executive",
+      "question": "프로덕트 디자이너가 사용자 요구와 사업 목표가 충돌하는 상황에서 가장 중요하게 지켜야 할 원칙은 무엇이라고 생각하나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "무신사와 같은 패션 플랫폼에서 프로덕트 디자이너로 일할 때, 조직의 방식과 본인의 업무 방식이 다르다면 어떻게 적응하고 기여하겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "왜 다른 회사가 아니라 무신사에서 프로덕트 디자이너로 일하고 싶으신가요? 무신사가 속한 패션 플랫폼 산업의 특성과 연결해 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "무신사에 입사한다면 어떤 프로덕트 디자이너로 성장하고 싶으며, 입사 후 가장 먼저 어떤 기여를 하고 싶나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "이번 면접을 통해 면접관님께 궁금한 점을 질문해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 본인을 꼭 채용해야 하는 이유와 함께 하고 싶은 말을 말씀해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1703,
+  "outputTokens": 772,
+  "stopReason": "stop",
+  "thinkingTokens": 170,
+  "latencyMs": 5387
+}

@@ -104,6 +104,15 @@ export const envValidationSchema = Joi.object({
    * (DB `feature_model_config` 가 이보다 우선 — 여기는 3단 해석의 중간 층)
    */
   OPENAI_MODEL_COVERLETTER: Joi.string().default('gpt-5.6-terra'),
+  /**
+   * 면접 prep v2 (2026-08-07) — 세션 질문 생성 + 예상 답변 전용.
+   *
+   * 🔴 **키를 여기 안 적으면 노브가 조용히 죽는다.** `model-config.ts` 는 이 키를 읽는데
+   * 등록이 없으면 `config.get` 이 undefined 라 `?? defaultModel` 로 흘러간다 — 값을 넣어도
+   * 아무 일이 안 일어나는데 에러도 안 난다. 기본값은 코드의 `defaultModel` 과 같아야 한다.
+   * (DB `feature_model_config` 가 이보다 우선 — 여기는 3단 해석의 중간 층)
+   */
+  OPENAI_MODEL_INTERVIEW: Joi.string().default('gpt-5.6-luna'),
 
   // Anthropic (PR 0 — 자소서 등 한국어 중심 feature 용)
   // dev 에선 optional (key 없으면 isAvailable=false 로 fallback). prod 도 optional —

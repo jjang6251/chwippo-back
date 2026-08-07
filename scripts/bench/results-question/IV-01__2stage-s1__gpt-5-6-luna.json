@@ -1,0 +1,80 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "백엔드 개발자로서 본인을 소개해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "현대오토에버 백엔드 직무에 지원한 동기를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인의 강점 한 가지를 말씀해 주시고, 백엔드 개발 업무에서 어떻게 발휘되었는지 설명해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l3"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지를 말씀해 주시고, 이를 개선하기 위해 어떤 노력을 하고 있는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "인턴 기간 중 장애 대응 과정에서 로그가 없어 원인을 3시간 동안 찾지 못했던 경험을 말씀해 주시고, 그 경험에서 무엇을 배우셨는지 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "팀에서 다른 구성원들과 협업해 성과를 낸 경험을 말씀해 주세요. 본인은 어떤 역할을 맡았습니까?",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "팀 코드 리뷰 규칙을 도입하는 과정에서 팀원들의 의견이나 기존 방식과 이견이 있었다면, 이를 어떻게 조율했는지 말씀해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "executive",
+      "question": "백엔드 개발자로서 업무를 수행할 때 본인이 가장 중요하게 생각하는 가치와 그 이유를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "왜 다른 회사가 아니라 현대오토에버를 선택했는지, 회사와 산업에 대한 관심을 바탕으로 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "현대오토에버에 입사한다면 어떤 백엔드 개발자로 성장하고 싶은지, 입사 후 포부를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "현대오토에버와 백엔드 직무에 대해 면접관에게 궁금한 점을 질문해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 본인을 꼭 채용해야 하는 이유나 면접관에게 하고 싶은 말을 말씀해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1843,
+  "outputTokens": 756,
+  "stopReason": "stop",
+  "thinkingTokens": 236,
+  "latencyMs": 5378
+}

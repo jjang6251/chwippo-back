@@ -238,6 +238,74 @@ describe('InterviewPrepQuestionsService', () => {
   });
 
   // ── findOwnedRaw ──
+  /**
+   * 🔴 2026-08-07 회귀 — `category` 가 **저장은 되는데 응답에서 빠져 있었다.**
+   *    프론트는 `CATEGORY_LABEL[question.category]` 로 태그 칩을 그리는데 값이 없어
+   *    조건부 렌더가 항상 거짓이었다 — **태그가 한 번도 보인 적이 없다.**
+   *    기존 spec 이 이걸 못 잡은 이유는 픽스처에 그 컬럼 자체가 없어서다
+   *    (없는 필드는 서버가 담든 말든 똑같이 통과한다).
+   */
+  describe('응답 필드 — 화면이 쓰는 값이 실제로 실리는가', () => {
+    it('🔴 category · mustPrepare 가 응답에 담긴다', async () => {
+      dataSource.query.mockResolvedValueOnce([
+        {
+          id: 'q-1',
+          session_id: SESSION_ID,
+          parent_question_id: null,
+          depth: 0,
+          order_index: 0,
+          category: 'coverletter_based',
+          must_prepare: true,
+          followup_basis: 'my_memo',
+          question_text: 'q',
+          suggested_answer: null,
+          source_log_ids: [],
+          my_memo: null,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+      const tree = await service.listTreeBySession(USER_ID, SESSION_ID);
+      expect(tree[0].category).toBe('coverletter_based');
+      expect(tree[0].mustPrepare).toBe(true);
+      expect(tree[0].followupBasis).toBe('my_memo');
+    });
+
+    it('🔴 SQL 이 두 컬럼을 실제로 select 한다 — 매퍼만 고치면 항상 undefined 다', async () => {
+      dataSource.query.mockResolvedValueOnce([]);
+      await service.listTreeBySession(USER_ID, SESSION_ID);
+      const sql = String(dataSource.query.mock.calls[0][0]);
+      expect(sql).toContain('category');
+      expect(sql).toContain('must_prepare');
+      expect(sql).toContain('followup_basis');
+    });
+
+    it('옛 질문(컬럼 null·false) 도 안 깨진다', async () => {
+      dataSource.query.mockResolvedValueOnce([
+        {
+          id: 'q-old',
+          session_id: SESSION_ID,
+          parent_question_id: null,
+          depth: 0,
+          order_index: 0,
+          category: null,
+          must_prepare: false,
+          followup_basis: null,
+          question_text: 'q',
+          suggested_answer: null,
+          source_log_ids: [],
+          my_memo: null,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+      const tree = await service.listTreeBySession(USER_ID, SESSION_ID);
+      expect(tree[0].category).toBeNull();
+      expect(tree[0].mustPrepare).toBe(false);
+      expect(tree[0].followupBasis).toBeNull();
+    });
+  });
+
   describe('findOwnedRaw', () => {
     it('정상: 본인 question 반환', async () => {
       qQb.getOne.mockResolvedValueOnce(makeQuestionEntity());

@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import {
+  COST_CAP_USER_MESSAGE,
   LlmService,
   PROVIDER_OUTAGE_USER_MESSAGE,
   type LlmCallBlocked,
@@ -20,6 +21,7 @@ import { Application } from './application.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { CoverletterSourceRefsService } from './coverletter-source-refs.service';
 import { buildJobPostingBlock } from './coverletter-context-builder';
+import { assertJobTextPresent, resolveJobText } from './job-text';
 
 /**
  * A1 Phase 2 — AI 제출 전 점검 (coverletter_feedback 실구현).
@@ -271,8 +273,13 @@ export class AiCoverletterFeedbackService {
     //    → companyName 은 appRepo 로 직접 조회. cl.applicationId 는 컬럼이라 항상 존재.
     const app = await this.appRepo.findOne({
       where: { id: cl.applicationId, userId },
-      select: ['id', 'companyName', 'jobPosting'],
+      select: ['id', 'companyName', 'jobPosting', 'jobCategory', 'jobTitle'],
     });
+    // 직무 게이트 — 점검은 "이 문항이 직무와 맞나" 를 봐야 하는데 직무를 모르면 판단 불가.
+    //   🔴 app 이 null 인 경우(soft-delete 등)는 기존처럼 관대하게 넘긴다 — 여기서 막으면
+    //   점검 자체가 불가능해지고, 소유권은 assertOwnsCoverletter 가 이미 봤다.
+    if (app) assertJobTextPresent(app);
+
     const cached = app
       ? await this.companyResearch
           .getCachedForApplication(userId, app.id)
@@ -315,6 +322,9 @@ export class AiCoverletterFeedbackService {
         ? `분량이 제한의 ${shortfallPct}% 에 그친다. 어떤 경험·수치를 보강하면 좋을지 structure 나 vague 의 advice 로 구체적으로 제안하라.`
         : null,
       app?.companyName ? `# 지원 회사\n${app.companyName}` : null,
+      // 🔴 직무가 프롬프트에 아예 없었다 (2026-08-06 발견) — "이 문항이 직무와 맞나" 를
+      //   판단할 근거가 없는 상태로 점검하고 있었다. 규칙은 자소서·면접 공용(`resolveJobText`).
+      app && resolveJobText(app) ? `# 지원 직무\n${resolveJobText(app)}` : null,
       // 공고 요건 (jobposting-parse) — 3경로 공용 빌더. company_mismatch·스펙 나열 지적 근거.
       buildJobPostingBlock(app?.jobPosting ?? null) || null,
       research?.businessSummary
@@ -410,8 +420,11 @@ export class AiCoverletterFeedbackService {
         return 'AI 이용 동의가 필요해요. 설정에서 동의 후 다시 시도해 주세요.';
       case 'blocked_input_cap':
         return '내용이 너무 길어요. 답변을 조금 줄여서 다시 시도해 주세요.';
+      // "잠시 후" 로 뭉치면 **내일까지 안 풀린다**는 걸 못 알린다 (재시도만 반복시킴)
+      case 'blocked_cost_quota':
+        return COST_CAP_USER_MESSAGE;
       default:
-        // blocked_moderation · blocked_cost_quota · 기타
+        // blocked_moderation · 기타
         return '점검이 차단됐어요. 잠시 후 다시 시도해 주세요.';
     }
   }

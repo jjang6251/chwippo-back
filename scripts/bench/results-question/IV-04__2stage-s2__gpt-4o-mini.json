@@ -1,0 +1,68 @@
+{
+  "questions": [
+    {
+      "category": "coverletter_based",
+      "question": "자신의 디자인 철학이나 접근 방식을 간단히 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "프로덕트 디자이너로서 가장 중요하게 생각하는 요소는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "이전에 진행한 프로젝트 중에서 가장 기억에 남는 경험에 대해 말씀해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "사용자 인터뷰를 통해 얻은 인사이트가 디자인 결정에 어떻게 영향을 미쳤는지 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "디자인 시스템을 구축하면서 겪었던 어려움과 그 해결 과정에 대해 말씀해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "프로덕트 디자인에서 UX/UI의 차이점은 무엇이라고 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "business_reasoning",
+      "question": "디자인 변경이 비즈니스 성과에 미친 영향을 수치적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "culture_fit",
+      "question": "무신사의 핵심 가치인 '고객 중심'을 디자인 작업에 어떻게 적용할 수 있다고 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "디자인이 기업의 비전과 목표에 어떻게 기여할 수 있다고 생각하시나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "무신사에서 프로덕트 디자이너로 일하면서 어떤 성장을 이루고 싶으신가요?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1682,
+  "outputTokens": 361,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 5130
+}

@@ -19,6 +19,7 @@
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { ActivityReflection } from '../activity/entities/activity-reflection.entity';
 import type { JobPosting } from './application.entity';
+import { resolveJobText, type JobTextSource } from './job-text';
 
 // ── 공고 요건 블록 (jobposting-parse) — 생성·chat·심층점검 3경로 공용 빌더 ──
 
@@ -38,8 +39,17 @@ import type { JobPosting } from './application.entity';
  *
  * jobPosting 이 null 이거나 6필드가 전부 비어 있으면 빈 문자열(블록 미주입).
  */
-export function buildJobPostingBlock(jobPosting: JobPosting | null): string {
-  if (!jobPosting) return '';
+/**
+ * 공고 요건의 **사실 나열**만 뽑는다 (활용 규칙은 뺀다).
+ *
+ * 자소서와 면접이 같은 `JobPosting` 을 쓰지만 **활용 규칙은 정반대에 가깝다** —
+ * 자소서는 "본문에 나열하지 마라(배치 신호로만)" 이고, 면접은 "이 요건으로 질문을 만들어라" 다.
+ * 그래서 규칙은 각자 쓰고, **필드 목록만 공유**한다. `JobPosting` 에 필드가 늘면 여기만 고치면 된다.
+ *
+ * 빈 배열이면 호출부가 블록 자체를 주입하지 않는다.
+ */
+export function jobPostingFactLines(jobPosting: JobPosting | null): string[] {
+  if (!jobPosting) return [];
   const lines: string[] = [];
   const push = (label: string, arr: string[] | undefined) => {
     const items = (arr ?? []).map((s) => s.trim()).filter(Boolean);
@@ -52,6 +62,11 @@ export function buildJobPostingBlock(jobPosting: JobPosting | null): string {
   push('기술 스택', jobPosting.techStack);
   push('정량 스펙(자격증·어학)', jobPosting.qualifications);
   push('핵심 키워드', jobPosting.keywords);
+  return lines;
+}
+
+export function buildJobPostingBlock(jobPosting: JobPosting | null): string {
+  const lines = jobPostingFactLines(jobPosting);
 
   // 6필드가 전부 비어 있으면 블록 미주입
   if (lines.length === 0) return '';
@@ -106,9 +121,8 @@ export const COVERLETTER_CONTEXT_LIMITS = {
 
 // ── 입력 타입 ──
 
-export interface ApplicationContextInput {
+export interface ApplicationContextInput extends JobTextSource {
   companyName: string;
-  jobCategory: string | null;
 }
 
 /** PII 제외된 myinfo dump — 호출자 (MyinfoService) 가 user-profile (이름·전화·이메일) 빼고 전달 */
@@ -358,7 +372,10 @@ export function buildCoverletterContext(
   if (input.charLimit) headerParts.push(`(글자수 제한: ${input.charLimit}자)`);
   headerParts.push('');
   headerParts.push(
-    `# 지원 정보\n- 회사: ${input.application.companyName}\n- 직무: ${input.application.jobCategory ?? '미지정'}\n- 문항 분류: ${input.category ?? '기타'}`,
+    // 🔴 직무는 `resolveJobText` 단일 규칙 — jobTitle("백엔드 개발자") 우선.
+    //   `jobCategory` 는 사용자들이 업종 태그로 쓴다 (금융권 지원 개발자가 '금융').
+    //   면접과 같은 규칙이어야 같은 카드가 두 기능에서 다른 직무로 잡히지 않는다.
+    `# 지원 정보\n- 회사: ${input.application.companyName}\n- 직무: ${resolveJobText(input.application) ?? '미지정'}\n- 문항 분류: ${input.category ?? '기타'}`,
   );
   const header = headerParts.join('\n');
   let usedTokens = estimateTokens(header);

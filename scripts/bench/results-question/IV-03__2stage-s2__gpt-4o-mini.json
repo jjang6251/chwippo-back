@@ -1,0 +1,58 @@
+{
+  "questions": [
+    {
+      "category": "cs_tech",
+      "question": "결제 정산 배치를 40분에서 5분으로 줄였다고 했는데, 인덱스 2개를 고른 판단 기준은 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "동시 요청 시 중복 결제 문제를 해결하기 위해 멱등키를 도입했다고 하셨는데, 이 과정에서 어떤 어려움이 있었나요?",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "cs_tech",
+      "question": "프로세스와 스레드의 차이를 설명해 주세요. 그리고 결제 시스템에서 이 차이가 왜 중요한가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "cs_tech",
+      "question": "서킷 브레이커를 도입한 경험이 있다고 하셨는데, 이 기술을 선택한 이유와 효과를 설명해 주세요.",
+      "source_log_ids": [
+        "l4"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "결제 정산 배치의 성능 개선 외에, 금융 도메인에서 중요하다고 생각하는 기술적 요소는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "신입 온보딩 과정에서 문서 정리를 맡았다고 하셨는데, 이 경험을 통해 어떤 기술적 혹은 비기술적 성장을 이루었나요?",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "coverletter_based",
+      "question": "동시성 테스트를 진행하면서 어떤 테스트 도구나 프레임워크를 사용했는지, 그 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "coverletter_based",
+      "question": "결제 시스템의 성능을 개선하기 위해 추가로 어떤 기술적 접근이 필요하다고 생각하나요?",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 2079,
+  "outputTokens": 378,
+  "stopReason": "stop",
+  "thinkingTokens": 0,
+  "latencyMs": 5703
+}

@@ -1,0 +1,75 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "간단한 자기소개와 함께 프로덕트 디자이너로서 본인을 가장 잘 보여주는 강점을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "motivation",
+      "question": "프로덕트 디자이너 직무에 지원하게 된 계기와, 이 직무를 통해 이루고 싶은 목표를 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "업무를 수행할 때 발휘되는 본인의 가장 큰 강점 한 가지를 구체적인 사례와 함께 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "personality",
+      "question": "본인이 인식하는 약점 한 가지와, 이를 보완하기 위해 어떤 노력을 하고 있는지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "가장 힘들었거나 기대한 결과를 얻지 못했던 경험을 말씀해 주시고, 그 과정에서 무엇을 배웠는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "다양한 직군의 구성원과 협업해 성과를 만든 경험을 말씀해 주세요. 본인의 역할과 기여를 중심으로 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "collaboration",
+      "question": "협업 중 디자인 방향이나 우선순위를 두고 이견이 발생했던 경험이 있나요? 이를 어떻게 조율했는지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "디자이너의 판단과 비즈니스 목표가 충돌할 때, 어떤 원칙과 기준으로 의사결정을 내리시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "culture_fit",
+      "question": "빠르게 변화하는 환경에서 기존 방식에 문제가 있다고 판단했을 때, 이를 개선하기 위해 주변을 어떻게 설득하고 실행하시겠습니까?",
+      "source_log_ids": []
+    },
+    {
+      "category": "company_industry",
+      "question": "다른 회사가 아니라 무신사에 지원한 이유는 무엇인가요? 패션 플랫폼 환경에서 프로덕트 디자이너가 만들어야 할 고객 가치를 함께 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "입사 후 프로덕트 디자이너로서 어떤 문제를 해결하고 싶은지, 그리고 장기적으로 어떤 디자이너가 되고 싶은지 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "reverse_question",
+      "question": "면접관에게 질문하고 싶은 내용이 있으면 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로 면접관에게 꼭 전하고 싶은 말이 있으면 말씀해 주세요.",
+      "source_log_ids": []
+    }
+  ],
+  "ok": true,
+  "inputTokens": 1703,
+  "outputTokens": 717,
+  "stopReason": "stop",
+  "thinkingTokens": 145,
+  "latencyMs": 7556
+}

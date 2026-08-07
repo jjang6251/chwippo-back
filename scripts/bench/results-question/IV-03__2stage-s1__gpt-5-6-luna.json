@@ -1,0 +1,104 @@
+{
+  "questions": [
+    {
+      "category": "self_intro",
+      "question": "백엔드 개발자로서 본인을 잘 보여줄 수 있는 경험과 강점을 중심으로 자기소개해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l4"
+      ]
+    },
+    {
+      "category": "motivation",
+      "question": "결제 정산 배치 시간을 40분에서 5분으로 줄이며 느린 것을 빠르게 만드는 일에 재미를 느꼈다고 했는데, 토스 백엔드 직무에 지원한 구체적인 동기는 무엇인가요?",
+      "source_log_ids": [
+        "l1"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "본인의 가장 큰 강점 한 가지를 말씀해 주시고, 그 강점이 백엔드 개발 업무에서 발휘된 사례를 설명해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l4"
+      ]
+    },
+    {
+      "category": "personality",
+      "question": "본인의 약점 한 가지를 말씀해 주시고, 이를 개선하기 위해 실제로 어떤 노력을 해왔는지 설명해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "failure",
+      "question": "동시 요청 시 중복 결제가 발생하는 버그를 배포 후에 발견한 경험이 가장 큰 실패라고 했는데, 당시 상황과 대응 과정, 그리고 같은 문제가 다시 발생하지 않도록 바꾼 점을 설명해 주세요.",
+      "source_log_ids": [
+        "l2"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "신입 2명의 온보딩을 맡아 문서를 정리했다고 했는데, 협업 과정에서 본인이 맡은 역할과 팀에 기여한 부분을 구체적으로 설명해 주세요.",
+      "source_log_ids": [
+        "l3"
+      ]
+    },
+    {
+      "category": "collaboration",
+      "question": "팀원과 기술적 의견이 달랐거나 업무 방향에 이견이 있었던 상황에서, 이를 어떻게 조율했는지 경험을 말씀해 주세요.",
+      "source_log_ids": []
+    },
+    {
+      "category": "executive",
+      "question": "금융 서비스를 개발할 때 속도와 정확성이 충돌한다면, 어떤 기준으로 우선순위를 판단하시겠습니까?",
+      "source_log_ids": [
+        "l1",
+        "l2"
+      ]
+    },
+    {
+      "category": "culture_fit",
+      "question": "토스는 ‘자율과 책임’, ‘문제 정의부터 하는 사람’을 핵심 가치로 두고 있습니다. 본인의 경험 중 문제를 스스로 정의하고 책임 있게 해결한 사례를 설명해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l4"
+      ]
+    },
+    {
+      "category": "company_industry",
+      "question": "토스는 송금·결제·증권·보험을 아우르는 금융 플랫폼으로서 하나의 앱에서 금융 생활 전반을 처리할 수 있도록 하고 있습니다. 다른 회사가 아니라 토스에서 백엔드 개발자로 일하고 싶은 이유는 무엇인가요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "aspiration",
+      "question": "토스에 입사한다면 백엔드 개발자로서 어떤 문제를 해결하는 사람이 되고 싶은지, 입사 후 포부를 말씀해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l4"
+      ]
+    },
+    {
+      "category": "reverse_question",
+      "question": "이번 면접을 통해 토스와 백엔드 직무에 대해 면접관에게 질문하고 싶은 점이 있나요?",
+      "source_log_ids": []
+    },
+    {
+      "category": "closing_remark",
+      "question": "마지막으로, 토스 백엔드 개발자로서 본인을 꼭 뽑아야 하는 이유와 함께 하고 싶은 말을 말씀해 주세요.",
+      "source_log_ids": [
+        "l1",
+        "l2",
+        "l4"
+      ]
+    }
+  ],
+  "ok": true,
+  "inputTokens": 2100,
+  "outputTokens": 843,
+  "stopReason": "stop",
+  "thinkingTokens": 108,
+  "latencyMs": 5010
+}

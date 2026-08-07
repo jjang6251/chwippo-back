@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { envValidationSchema } from '../config/env.validation';
 import { ActiveLlmFeature, LlmFeature } from './entities/llm-call-log.entity';
 import { getFallbackConfig, getModelConfig } from './model-config';
 
@@ -54,11 +55,24 @@ describe('model-config FEATURE_MATRIX', () => {
       maxOut: 300,
     },
     interview_prep_session: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      // v2 (2026-08-06) — 질문만 생성. 벤치로 확정 (run-question-bench.ts, 36콜·264원):
+      //   자료 밀착도 luna 68% / terra 57% / 4o-mini 16%, 원가 2.8 / 24.4 / 0.9원.
+      //   4o-mini 는 원가가 1/3 인데도 밀착도로 탈락했다 (검색형 일반 질문을 낸다).
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
       maxIn: 16_000,
-      // D0 — 7,000 에서 상향. dev 실측상 cap 에 정확히 도달(=잘림)한 호출이 있었다.
-      maxOut: 12_000,
+      // 답변을 안 만들어 출력이 1/5 로 줄었다 (12,000 → 4,000).
+      // 벤치 실측 최대 약 1,900 토큰 + luna 추론 몫(164~285) 감안한 2배 여유.
+      maxOut: 4_000,
+    },
+    interview_prep_answer: {
+      // v2 — 세션과 같은 모델로 통일 (문체 일관성). 원가는 호출당 1원 안팎이라 판단 근거가 못 된다.
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      maxIn: 16_000,
+      // 자기소개 500자 ≈ 273 토큰 + luna 추론 몫(실측 164~285) + JSON 구조.
+      // 🔴 줄이면 추론이 예산을 먹고 본문이 잘린다 (자소서 벤치 Sonnet 5 사례).
+      maxOut: 2_000,
     },
     interview_prep_followup: {
       provider: 'openai',
@@ -144,7 +158,17 @@ describe('model-config FEATURE_MATRIX', () => {
 
   describe('getFallbackConfig — 교차 provider 전환', () => {
     it('anthropic → openai(gpt-4o-mini) 로 전환하되 cap·temperature 는 유지', () => {
-      const primary = getModelConfig('interview_prep_session', config);
+      // 🔴 **FEATURE_MATRIX 에 anthropic primary 가 더는 없다** — 2026-08-06 면접 v2 에서
+      //   마지막 하나(`interview_prep_session`)가 Luna(openai)로 옮겨갔다.
+      //   그래서 매트릭스에서 꺼내지 않고 anthropic primary 를 **직접 구성**한다.
+      //   이 테스트가 검증하는 건 "어떤 feature 가 anthropic 인가"(바뀌는 사실)가 아니라
+      //   "provider=anthropic 일 때 fallback 이 어떻게 뒤집히는가"(계약)이므로 이쪽이 정확하다.
+      //   admin 이 화면에서 Claude 모델을 고르면 이 상태가 실제로 만들어진다.
+      const primary = {
+        ...getModelConfig('interview_prep_session', config),
+        provider: 'anthropic' as const,
+        model: 'claude-haiku-4-5',
+      };
       const fb = getFallbackConfig(primary, config);
 
       expect(fb?.provider).toBe('openai');
@@ -233,8 +257,63 @@ const EXPECTED_KEYS: Record<ActiveLlmFeature, true> = {
   coverletter_chat: true,
   interview_prep_session: true,
   interview_prep_followup: true,
+  interview_prep_answer: true,
   jobposting_parse: true,
 };
+
+/**
+ * 🔴 **env 노브 드리프트 가드** (2026-08-07 QA 발견).
+ *
+ * `interview_prep_session`·`interview_prep_answer` 가 `OPENAI_MODEL_INTERVIEW` 를 읽는데
+ * 그 키가 `env.validation.ts`·`.env.example`·`deployment.md` **어디에도 없었다.**
+ * `?? defaultModel` 폴백이 있어서 크래시도 경고도 안 나고, 값을 넣어도 아무 일이 안 일어나는
+ * **죽은 노브**가 됐다. 다른 3개 키는 전부 등록돼 있어서 이 하나만 조용히 빠진 것도 못 봤다.
+ *
+ * feature 를 추가하면서 새 env 키를 쓰는 사람이 등록을 빼먹으면 여기서 깨진다.
+ * (한 키만 콕 집어 검사하면 **다음 feature 가 또 같은 구멍을 판다** — 전수로 둔다)
+ */
+describe('modelEnvKey ↔ env 스키마 정합', () => {
+  const config = new ConfigService({});
+  const schemaKeys = new Set(
+    Object.keys(
+      (envValidationSchema.describe() as { keys: Record<string, unknown> })
+        .keys,
+    ),
+  );
+
+  it.each(Object.keys(EXPECTED_KEYS) as ActiveLlmFeature[])(
+    '%s 의 modelEnvKey 가 env 스키마에 등록돼 있다',
+    (feature) => {
+      const key = getModelConfig(feature, config).modelEnvKey;
+      expect(schemaKeys.has(key)).toBe(true);
+    },
+  );
+
+  it('fallback 설정의 env 키도 등록돼 있다', () => {
+    // 원 provider 가 죽으면 상대 provider 로 넘어간다 — 그쪽 키도 살아 있어야 한다
+    for (const feature of Object.keys(EXPECTED_KEYS) as ActiveLlmFeature[]) {
+      const fb = getFallbackConfig(getModelConfig(feature, config), config);
+      if (fb) expect(schemaKeys.has(fb.modelEnvKey)).toBe(true);
+    }
+  });
+
+  it('🔴 env 기본값과 코드 기본값이 어긋나지 않는다', () => {
+    // 어긋나면 "env 를 안 건드렸는데 모델이 바뀌는" 상태가 된다
+    const described = envValidationSchema.describe() as {
+      keys: Record<string, { flags?: { default?: unknown } }>;
+    };
+    for (const feature of Object.keys(EXPECTED_KEYS) as ActiveLlmFeature[]) {
+      const cfg = getModelConfig(feature, config);
+      const envDefault = described.keys[cfg.modelEnvKey]?.flags?.default;
+      if (envDefault !== undefined) {
+        expect({ feature, model: cfg.defaultModel }).toEqual({
+          feature,
+          model: envDefault,
+        });
+      }
+    }
+  });
+});
 
 describe('ActiveLlmFeature 경계', () => {
   const RETIRED = [
@@ -266,13 +345,14 @@ describe('ActiveLlmFeature 경계', () => {
    * 어긋나면 admin 화면에 **설정할 수 없는 행**이나 **화면에 없는 설정**이 생긴다.
    * (마이그레이션 1784600000000 이 DB 쪽 6행을 지웠다)
    */
-  it('매트릭스는 살아있는 8개뿐이다', () => {
+  it('매트릭스는 살아있는 9개뿐이다', () => {
     expect(Object.keys(EXPECTED_KEYS).sort()).toEqual(
       [
         'coverletter_chat',
         'coverletter_draft_v2',
         'coverletter_feedback',
         'coverletter_recommend',
+        'interview_prep_answer', // v2 (2026-08-06) 신설 — on-demand 답변 생성
         'interview_prep_followup',
         'interview_prep_session',
         'jobposting_parse',

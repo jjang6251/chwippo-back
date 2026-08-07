@@ -11,6 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, Repository } from 'typeorm';
 import { AbuserBanService } from '../ai/abuser-ban.service';
 import {
+  COST_CAP_USER_MESSAGE,
   LlmService,
   PROVIDER_OUTAGE_USER_MESSAGE,
   type LlmErrorKind,
@@ -20,6 +21,7 @@ import { QuotaCheckService } from '../ai/quota-check.service';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { Application } from './application.entity';
 import { buildJobPostingBlock } from './coverletter-context-builder';
+import { assertJobTextPresent } from './job-text';
 import {
   CoverletterChatMessage,
   type CoverletterCitations,
@@ -300,6 +302,8 @@ export class CoverletterChatService {
   ): Promise<ChatResult> {
     // 1. application 소유 검증 + 회사조사 완료 가드 (PR_B1c)
     const app = await this.assertOwn(userId, applicationId);
+    // 직무 게이트 — 자소서 대화도 직무 기준으로 조언한다 (프론트 우회 방어)
+    assertJobTextPresent(app);
 
     // 2. 사용자 입력 검증
     const trimmed = dto.userMessage?.trim() ?? '';
@@ -564,9 +568,12 @@ export class CoverletterChatService {
       //   internal·blocked_* 은 기존 문구(errorMessage) 유지.
       const isOutage =
         result.status === 'error' && result.errorKind === 'provider_outage';
+      // cost cap 은 내부 사유("... 0.0000 / 0")를 노출하면 안 된다 — 표준 문구로 교체
       const errMsg = isOutage
         ? PROVIDER_OUTAGE_USER_MESSAGE
-        : result.errorMessage;
+        : result.status === 'blocked_cost_quota'
+          ? COST_CAP_USER_MESSAGE
+          : result.errorMessage;
       assistantContent = errMsg ? `⚠️ ${errMsg}` : assistantContent;
       assistantStatusReason = errMsg;
       switch (result.status) {
