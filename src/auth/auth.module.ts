@@ -1,5 +1,5 @@
-import { forwardRef, Module } from '@nestjs/common';
-import { AdminModule } from '../admin/admin.module';
+import { Module } from '@nestjs/common';
+import { AdminAuditLog } from '../admin/admin-audit-log.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -28,12 +28,13 @@ import { FilesModule } from '../files/files.module';
     PassportModule,
     JwtModule.register({}), // 각 메서드에서 secret 직접 주입
     TypeOrmModule.forFeature([
+      // 🔴 재사용 감지 audit — AdminModule 을 import 하면 순환(→UsersModule→AuthModule)
+      AdminAuditLog,
       User,
       UserDeletionLog,
       RefreshSession,
       RefreshToken,
     ]),
-    forwardRef(() => AdminModule), // AdminAuditService — refresh 재사용 감지 audit
     MyinfoModule, // AppleS2SService StorageUsageService 의존
     FilesModule, // AppleS2SService FilesService 의존
   ],

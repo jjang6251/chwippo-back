@@ -16,7 +16,7 @@ import { User } from '../users/user.entity';
 import { RefreshSession } from './refresh-session.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
-import { AdminAuditService } from '../admin/admin-audit.service';
+import { AdminAuditLog } from '../admin/admin-audit-log.entity';
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -43,7 +43,7 @@ describe('AuthService', () => {
   let tokenRepo: jest.Mocked<Repository<RefreshToken>>;
   let jwtService: jest.Mocked<JwtService>;
   let discord: { notify: jest.Mock };
-  let audit: { log: jest.Mock };
+  let audit: { save: jest.Mock };
   let manager: jest.Mocked<EntityManager>;
   let txSessionRepo: jest.Mocked<Repository<RefreshSession>>;
   let txTokenRepo: jest.Mocked<Repository<RefreshToken>>;
@@ -71,7 +71,7 @@ describe('AuthService', () => {
     const mockJwtService = mock<JwtService>();
     const mockConfig = mock<ConfigService>();
     const mockDiscord = { notify: jest.fn().mockResolvedValue('sent') };
-    const mockAudit = { log: jest.fn().mockResolvedValue(undefined) };
+    const mockAudit = { save: jest.fn().mockResolvedValue(undefined) };
     const mockDataSource = mock<DataSource>();
     dataSource = mockDataSource;
     manager = mock<EntityManager>();
@@ -105,7 +105,7 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         { provide: DiscordNotifier, useValue: mockDiscord },
-        { provide: AdminAuditService, useValue: mockAudit },
+        { provide: getRepositoryToken(AdminAuditLog), useValue: mockAudit },
         AuthService,
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         {
@@ -692,15 +692,17 @@ describe('AuthService', () => {
         UnauthorizedException,
       );
 
-      expect(audit.log).toHaveBeenCalledWith(
-        null,
-        'refresh_reuse_detected',
-        'refresh_session',
-        'sid-1',
+      expect(audit.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          userId: 'user-uuid-1',
-          ageSec: 60,
-          windowSeconds: 30,
+          adminUserId: null,
+          action: 'refresh_reuse_detected',
+          targetType: 'refresh_session',
+          targetId: 'sid-1',
+          detail: expect.objectContaining({
+            userId: 'user-uuid-1',
+            ageSec: 60,
+            windowSeconds: 30,
+          }),
         }),
       );
     });
@@ -718,12 +720,10 @@ describe('AuthService', () => {
       await expect(service.rotateTokens(base)).rejects.toThrow(
         UnauthorizedException,
       );
-      expect(audit.log).toHaveBeenCalledWith(
-        null,
-        'refresh_reuse_detected',
-        'refresh_session',
-        'sid-1',
-        expect.objectContaining({ suspectedFalsePositive: true }),
+      expect(audit.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          detail: expect.objectContaining({ suspectedFalsePositive: true }),
+        }),
       );
     });
 
@@ -735,12 +735,10 @@ describe('AuthService', () => {
       await expect(service.rotateTokens(base)).rejects.toThrow(
         UnauthorizedException,
       );
-      expect(audit.log).toHaveBeenCalledWith(
-        null,
-        'refresh_reuse_detected',
-        'refresh_session',
-        'sid-1',
-        expect.objectContaining({ suspectedFalsePositive: false }),
+      expect(audit.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          detail: expect.objectContaining({ suspectedFalsePositive: false }),
+        }),
       );
     });
 
@@ -780,7 +778,7 @@ describe('AuthService', () => {
       // 세션이 살아 있어야 한다 — revoke·알림·audit 어느 것도 발동하지 않는다
       expect(sessionRepo.query).not.toHaveBeenCalled();
       expect(discord.notify).not.toHaveBeenCalled();
-      expect(audit.log).not.toHaveBeenCalled();
+      expect(audit.save).not.toHaveBeenCalled();
     });
 
     /**
@@ -789,7 +787,7 @@ describe('AuthService', () => {
      * 아무도 모른다. 그 순간 **audit DB 장애가 곧 로그인 세션 revoke 실패**가 된다.
      */
     it('🔴 audit 기록이 실패해도 revoke·401 은 정상 동작한다', async () => {
-      audit.log.mockRejectedValueOnce(new Error('audit DB down'));
+      audit.save.mockRejectedValueOnce(new Error('audit DB down'));
       tokenRepo.query.mockResolvedValueOnce([
         makeTokenRow({ used_at: new Date(Date.now() - 60_000) }),
       ]);

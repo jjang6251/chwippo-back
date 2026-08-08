@@ -16,9 +16,9 @@ import {
   Repository,
 } from 'typeorm';
 import { User } from '../users/user.entity';
+import { AdminAuditLog } from '../admin/admin-audit-log.entity';
 import { RefreshSession } from './refresh-session.entity';
 import { RefreshToken } from './refresh-token.entity';
-import { AdminAuditService } from '../admin/admin-audit.service';
 import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 import { returningRows } from '../common/db-returning';
 
@@ -129,7 +129,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly discord: DiscordNotifier,
-    private readonly audit: AdminAuditService,
+    @InjectRepository(AdminAuditLog)
+    private readonly auditRepo: Repository<AdminAuditLog>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -472,16 +473,33 @@ export class AuthService {
      * audit — Discord 는 지나가면 끝이라 **"언제 몇 번 발동했나" 가 안 남는다.**
      * 주석엔 audit 이 있다고 적혀 있었는데 실제로는 기록하지 않고 있었다 (2026-08-08 발견).
      * best-effort — 감지·revoke 자체를 막지 않는다 (기존 audit 정책과 동일).
+     *
+     * 🔴 **`AdminAuditService` 를 쓰지 않고 레포를 직접 주입한다.** `AuthModule` 이 `AdminModule` 을
+     * import 하면 **`AuthModule → AdminModule → UsersModule → AuthModule`** 순환이 생겨
+     * `UsersModule` 의 imports 가 로드 시점에 `undefined` 가 된다(2026-08-08 CI 에서 E2E 24 suite 전량 실패).
+     * `forwardRef` 로도 안 풀린다 — Nest DI 순환이 아니라 **ES 모듈 평가 순서** 문제이기 때문이다.
+     * 엔티티만 `forFeature` 로 등록하면 모듈 의존 없이 같은 테이블에 쓸 수 있다.
      */
-    void this.audit
-      .log(null, 'refresh_reuse_detected', 'refresh_session', sessionId, {
-        userId,
-        ageMs,
-        ageSec,
-        windowSeconds: CONCURRENCY_WINDOW_SECONDS,
-        // 창을 살짝 넘긴 건이 몰리면 오탐이다 — 집계 없이 한눈에 보이게 플래그로 남긴다
-        suspectedFalsePositive: ageSec <= FALSE_POSITIVE_HINT_SECONDS,
-      })
+    void this.auditRepo
+      .save(
+        Object.assign(new AdminAuditLog(), {
+          // 🔴 admin 이 아니라 **시스템이** 남기는 기록이라 adminUserId 는 null 이다
+          adminUserId: null,
+          action: 'refresh_reuse_detected' as const,
+          targetType: 'refresh_session',
+          targetId: sessionId,
+          detail: {
+            userId,
+            ageMs,
+            ageSec,
+            windowSeconds: CONCURRENCY_WINDOW_SECONDS,
+            // 창을 살짝 넘긴 건이 몰리면 오탐이다 — 집계 없이 한눈에 보이게 플래그로 남긴다
+            suspectedFalsePositive: ageSec <= FALSE_POSITIVE_HINT_SECONDS,
+          },
+          ip: null,
+          userAgent: null,
+        }),
+      )
       .catch(() => undefined);
 
     void this.discord
