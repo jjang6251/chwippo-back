@@ -16,6 +16,7 @@ import { User } from '../users/user.entity';
 import { RefreshSession } from './refresh-session.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
+import { AdminAuditService } from '../admin/admin-audit.service';
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -42,6 +43,7 @@ describe('AuthService', () => {
   let tokenRepo: jest.Mocked<Repository<RefreshToken>>;
   let jwtService: jest.Mocked<JwtService>;
   let discord: { notify: jest.Mock };
+  let audit: { log: jest.Mock };
   let manager: jest.Mocked<EntityManager>;
   let txSessionRepo: jest.Mocked<Repository<RefreshSession>>;
   let txTokenRepo: jest.Mocked<Repository<RefreshToken>>;
@@ -69,6 +71,7 @@ describe('AuthService', () => {
     const mockJwtService = mock<JwtService>();
     const mockConfig = mock<ConfigService>();
     const mockDiscord = { notify: jest.fn().mockResolvedValue('sent') };
+    const mockAudit = { log: jest.fn().mockResolvedValue(undefined) };
     const mockDataSource = mock<DataSource>();
     dataSource = mockDataSource;
     manager = mock<EntityManager>();
@@ -102,6 +105,7 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         { provide: DiscordNotifier, useValue: mockDiscord },
+        { provide: AdminAuditService, useValue: mockAudit },
         AuthService,
         { provide: getRepositoryToken(User), useValue: mockUserRepo },
         {
@@ -121,6 +125,7 @@ describe('AuthService', () => {
     tokenRepo = module.get(getRepositoryToken(RefreshToken));
     jwtService = module.get(JwtService);
     discord = mockDiscord;
+    audit = mockAudit;
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -597,9 +602,9 @@ describe('AuthService', () => {
       expect(discord.notify).not.toHaveBeenCalled();
     });
 
-    it('② 이미 소비된 토큰 재사용 (5초 초과) → 세션 revoke + Discord critical + 401', async () => {
+    it('② 이미 소비된 토큰 재사용 (창 30초 초과) → 세션 revoke + Discord critical + 401', async () => {
       tokenRepo.query.mockResolvedValueOnce([
-        makeTokenRow({ used_at: new Date(Date.now() - 20_000) }), // 20초 전 소비
+        makeTokenRow({ used_at: new Date(Date.now() - 60_000) }), // 60초 전 소비 (창 30초 초과)
       ]);
       sessionRepo.query.mockResolvedValue([] as never);
 
@@ -643,7 +648,103 @@ describe('AuthService', () => {
       expect(discord.notify).not.toHaveBeenCalled();
     });
 
-    it('④ 이미 소비된 토큰 재사용 (5초 이내) → 409 (RETRY) · revoke 아님', async () => {
+    /**
+     * 🔴 **오탐과 진짜 탈취를 가르는 유일한 값** (2026-08-08 실사고 계기).
+     *
+     * 운영 앱에서 로그아웃이 반복돼 Discord `🚨 재사용 감지` 가 실제로 왔는데,
+     * **알림에도 로그에도 "얼마나 묵은 토큰이었나" 가 없었다.** 6초 만에 온 것(= 창이 좁은 오탐)과
+     * 6시간 만에 온 것(= 진짜 replay)이 **같은 알림으로 떠서 판정이 불가능했다.**
+     *
+     * 코드는 `ageMs` 를 **계산해 놓고 버리고 있었다.** 그래서 실어 보낸다.
+     * 이 값이 빠지면 다시 판정 불가 상태로 돌아가므로 spec 으로 고정한다.
+     */
+    it('🔴 재사용 감지 알림에 경과 시간이 실린다 (오탐 판정의 유일한 근거)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({ used_at: new Date(Date.now() - 60_000) }), // 60초 전 소비 (창 30초 초과)
+      ]);
+      sessionRepo.query.mockResolvedValue([] as never);
+
+      await expect(service.rotateTokens(base)).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      const [payload] = discord.notify.mock.calls[0] as [
+        { fields: Array<{ name: string; value: string }> },
+      ];
+      const elapsed = payload.fields.find((f) => f.name === '경과');
+      expect(elapsed).toBeDefined();
+      // 초 단위 + 비교 대상인 창 크기가 함께 보여야 알림만 보고 판단할 수 있다
+      expect(elapsed?.value).toMatch(/60초/);
+      expect(elapsed?.value).toMatch(/창 30초/);
+    });
+
+    /**
+     * 🔴 **Discord 는 지나가면 끝이다.** 주석엔 audit 을 남긴다고 적혀 있었는데
+     * 실제로는 기록하지 않고 있었다 — 그래서 "언제 몇 번 발동했나" 를 되짚을 수단이 없었다.
+     */
+    it('🔴 재사용 감지가 audit 에 남는다 (Discord 는 휘발된다)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({ used_at: new Date(Date.now() - 60_000) }),
+      ]);
+      sessionRepo.query.mockResolvedValue([] as never);
+
+      await expect(service.rotateTokens(base)).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(audit.log).toHaveBeenCalledWith(
+        null,
+        'refresh_reuse_detected',
+        'refresh_session',
+        'sid-1',
+        expect.objectContaining({
+          userId: 'user-uuid-1',
+          ageSec: 60,
+          windowSeconds: 30,
+        }),
+      );
+    });
+
+    /**
+     * 🔴 **창을 살짝 넘긴 건이 몰리면 오탐이다.** 집계 쿼리를 짜지 않고도 한눈에 보이게
+     * 플래그로 남긴다 — 모바일은 네트워크 전환·백그라운드 정지·응답 유실 재시도가
+     * 전부 창을 쉽게 넘긴다.
+     */
+    it('🔴 창을 조금 넘긴 건은 오탐 의심으로 표시된다', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({ used_at: new Date(Date.now() - 60_000) }), // 60초 = 창의 2배
+      ]);
+      sessionRepo.query.mockResolvedValue([] as never);
+      await expect(service.rotateTokens(base)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(audit.log).toHaveBeenCalledWith(
+        null,
+        'refresh_reuse_detected',
+        'refresh_session',
+        'sid-1',
+        expect.objectContaining({ suspectedFalsePositive: true }),
+      );
+    });
+
+    it('🔴 한참 묵은 토큰은 오탐 의심이 아니다 (진짜 replay)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({ used_at: new Date(Date.now() - 6 * 3600_000) }), // 6시간 전
+      ]);
+      sessionRepo.query.mockResolvedValue([] as never);
+      await expect(service.rotateTokens(base)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(audit.log).toHaveBeenCalledWith(
+        null,
+        'refresh_reuse_detected',
+        'refresh_session',
+        'sid-1',
+        expect.objectContaining({ suspectedFalsePositive: false }),
+      );
+    });
+
+    it('④ 이미 소비된 토큰 재사용 (창 30초 이내) → 409 (RETRY) · revoke 아님', async () => {
       tokenRepo.query.mockResolvedValueOnce([
         makeTokenRow({ used_at: new Date(Date.now() - 1000) }), // 1초 전 소비
       ]);
@@ -656,6 +757,50 @@ describe('AuthService', () => {
       });
       expect(sessionRepo.query).not.toHaveBeenCalled(); // revoke 안 함
       expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 **이번 변경(5초 → 30초)의 핵심 동작.** 다른 케이스들(1초·60초·6시간)은
+     * **창을 5초로 되돌려도 전부 통과한다** — 1초는 어느 창에서든 안이고 60초는 어느 창에서든 밖이다.
+     * 즉 그 셋만으로는 **창이 실제로 넓어졌는지 검증되지 않는다.**
+     *
+     * 20초가 유일하게 두 창을 가른다: 옛 창(5초) → revoke · 새 창(30초) → 409.
+     * 하이브리드 앱에서 화면 전환·백그라운드 복귀로 생기는 시차가 정확히 이 구간이라
+     * **정상 사용자가 로그아웃되던 케이스**다 (ADR-071).
+     */
+    it('🔴 20초 — 옛 창(5초)이면 revoke, 새 창(30초)이면 409 (변경의 핵심)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({ used_at: new Date(Date.now() - 20_000) }),
+      ]);
+
+      await expect(service.rotateTokens(base)).rejects.toMatchObject({
+        response: { code: 'RETRY' },
+      });
+
+      // 세션이 살아 있어야 한다 — revoke·알림·audit 어느 것도 발동하지 않는다
+      expect(sessionRepo.query).not.toHaveBeenCalled();
+      expect(discord.notify).not.toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 **audit 은 best-effort 다** — 기록 실패가 보안 조치를 막으면 안 된다.
+     * `void ... .catch()` 로 방어돼 있는데 테스트가 없으면, 다음 사람이 `await` 로 바꿔도
+     * 아무도 모른다. 그 순간 **audit DB 장애가 곧 로그인 세션 revoke 실패**가 된다.
+     */
+    it('🔴 audit 기록이 실패해도 revoke·401 은 정상 동작한다', async () => {
+      audit.log.mockRejectedValueOnce(new Error('audit DB down'));
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({ used_at: new Date(Date.now() - 60_000) }),
+      ]);
+      sessionRepo.query.mockResolvedValue([] as never);
+
+      await expect(service.rotateTokens(base)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      // 보안 조치는 그대로 수행
+      expect(sessionRepo.query).toHaveBeenCalled();
+      expect(discord.notify).toHaveBeenCalled();
     });
 
     it('⑤ 세션 revoke 시 그 세션의 다른 토큰도 조회 0행(revoked_at 필터) → 401 · revoke 는 (id,user_id) 스코프라 타 세션 무영향', async () => {

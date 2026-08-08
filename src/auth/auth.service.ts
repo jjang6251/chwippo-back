@@ -18,6 +18,7 @@ import {
 import { User } from '../users/user.entity';
 import { RefreshSession } from './refresh-session.entity';
 import { RefreshToken } from './refresh-token.entity';
+import { AdminAuditService } from '../admin/admin-audit.service';
 import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 import { returningRows } from '../common/db-returning';
 
@@ -46,9 +47,37 @@ const MAX_SESSIONS_PER_USER = 10; // 기기 상한 (초과 시 최저 사용 세
  *    승자가 방금 만든 새 쿠키가 아직 반영 안 됐을 뿐 → 409 retry (세션 revoke 아님).
  *  - used_at 이 이 임계 초과 → 정상 클라이언트라면 이미 새 쿠키로 갈아탔을 시간.
  *    옛 토큰이 지금 오는 건 탈취 토큰 replay 로 간주 → 세션 revoke.
- * 5초 = 요청 왕복 + 클럭 스큐의 넉넉한 상한 (오탐 최소화, Auth0 reuse-interval leeway 개념).
+ * 🔴 **30초 — 2026-08-08 에 5초에서 넓혔다.** 5초는 **브라우저만 상정한 값**이었다.
+ * 하이브리드 앱에서 실제로 오탐이 났다: 앱 안에는 refresh 주체가 **둘**(네이티브 · WebView)인데
+ * `sharedCookiesEnabled` 로 **같은 refresh_token 쿠키를 공유**한다. 양쪽 다 single-flight 가드가
+ * 있지만 **각자 자기 것만 잠근다** — 같은 토큰 패밀리에 뮤텍스가 둘이라 서로를 모른다.
+ * 한쪽이 회전한 뒤 다른 쪽이 화면 전환·백그라운드 복귀·네트워크 전환을 거쳐 도착하면
+ * 5초를 쉽게 넘기고, 정상 사용자가 **탈취범으로 찍혀 로그아웃**됐다.
+ *
+ * **업계 통용값은 10~30초다** (이 문제는 회전을 도입한 팀이 거의 다 겪는 알려진 자리다):
+ *  - Auth0 `Rotation Overlap Period` — 문서가 이유를 명시한다:
+ *    *"발급된 토큰이 도착하기 전에 클라이언트가 원래 refresh token 으로 재시도하는 상황.
+ *      **특히 느린 셀룰러·혼잡한 네트워크에서 중요**"*
+ *  - Okta grace period · better-auth `refreshTokenGracePeriod` (제안 기본값 **30초**, issue #8512)
+ *  - 실무 보고: *"너무 작으면 오탐(나쁜 UX), 너무 크면 공격 창. **30초가 잘 작동했다**"*
+ *
+ * 🔴 **넓혀도 회전 자체는 유지된다** — 옛 토큰은 여전히 1회용이고, 창을 넘긴 replay 는 잡는다.
+ * 실제 공격 시나리오(유출 토큰을 며칠 뒤 사용)는 30초든 5초든 동일하게 걸린다.
+ * 잃는 것은 "30초 안에 즉시 replay" 하는 공격자뿐인데, 그건 이미 토큰을 실시간으로 훔칠 수 있는
+ * 상황이라 이 창이 마지막 방어선이 아니다.
+ *
+ * ⚠️ **이 값을 다시 좁히려면 `refresh_reuse_detected` audit 의 `ageMs` 분포부터 볼 것.**
+ * 근본 해법(WebView 에 refresh token 을 주지 않기)은 ADR-071 · 유입 증가 후 판단.
  */
-const CONCURRENCY_WINDOW_SECONDS = 5;
+const CONCURRENCY_WINDOW_SECONDS = 30;
+/**
+ * audit `suspectedFalsePositive` 판정 상한(초) — **차단 기준이 아니라 분류 힌트다.**
+ * 창을 넘겼지만 이 안이면 "앱 백그라운드 복귀·네트워크 전환" 으로 설명 가능한 범위라
+ * 오탐 의심으로 표시한다. 여기 몰리면 창이 아직 좁다는 신호.
+ * 🔴 창에 곱셈으로 묶지 않는다 — 창을 조정할 때마다 이 값이 딸려 움직이면
+ * "몇 분까지를 정상으로 볼 것인가" 라는 **별개의 판단**이 조용히 바뀐다.
+ */
+const FALSE_POSITIVE_HINT_SECONDS = 300; // 5분
 /** 소비된 refresh token 보존 기간(일) — cron 이 used_at +7일 경과분 삭제 (팽창 방지) */
 const USED_TOKEN_RETENTION_DAYS = 7;
 
@@ -100,6 +129,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly discord: DiscordNotifier,
+    private readonly audit: AdminAuditService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -395,7 +425,7 @@ export class AuthService {
       // 정상 동시 요청 — 승자가 만든 새 쿠키 반영 후 재시도하면 성공
       throw new ConflictException({ code: 'RETRY' });
     }
-    await this.handleReuse(sessionId, userId);
+    await this.handleReuse(sessionId, userId, ageMs);
     throw new UnauthorizedException();
   }
 
@@ -411,12 +441,49 @@ export class AuthService {
     );
   }
 
-  /** 재사용(탈취) 감지 — 해당 세션만 revoke + audit + Discord critical (타 기기 세션 생존) */
-  private async handleReuse(sessionId: string, userId: string): Promise<void> {
+  /**
+   * 재사용(탈취) 감지 — 해당 세션만 revoke + audit + Discord critical (타 기기 세션 생존).
+   *
+   * 🔴 **`ageMs` 를 반드시 함께 남긴다** (2026-08-08 추가). 이 값이 없으면 **오탐과 진짜 탈취를
+   * 구분할 수 없다** — 옛 토큰이 6초 만에 온 것과 6시간 만에 온 것은 완전히 다른 사건인데,
+   * 예전엔 둘 다 같은 알림으로 떴다. 실제로 앱에서 로그아웃이 반복됐을 때 **원인을 판정할
+   * 데이터가 아무 데도 없었다.**
+   *
+   * 판정 기준:
+   *  - 수 초~수십 초 → **오탐 의심.** 창(`CONCURRENCY_WINDOW_SECONDS=5`)이 모바일에 좁은 것이다.
+   *    네트워크 전환(WiFi↔LTE)·OS 백그라운드 정지·응답 유실 후 재시도가 전부 5초를 넘긴다
+   *  - 시간·일 단위 → 진짜 replay. 지금 동작이 정답
+   *
+   * 🔴 **데이터 없이 창부터 넓히지 말 것** — 근거 없이 보안 장치를 약화시키는 일이 된다.
+   */
+  private async handleReuse(
+    sessionId: string,
+    userId: string,
+    ageMs: number,
+  ): Promise<void> {
     await this.revokeSession(sessionId, userId);
+    const ageSec = Math.round(ageMs / 1000);
     this.logger.error(
-      `[session] refresh token 재사용 감지 — session ${sessionId} user ${userId} revoke (탈취 가능성)`,
+      `[session] refresh token 재사용 감지 — session ${sessionId} user ${userId} ` +
+        `age ${ageSec}s (창 ${CONCURRENCY_WINDOW_SECONDS}s) revoke (탈취 가능성)`,
     );
+
+    /**
+     * audit — Discord 는 지나가면 끝이라 **"언제 몇 번 발동했나" 가 안 남는다.**
+     * 주석엔 audit 이 있다고 적혀 있었는데 실제로는 기록하지 않고 있었다 (2026-08-08 발견).
+     * best-effort — 감지·revoke 자체를 막지 않는다 (기존 audit 정책과 동일).
+     */
+    void this.audit
+      .log(null, 'refresh_reuse_detected', 'refresh_session', sessionId, {
+        userId,
+        ageMs,
+        ageSec,
+        windowSeconds: CONCURRENCY_WINDOW_SECONDS,
+        // 창을 살짝 넘긴 건이 몰리면 오탐이다 — 집계 없이 한눈에 보이게 플래그로 남긴다
+        suspectedFalsePositive: ageSec <= FALSE_POSITIVE_HINT_SECONDS,
+      })
+      .catch(() => undefined);
+
     void this.discord
       .notify(
         {
@@ -425,6 +492,12 @@ export class AuthService {
           fields: [
             { name: 'userId', value: userId, inline: true },
             { name: 'sessionId', value: sessionId, inline: true },
+            {
+              // 🔴 이 필드가 오탐/진짜를 가른다 — 알림만 보고 판단할 수 있어야 한다
+              name: '경과',
+              value: `${ageSec}초 (창 ${CONCURRENCY_WINDOW_SECONDS}초)`,
+              inline: true,
+            },
             {
               name: '조치',
               value: '해당 세션(기기 체인) revoke · 타 기기 세션 유지',

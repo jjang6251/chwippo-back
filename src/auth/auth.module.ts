@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
+import { AdminModule } from '../admin/admin.module';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -32,6 +33,7 @@ import { FilesModule } from '../files/files.module';
       RefreshSession,
       RefreshToken,
     ]),
+    forwardRef(() => AdminModule), // AdminAuditService — refresh 재사용 감지 audit
     MyinfoModule, // AppleS2SService StorageUsageService 의존
     FilesModule, // AppleS2SService FilesService 의존
   ],
