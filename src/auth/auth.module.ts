@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminAuditLog } from '../admin/admin-audit-log.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -27,6 +28,8 @@ import { FilesModule } from '../files/files.module';
     PassportModule,
     JwtModule.register({}), // 각 메서드에서 secret 직접 주입
     TypeOrmModule.forFeature([
+      // 🔴 재사용 감지 audit — AdminModule 을 import 하면 순환(→UsersModule→AuthModule)
+      AdminAuditLog,
       User,
       UserDeletionLog,
       RefreshSession,

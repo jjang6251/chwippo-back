@@ -6,6 +6,8 @@ import {
 } from 'typeorm';
 
 export type AuditAction =
+  /** refresh token 재사용 감지 → 세션 revoke (2026-08-08). detail 에 ageMs 포함 */
+  | 'refresh_reuse_detected'
   | 'suspend'
   | 'unsuspend'
   | 'grant_admin'
