@@ -44,9 +44,17 @@ import { InterviewPrepQuestionsService } from './interview-prep-questions.servic
  */
 export type GenerateStatus = 'ok' | 'blocked';
 
+/**
+ * 차단 사유 코드 — 프론트가 **문구가 아니라 코드로** 분기한다.
+ * 문구로 분기하면 카피를 다듬는 순간 조용히 깨진다.
+ */
+export type GenerateBlockCode = 'REGENERATE_REQUIRED';
+
 export interface GenerateSessionResult {
   status: GenerateStatus;
   reason?: string;
+  /** `status: 'blocked'` 일 때만. 없으면 쿼터·동의 등 기존 차단 */
+  code?: GenerateBlockCode;
   meta?: {
     callLogId: string;
     coverlettersUsed: number;
@@ -521,11 +529,52 @@ export class InterviewPrepAiService {
   async generateSession(
     userId: string,
     sessionId: string,
+    opts: { regenerate?: boolean } = {},
   ): Promise<GenerateSessionResult> {
     const session = await this.sessionRepo.findOne({
       where: { id: sessionId, userId },
     });
     if (!session) throw new NotFoundException('면접 세션을 찾을 수 없습니다.');
+
+    /**
+     * 🔴 **파괴적 재생성은 명시적 의사표시가 있어야 한다** (2026-08-09 실사고 대응).
+     *
+     * 이 메서드는 아래에서 `em.delete(InterviewPrepQuestion, { sessionId })` 로
+     * **질문과 사용자가 쓴 답변(`myMemo`)을 전부 지운다.** 그런데 지금까지 서버는
+     * "지워도 되는지" 를 묻지 않았다 — 요청이 오면 그냥 지웠다.
+     *
+     * 그래서 이런 경로가 열려 있었다: 프론트에서 질문 **조회가 실패**하면 `data = []` 라
+     * 화면이 "아직 질문이 없어요 + [AI 질문 생성]" 을 띄웠고, 그 버튼은 최초 생성으로
+     * 취급돼 **확인창도 안 떴다.** 조회 실패 한 번 + 클릭 한 번에 답변이 전량 날아갔다.
+     * 프론트는 고쳤지만, **서버가 스스로를 지킬 수 있어야** 다른 진입점에서도 안전하다
+     * (다른 탭·재시도·직접 API 호출).
+     *
+     * 판정은 **서버가 보는 실제 개수**로 한다. 클라이언트가 "없다" 고 말해도 믿지 않는다 —
+     * 그 착각이 바로 이 사고의 원인이었다.
+     *
+     * 🔴 이 검사는 `in_progress` 선점과 LLM 호출 **앞**이다 — 차단 시 코인이 나가면 안 된다.
+     */
+    if (!opts.regenerate) {
+      const existing = await this.questionRepo.count({ where: { sessionId } });
+      if (existing > 0) {
+        /*
+          🔴 **이 가드가 발동했다는 건 클라이언트가 「질문이 없다」고 착각했다는 뜻**이다 —
+          즉 프론트에서 질문 조회가 실패했을 확률이 높다. 코인이 안 나가서 `llm_call_logs` 에는
+          아무것도 안 남으므로, 여기서 남기지 않으면 **조회 실패가 재발해도 운영에서 볼 수 없다.**
+          사용자를 막았다는 사실보다 **왜 여기까지 왔는가**가 정보다.
+        */
+        this.logger.warn(
+          `파괴적 재생성 차단 (session=${sessionId}, user=${userId}, 기존 질문 ${existing}개) — ` +
+            `클라이언트가 질문 없음으로 판단해 최초 생성을 보냈다. 프론트 질문 조회 실패 의심`,
+        );
+        return {
+          status: 'blocked',
+          code: 'REGENERATE_REQUIRED',
+          reason:
+            '이미 만들어 둔 질문이 있어요. 새로 만들면 지금 질문과 작성한 답변이 모두 삭제돼요.',
+        };
+      }
+    }
 
     /**
      * 🔴 **atomic 시작** — `in_progress` 표시를 조건부 UPDATE 로 건다.
