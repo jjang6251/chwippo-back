@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
@@ -16,6 +22,7 @@ import { ApplicationStep } from '../applications/application-step.entity';
 import { CoverletterSourceRef } from '../applications/coverletter-source-ref.entity';
 import {
   buildInterviewContext,
+  type BuildInterviewContextOutput,
   type CoverletterInput,
   type StepNoteInput,
   buildInterviewJobPostingBlock,
@@ -23,13 +30,24 @@ import {
 } from './interview-context-builder';
 import { assertJobTextPresent, resolveJobText } from '../applications/job-text';
 import { CompanyResearchService } from './company-research.service';
+import {
+  GENERATE_COUNT_DEFAULT,
+  GENERATE_COUNT_MAX,
+  GENERATE_COUNT_MIN,
+} from './dto/generate-session.dto';
 import { InterviewPrepQuestion } from './entities/interview-prep-question.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
+// 값이 별도 모듈로 내려간 이유는 그 파일 상단 주석 참조 (DTO 와의 import 순환 회피)
+import { INTERVIEW_CATEGORIES } from './interview-categories.const';
 import {
   filterAttributableLogIds,
   isDuplicateFollowup,
 } from './interview-output-guards';
-import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
+import {
+  InterviewPrepQuestionsService,
+  MAX_AI_QUESTIONS_PER_SESSION,
+  QUESTION_SOURCE_AI,
+} from './interview-prep-questions.service';
 
 /**
  * F6 PR 2 Phase 2 — InterviewPrepAiService.
@@ -47,14 +65,41 @@ export type GenerateStatus = 'ok' | 'blocked';
 /**
  * 차단 사유 코드 — 프론트가 **문구가 아니라 코드로** 분기한다.
  * 문구로 분기하면 카피를 다듬는 순간 조용히 깨진다.
+ *
+ * 🔴 `REGENERATE_REQUIRED` 는 **사라졌다** (질문 은행 D1b, 2026-08-11).
+ * 그 코드는 "생성이 기존 질문·답변을 전부 지운다" 는 전제 위의 가드였는데,
+ * 생성이 additive 로 바뀌어 **지울 것 자체가 없어졌다.** 가드를 지운 게 아니라
+ * 위험을 지운 것이다 (계획 §2 결정 8 · 설계 반전 3안).
  */
-export type GenerateBlockCode = 'REGENERATE_REQUIRED';
+export type GenerateBlockCode = 'NEED_COVERLETTER';
+
+/**
+ * 자소서 게이트 — `JOB_TITLE_REQUIRED` 와 같은 관례의 전용 코드.
+ *
+ * 🔴 **이 게이트는 이제껏 없었다** (계획 §3D 실측). 프론트 세션 생성 모달만 막고 있었고,
+ * 서버는 자소서 없는 생성을 **조용히 재료 없이** 돌렸다 — 사용자는 왜 일반론 질문이
+ * 나왔는지 알 길이 없었다. 세션 생성 시점의 차단은 D2 에서 안내로 바뀌고, 실제 경계는 여기다.
+ */
+export const NEED_COVERLETTER_CODE = 'NEED_COVERLETTER';
+export const NEED_COVERLETTER_MESSAGE =
+  '자소서가 있어야 AI 질문을 만들 수 있어요. 지원 카드에 자소서 문항을 먼저 추가해 주세요. (직접 적은 질문은 자소서 없이도 추가할 수 있어요)';
+
+/** AI 질문 캡 도달 — 프론트가 문구가 아니라 코드로 분기한다 */
+export const AI_QUESTION_CAP_CODE = 'AI_QUESTION_CAP_REACHED';
+
+/** ↻ 낱개 교체가 세션 생성과 겹쳤을 때 (409) */
+export const GENERATION_IN_PROGRESS_CODE = 'GENERATION_IN_PROGRESS';
 
 export interface GenerateSessionResult {
   status: GenerateStatus;
   reason?: string;
   /** `status: 'blocked'` 일 때만. 없으면 쿼터·동의 등 기존 차단 */
   code?: GenerateBlockCode;
+  /**
+   * `status: 'ok'` 인데 **요청보다 적게 만든** 경우의 안내 문구.
+   * 🔴 문구는 서버가 준다 — 캡 숫자가 바뀌면 프론트도 같이 고쳐야 하는 구조를 만들지 않는다.
+   */
+  notice?: string;
   meta?: {
     callLogId: string;
     coverlettersUsed: number;
@@ -63,6 +108,23 @@ export interface GenerateSessionResult {
     estimatedInputTokens: number;
     mainCount: number;
     followupCount: number;
+    /** 사용자가 요청한 개수 (미지정이면 기본 20) */
+    requestedCount: number;
+    /** 캡을 반영해 실제로 모델에 요청한 개수 */
+    effectiveCount: number;
+    /** 생성 전 기준, 이 세션에 더 만들 수 있는 AI 질문 수 */
+    aiCapRemaining: number;
+  };
+}
+
+/** ↻ 낱개 교체 결과 — 교체된 질문 1개를 그대로 돌려준다 */
+export interface RegenerateQuestionResult {
+  status: GenerateStatus;
+  reason?: string;
+  code?: GenerateBlockCode;
+  question?: InterviewPrepQuestion;
+  meta?: {
+    callLogId: string;
   };
 }
 
@@ -175,51 +237,6 @@ interface AiFollowupResponse {
 }
 
 /**
- * 면접 질문 카테고리 enum — deep research 2026-06-01 verified.
- * 1차 (Incruit 2024 · 잡코리아 · 잡소설) + 2차 (직무별 verified) 결과 통합.
- *
- * Base (모든 직무 공통): 자기소개·지원동기·인성·실패·협업·임원/가치·컬처핏
- * 직무별 (jobCategory fork): 개발=CS / 기획=비즈니스추론 / 마케팅=데이터·트렌드 / 영업=고객·실적 / 디자인=포트폴리오·프로세스
- * 자소서 기반 추궁 = 자료 기반 깊이 있는 질문 (자소서 답변 인용)
- */
-export const INTERVIEW_CATEGORIES = [
-  'self_intro', // 자기소개 (PEC 3단)
-  'motivation', // 지원동기
-  'personality', // 인성/장단점
-  'failure', // 실패 극복
-  'collaboration', // 협업·갈등
-  'executive', // 임원/가치관
-  'culture_fit', // 컬처핏 (회사 조사 활용)
-  'cs_tech', // CS 기술 (개발 직무)
-  'business_reasoning', // 비즈니스 추론·재무 (기획)
-  'data_metrics', // 데이터/지표 (마케팅)
-  'trend_ai', // AI 시대 트렌드 (마케팅)
-  'customer_handling', // 고객 대응 (영업)
-  'performance', // 실적/목표 달성 (영업)
-  'portfolio_decision', // 포트폴리오 의사결정 근거 (디자인)
-  'design_process', // 디자인 프로세스·방법론 (디자인)
-  'coverletter_based', // 자소서 기반 추궁
-  'company_industry', // 회사·산업 (회사 조사 활용) — "왜 우리 회사여야 하나" 포함
-  'reverse_question', // 역질문 (면접관에게 물을 것)
-  // ── v2 (2026-08-06) 추가 — 면접 공통 질문 10종 대조에서 빠져 있던 2개 ──
-  // 🔴 **추가만 한다. 기존 값 제거·개명 금지** — `interview_prep_questions.category` 에
-  //   이미 저장된 값이 있고, 스키마 enum 과 DB 값이 어긋나면 과거 세션이 깨진다.
-  'aspiration', // 입사 후 포부 (기존 enum 에 아예 없었다)
-  'closing_remark', // 마지막으로 하고 싶은 말 — 역질문과 다른 질문이다
-  // ── v2 (2026-08-06) 직무 fork 확장 ──
-  // 재무·연구·제조·경영지원·서비스직은 전용 카테고리가 없어 fork 자체가 안 잡혔다.
-  // 직군마다 카테고리를 새로 파면 enum 이 5개 늘어나므로, **공용 1개**로 받고
-  // 무엇을 물을지는 `buildJobForkHint` 의 직무별 가이드가 정한다.
-  'domain_knowledge', // 직무 전문 지식 (재무·연구·제조·법무·서비스 등)
-  // ── v2.1 (2026-08-07) PT·토론 전용 ──
-  // 이 둘은 **질문이 아니라 준비 재료**다. PT 는 발표할 주제, 토론은 논제라서
-  // 기존 카테고리(자소서 기반·직무 지식)에 넣으면 화면에서 성격이 뭉개진다.
-  'presentation_topic', // PT — 발표 주제
-  'presentation_qa', // PT — 발표 후 예상 질의응답
-  'discussion_topic', // 토론 — 찬반 논제 (양쪽 논거를 다 준비하는 형태)
-] as const;
-
-/**
  * 🔴 **LLM 이 만든 카테고리를 enum 안으로 좁힌다** (2026-08-07).
  *
  * 스키마에 `enum` 이 있어도 **강제력은 provider 마다 다르다.** OpenAI strict json_schema 는
@@ -240,74 +257,101 @@ export function normalizeCategory(raw: unknown): string | null {
     : null;
 }
 
-/** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
-export const SESSION_JSON_SCHEMA = {
-  name: 'interview_prep_session',
-  schema: {
-    type: 'object',
-    properties: {
-      questions: {
-        type: 'array',
-        /**
-         * v2 (2026-08-06) — **답변을 생성하지 않는다.** 질문만 뽑고 답변은 사용자가
-         * `AI 도움` 을 누를 때 `interview_prep_answer` 로 1개씩 만든다.
-         *
-         * 벤치 실측 근거 — 답변이 출력의 82~86% 이고 **지어내기는 전부 답변에서 났다**
-         * (haiku 답변 28건 vs 질문문 4건). 답변을 빼면 원가 85원→3원, 지연 81초→~10초,
-         * 그리고 프롬프트가 시키던 `[본인 경험 채우기]` 누출(43%)이 나올 자리가 사라진다.
-         *
-         * 🔴 개수 범위를 넓게 잡은 이유 — **스키마는 강제 수단이 아니다.** 벤치에서
-         * Anthropic `tool_use` 는 `maxItems 12` 를 무시하고 16개를 냈다(OpenAI strict 는 지켰다).
-         * 실제 통제는 프롬프트의 배분 가이드가 하고, 스키마는 상한만 막는다.
-         * 범위가 넓은 또 하나의 이유는 D9 — 1콜(≈20개) / 2-stage(≈13+8) 를 벤치로 정하는데
-         * 두 형태가 같은 스키마를 쓰기 때문이다.
-         */
-        minItems: 5,
-        maxItems: 22,
-        items: {
-          type: 'object',
-          properties: {
-            category: {
-              type: 'string',
-              enum: [...INTERVIEW_CATEGORIES],
-              description:
-                '질문 카테고리. SystemPrompt 의 카테고리 매트릭스 가이드 참조.',
+/**
+ * 세션 질문 스키마 — **개수에 따라 달라진다** (질문 은행 D1b, 2026-08-11).
+ *
+ * 🔴 **`minItems` 를 고정 5로 두면 안 된다.** 사용자가 3개를 고르거나 ↻ 가 1개를
+ * 요청하는 경로가 생겼는데, OpenAI strict json_schema 는 제약 디코딩이라 `minItems: 5`
+ * 를 **실제로 강제한다** — 1개를 달라고 했는데 5개가 오고, 그중 4개는 캡을 넘겨
+ * 버려지거나 넘겨 저장된다. 여기가 갈리면 캡 60이 무너진다.
+ *
+ * 기본값(20)일 때의 값은 **그대로 보존**한다 — 벤치가 그 형태로 측정됐다.
+ */
+export function buildSessionJsonSchema(count: number) {
+  return {
+    name: 'interview_prep_session',
+    schema: {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          /**
+           * v2 (2026-08-06) — **답변을 생성하지 않는다.** 질문만 뽑고 답변은 사용자가
+           * `AI 도움` 을 누를 때 `interview_prep_answer` 로 1개씩 만든다.
+           *
+           * 벤치 실측 근거 — 답변이 출력의 82~86% 이고 **지어내기는 전부 답변에서 났다**
+           * (haiku 답변 28건 vs 질문문 4건). 답변을 빼면 원가 85원→3원, 지연 81초→~10초,
+           * 그리고 프롬프트가 시키던 `[본인 경험 채우기]` 누출(43%)이 나올 자리가 사라진다.
+           */
+          /**
+           * 🔴 **개수를 정확히 못박는다.** 예전엔 `minItems: 5 / maxItems: 22` 고정이었고
+           * 실제 통제는 프롬프트가 했다 (Anthropic `tool_use` 가 `maxItems 12` 를 무시하고
+           * 16개를 낸 전적). 이제는 캡 60이 걸려 있어 **넘치면 버려야 하므로**, 스키마도
+           * 같이 좁혀 낭비되는 출력 토큰을 줄인다. 프롬프트 통제는 그대로 둔다.
+           *
+           * `maxItems` 에 +2 여유를 두는 이유 — 모델이 하나 더 내는 건 흔한 일이고,
+           * 그 때문에 strict 파싱이 통째로 실패하면 코인만 나간다. 초과분은 코드가 자른다.
+           */
+          minItems: Math.max(1, Math.min(count, 5)),
+          maxItems: Math.min(22, count + 2),
+          items: {
+            type: 'object',
+            properties: {
+              category: {
+                type: 'string',
+                enum: [...INTERVIEW_CATEGORIES],
+                description:
+                  '질문 카테고리. SystemPrompt 의 카테고리 매트릭스 가이드 참조.',
+              },
+              question: { type: 'string' },
+              /**
+               * v2.1 (2026-08-07) — **우선 준비 여부.**
+               *
+               * 조사 근거: 신입 면접은 1인 평균 26분이고 자기소개를 빼면 실질 문답이
+               * 4분 남짓 — **실제로 받는 질문은 5개 안팎**이다. 20문항을 다 준비하는 건
+               * 현실적이지 않고, 코칭 쪽 조언도 일관되게 "10개를 제대로" 다.
+               * 그래서 "다 만들어 주되 **뭘 먼저 할지**" 를 모델이 골라 준다.
+               *
+               * 🔴 상한을 프롬프트로 누른다 — 스키마로는 개수를 못 막는다.
+               */
+              must_prepare: {
+                type: 'boolean',
+                description:
+                  '이 면접에서 나올 확률이 가장 높아 먼저 준비해야 하는 질문이면 true. 전체에서 5~7개만 true.',
+              },
+              source_log_ids: {
+                type: 'array',
+                items: { type: 'string' },
+                description:
+                  '이 질문이 근거로 삼은 활동 로그 id (받은 후보 풀 안 id 만, 없으면 빈 배열)',
+              },
             },
-            question: { type: 'string' },
-            /**
-             * v2.1 (2026-08-07) — **우선 준비 여부.**
-             *
-             * 조사 근거: 신입 면접은 1인 평균 26분이고 자기소개를 빼면 실질 문답이
-             * 4분 남짓 — **실제로 받는 질문은 5개 안팎**이다. 20문항을 다 준비하는 건
-             * 현실적이지 않고, 코칭 쪽 조언도 일관되게 "10개를 제대로" 다.
-             * 그래서 "다 만들어 주되 **뭘 먼저 할지**" 를 모델이 골라 준다.
-             *
-             * 🔴 상한을 프롬프트로 누른다 — 스키마로는 개수를 못 막는다.
-             */
-            must_prepare: {
-              type: 'boolean',
-              description:
-                '이 면접에서 나올 확률이 가장 높아 먼저 준비해야 하는 질문이면 true. 전체에서 5~7개만 true.',
-            },
-            source_log_ids: {
-              type: 'array',
-              items: { type: 'string' },
-              description:
-                '이 질문이 근거로 삼은 활동 로그 id (받은 후보 풀 안 id 만, 없으면 빈 배열)',
-            },
+            // 🔴 OpenAI `json_schema strict` 는 properties 의 **모든 키가 required** 여야 한다
+            //   (실측 400: "'required' ... including every key in properties").
+            //   `model-registry.spec.ts` 의 cross-provider 검사가 이걸 강제한다.
+            required: [
+              'category',
+              'question',
+              'must_prepare',
+              'source_log_ids',
+            ],
+            additionalProperties: false,
           },
-          // 🔴 OpenAI `json_schema strict` 는 properties 의 **모든 키가 required** 여야 한다
-          //   (실측 400: "'required' ... including every key in properties").
-          //   `model-registry.spec.ts` 의 cross-provider 검사가 이걸 강제한다.
-          required: ['category', 'question', 'must_prepare', 'source_log_ids'],
-          additionalProperties: false,
         },
       },
+      required: ['questions'],
+      additionalProperties: false,
     },
-    required: ['questions'],
-    additionalProperties: false,
-  },
-};
+  };
+}
+
+/**
+ * G-1 — cross-provider strict 호환 검증 spec·벤치 스크립트가 읽는 **기본(20문항) 스키마**.
+ * 값은 전환 전과 동일하다 (`minItems: 5`, `maxItems: 22`).
+ */
+export const SESSION_JSON_SCHEMA = buildSessionJsonSchema(
+  GENERATE_COUNT_DEFAULT,
+);
 
 // F1 v2 — 2-stage 분할 hint. SYSTEM_PROMPT 본문 끝에 append 하여 stage 별 동작 강제.
 //   호출 양식: stage1 → stage2 순차. quota 는 generateSession 진입에서 1번 체크 (2회 호출 묶음).
@@ -324,6 +368,136 @@ export const ONECALL_HINT = `
 
 # 이번 호출 — 전체 20문항 한 번에
 - 위 "반드시 포함해야 하는 공통 질문" 12-13개 + 직무 fork·coverletter_based 7-8개, 합쳐 **20문항** 생성.`;
+
+/**
+ * 요청 개수 정규화 — DTO 가 이미 1~20 을 강제하지만, **서비스가 직접 불릴 수도 있다**
+ * (↻ 는 컨트롤러를 거치지 않고 count=1 로 이 생성기를 재사용한다).
+ * 범위 판정이 한 곳에만 있으면 다른 진입점에서 조용히 새어 나간다.
+ */
+export function clampGenerateCount(raw: number | undefined | null): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return GENERATE_COUNT_DEFAULT;
+  }
+  return Math.min(
+    GENERATE_COUNT_MAX,
+    Math.max(GENERATE_COUNT_MIN, Math.floor(raw)),
+  );
+}
+
+/**
+ * 이번 호출의 **개수·카테고리 지시** (질문 은행 D1b).
+ *
+ * 🔴 기본값(20 · 카테고리 미지정)일 때는 `ONECALL_HINT` **그대로**를 쓴다.
+ * 이 문장이 벤치(자료 밀착 68% · 공통질문 누락 0)의 조건이었고, 개수 선택 기능을 넣는다고
+ * 그 조건까지 흔들면 무엇 때문에 품질이 변했는지 알 수 없게 된다.
+ */
+export function buildGenerationHint(
+  count: number,
+  category: string | null,
+): string {
+  if (category) {
+    return `
+
+# 이번 호출 — ${count}문항, 전부 \`${category}\` 카테고리
+- 위 배분 가이드 대신 **${count}개 전부 \`${category}\` 카테고리**로 만든다 (사용자가 그 유형만 골랐다).
+- 같은 카테고리 안에서도 **묻는 각도를 서로 다르게** 한다. 표현만 바꾼 재진술은 안 된다.`;
+  }
+  if (count >= GENERATE_COUNT_DEFAULT) return ONECALL_HINT;
+  return `
+
+# 이번 호출 — ${count}문항만
+- 위 "반드시 포함해야 하는 공통 질문" 과 직무 fork·coverletter_based 중에서 **정확히 ${count}문항**만 고른다.
+- 개수가 적으므로 **한 카테고리에 몰지 말고** 서로 다른 유형으로 고른다.`;
+}
+
+/**
+ * 중복 회피 블록의 안전장치 (질문 은행 D1b · 계획 §6.9 실측 항목).
+ *
+ * 🔴 **길이를 안 자르면 입력 캡을 넘긴다.** 사용자 질문은 500자까지 저장되므로
+ * 커스텀 100개만으로 최대 50,000자 ≈ 16,700 토큰 — `interview_prep_session` 의
+ * `maxInputTokens: 16,000` 을 **혼자서** 넘긴다. 그러면 자소서·활동 로그가 멀쩡해도
+ * `blocked_input_cap` 으로 생성 자체가 죽는다.
+ *
+ * 80자는 중복 판정에 충분하다 — 실제 면접 질문은 20~40자다. 앞부분만 보여도
+ * "같은 걸 또 묻는가" 는 판단된다.
+ */
+export const DEDUP_QUESTION_MAX_CHARS = 80;
+
+/**
+ * 중복 회피 블록 전체의 토큰 예산. 최악(AI 60 + 커스텀 100 = 160문항)에 80자 잘림을
+ * 적용해도 약 4,300 토큰이라, 예산을 4,500 으로 두면 **전부 들어간다.**
+ * 넘치면 그때부터 줄을 버리고 "외 N개" 로 알린다 — 조용히 잘리는 것보다 낫다.
+ */
+export const DEDUP_BLOCK_MAX_TOKENS = 4_500;
+
+/** `LlmService.estimateTokens` 와 같은 휴리스틱 (chars/3) — 예산 판정 기준을 맞춘다 */
+function estimatePromptTokens(text: string): number {
+  return Math.ceil(text.length / 3);
+}
+
+/**
+ * 🔴 사용자 작성 질문을 프롬프트에 넣기 전 개행·연속 공백을 한 칸으로 접는다
+ * (2026-08-11 /qa 순회). 저장된 질문엔 개행이 살아 있을 수 있는데(양끝 trim 만 함),
+ * 그대로 두면 `- 텍스트` 목록 한 줄이나 `# 헤더` 섹션을 **탈출해 자기 지시줄을 만들 수
+ * 있다.** user 역할·strict 스키마·자기 세션 한정이라 피해 반경은 작지만, 목록은 목록으로
+ * 헤더는 헤더로 남아야 한다. 사용처: dedup 블록 · 꼬리 형제 목록 · 꼬리 부모 질문 ·
+ * 답변 생성 질문.
+ */
+function flattenQuestionForPrompt(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+export interface ExistingQuestionLine {
+  questionText: string;
+  category: string | null;
+}
+
+/**
+ * "이 질문들과 겹치지 마라" 블록.
+ *
+ * 🔴 **카테고리를 같이 보여주는 이유** — 겹침 회피와 "부족한 카테고리 위주" 지시가
+ * 같은 목록 하나로 성립한다. 카테고리를 빼면 모델은 무엇이 부족한지 알 방법이 없어
+ * 지시만 있고 근거가 없는 상태가 된다.
+ */
+export function buildExistingQuestionsBlock(
+  questions: ExistingQuestionLine[],
+  opts: { categoryPinned: boolean },
+): string {
+  if (questions.length === 0) return '';
+
+  const lines: string[] = [];
+  let dropped = 0;
+  let tokens = 0;
+  for (const q of questions) {
+    const text = flattenQuestionForPrompt(q.questionText);
+    const shown =
+      text.length > DEDUP_QUESTION_MAX_CHARS
+        ? `${text.slice(0, DEDUP_QUESTION_MAX_CHARS - 1)}…`
+        : text;
+    const line = `- [${q.category ?? '미분류'}] ${shown}`;
+    const cost = estimatePromptTokens(line);
+    if (tokens + cost > DEDUP_BLOCK_MAX_TOKENS) {
+      dropped++;
+      continue;
+    }
+    lines.push(line);
+    tokens += cost;
+  }
+
+  return [
+    '',
+    '',
+    `# 이미 이 세션에 있는 질문 ${questions.length}개 (겹치지 마라)`,
+    ...lines,
+    dropped > 0 ? `- (외 ${dropped}개 더 있음)` : null,
+    '위 질문들과 **같은 것을 다시 묻지 마라.** 표현만 바꾼 재진술도 안 된다.',
+    opts.categoryPinned
+      ? null
+      : '- 위 목록에서 **적게 다뤄진 카테고리 위주**로 이번 질문을 채운다.',
+  ]
+    .filter((l): l is string => l !== null)
+    .join('\n');
+}
 
 /** G-1 — cross-provider strict 호환 검증 spec 에서 실제 스키마를 읽기 위해 export */
 export const FOLLOWUP_JSON_SCHEMA = {
@@ -524,101 +698,262 @@ export class InterviewPrepAiService {
       );
   }
 
-  // ── 1. session 일괄 생성 (Hybrid) ──
+  // ── 0. 생성 공통 — 자소서 게이트 · 선점 ──
 
+  /**
+   * 자소서 게이트 (계획 §3D · §6.1) — **판정은 ID 배열이 아니라 로드 결과다.**
+   *
+   * 🔴 `session.coverletterIds.length > 0` 로 판정하면 **죽은 ID 구멍**이 열린다.
+   * 세션 생성 후 그 자소서를 지우면 배열엔 id 가 남아 있지만 로드는 0건이고,
+   * 컨텍스트 빌더는 조용히 빈 자소서로 프롬프트를 만든다 — 게이트가 있는데
+   * 통과하는, 가장 찾기 어려운 상태다.
+   *
+   * 세 갈래:
+   * ① 살아 있는 게 있다 → 그것만 쓴다 (죽은 id 는 세션에서 정리)
+   * ② 하나도 없는데 카드에는 있다 → **전체 자동 연결** 후 진행
+   * ③ 카드에도 없다 → `NEED_COVERLETTER` 차단 (죽은 id 정리는 하고 나간다)
+   *
+   * 소유권 — `applicationId` 로 좁힌다. 세션 생성이 이미 "카드 소속 + 본인" 을 강제하지만
+   * (`assertCoverlettersBelongToUser`), 여기서도 같은 범위로 읽어야 어긋날 자리가 없다.
+   */
+  private async resolveCoverlettersForGeneration(
+    session: InterviewPrepSession,
+  ): Promise<
+    { blocked: true } | { blocked: false; ids: string[]; changed: boolean }
+  > {
+    const current = session.coverletterIds ?? [];
+
+    const aliveSet = new Set(
+      current.length > 0
+        ? (
+            await this.clRepo.find({
+              where: { id: In(current), applicationId: session.applicationId },
+              select: ['id'],
+            })
+          ).map((c) => c.id)
+        : [],
+    );
+    // 사용자가 고른 순서를 보존한다 (프롬프트에 실리는 순서다)
+    const alive = current.filter((id) => aliveSet.has(id));
+    if (alive.length > 0) {
+      return {
+        blocked: false,
+        ids: alive,
+        changed: alive.length !== current.length,
+      };
+    }
+
+    const fromCard = await this.clRepo.find({
+      where: { applicationId: session.applicationId },
+      select: ['id'],
+      order: { orderIndex: 'ASC' },
+    });
+    if (fromCard.length === 0) {
+      // 차단이어도 죽은 id 는 치운다 — 남겨두면 다음 진입에서 같은 판정을 또 한다
+      if (current.length > 0) {
+        await this.sessionRepo
+          .update({ id: session.id }, { coverletterIds: [] })
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `죽은 자소서 id 정리 실패 (session=${session.id}): ${(err as Error).message}`,
+            ),
+          );
+        session.coverletterIds = [];
+      }
+      return { blocked: true };
+    }
+    return { blocked: false, ids: fromCard.map((c) => c.id), changed: true };
+  }
+
+  /** `NEED_COVERLETTER` 차단 — provider 미호출·코인 미차감. audit row 만 남긴다 */
+  private async blockNeedCoverletter(
+    userId: string,
+    sessionId: string,
+    counts: { requestedCount: number; effectiveCount: number },
+  ): Promise<{ reason: string; callLogId: string }> {
+    const blocked = await this.llm.call({
+      userId,
+      feature: 'interview_prep_session',
+      systemPrompt: '',
+      userPrompt: '',
+      resourceType: 'interview_prep_session',
+      resourceId: sessionId,
+      /**
+       * 🔴 `preBlockedStatus` 가 받는 값은 3종뿐이라 `blocked_quota` 를 **재사용**한다
+       * (in-flight lock 이 같은 이유로 그렇게 한다). 실제 사유는 `preBlockedReason` 의
+       * `NEED_COVERLETTER:` 접두어로 구분한다 — quota 차단이 `DAY_LIMIT: …` 를 쓰는 관례와 같다.
+       */
+      preBlockedStatus: 'blocked_quota',
+      preBlockedReason: `${NEED_COVERLETTER_CODE}: 세션·카드 모두 자소서 0건 (요청 ${counts.requestedCount}개)`,
+    });
+    return { reason: NEED_COVERLETTER_MESSAGE, callLogId: blocked.callLogId };
+  }
+
+  /**
+   * 🔴 **atomic 시작** — `in_progress` 표시를 조건부 UPDATE 로 건다.
+   *
+   * 이걸 두는 이유는 두 가지다:
+   * ① **새로고침 복귀** — 화면이 "생성 중" 을 다시 보여줄 근거가 된다. 없으면
+   *    사용자는 빈 화면을 보고 실패한 줄 안다.
+   * ② **중복 진입 차단의 이중화** — `LlmService` in-flight lock 은 메모리라
+   *    인스턴스가 여러 개면 못 막는다. DB 조건부 UPDATE 는 그걸 막는다.
+   *
+   * stale 회수 — 서버가 중간에 죽으면 `in_progress` 로 남는다. 생성이 ~10초라
+   * **2분 초과면 죽은 것으로 보고 다시 시작**시킨다 (별도 cron 불필요).
+   *
+   * 🔴 **자소서 자동 연결과 같은 트랜잭션이다** (계획 §3D). 갈라 두면 "연결은 됐는데
+   * 선점은 실패" / "선점은 됐는데 연결이 롤백" 이 생기고, 후자는 **게이트를 통과한
+   * 자소서와 실제로 쓰인 자소서가 다른** 상태가 된다.
+   */
+  private async claimGeneration(
+    sessionId: string,
+    userId: string,
+    coverletterIds: string[] | null,
+  ): Promise<boolean> {
+    const STALE_MS = 2 * 60 * 1000;
+    return this.dataSource.transaction(async (em) => {
+      if (coverletterIds) {
+        await em.update(
+          InterviewPrepSession,
+          { id: sessionId },
+          { coverletterIds },
+        );
+      }
+      const claimed = await em
+        .createQueryBuilder()
+        .update(InterviewPrepSession)
+        .set({
+          generationStatus: 'in_progress',
+          generationStartedAt: new Date(),
+        })
+        .where('id = :id AND user_id = :userId', { id: sessionId, userId })
+        .andWhere(
+          `(generation_status <> 'in_progress'
+            OR generation_started_at IS NULL
+            OR generation_started_at < :stale)`,
+          { stale: new Date(Date.now() - STALE_MS) },
+        )
+        .execute();
+      return (claimed.affected ?? 0) > 0;
+    });
+  }
+
+  /** 중복 회피·캡 판정에 필요한 최소 컬럼만 — 세션당 최대 160행이라 한 번에 읽는다 */
+  private async loadDepth0Questions(
+    sessionId: string,
+  ): Promise<
+    Array<
+      Pick<InterviewPrepQuestion, 'id' | 'questionText' | 'category' | 'source'>
+    >
+  > {
+    return this.questionRepo.find({
+      where: { sessionId, depth: 0 },
+      select: ['id', 'questionText', 'category', 'source'],
+      order: { orderIndex: 'ASC' },
+    });
+  }
+
+  // ── 1. session 질문 생성 (additive) ──
+
+  /**
+   * 🔴 **생성은 아무것도 지우지 않는다** (질문 은행 D1b, 2026-08-11 · 계획 §2 결정 8).
+   *
+   * 전환 전 이 메서드는 `em.delete(InterviewPrepQuestion, { sessionId })` 로 질문과
+   * 사용자가 쓴 답변(`myMemo`)을 전부 지웠다. 그걸 막으려고 `REGENERATE_REQUIRED`
+   * 게이트를 세웠는데(ADR-074, 2026-08-09 실사고), **위험 자체를 없애는 게 가드보다 낫다.**
+   * 이제 생성 = 추가이고, 데이터가 사라지는 자리는 ↻ 낱개 교체 하나뿐이다.
+   */
   async generateSession(
     userId: string,
     sessionId: string,
-    opts: { regenerate?: boolean } = {},
+    opts: { count?: number; category?: string } = {},
   ): Promise<GenerateSessionResult> {
     const session = await this.sessionRepo.findOne({
       where: { id: sessionId, userId },
     });
     if (!session) throw new NotFoundException('면접 세션을 찾을 수 없습니다.');
 
-    /**
-     * 🔴 **파괴적 재생성은 명시적 의사표시가 있어야 한다** (2026-08-09 실사고 대응).
-     *
-     * 이 메서드는 아래에서 `em.delete(InterviewPrepQuestion, { sessionId })` 로
-     * **질문과 사용자가 쓴 답변(`myMemo`)을 전부 지운다.** 그런데 지금까지 서버는
-     * "지워도 되는지" 를 묻지 않았다 — 요청이 오면 그냥 지웠다.
-     *
-     * 그래서 이런 경로가 열려 있었다: 프론트에서 질문 **조회가 실패**하면 `data = []` 라
-     * 화면이 "아직 질문이 없어요 + [AI 질문 생성]" 을 띄웠고, 그 버튼은 최초 생성으로
-     * 취급돼 **확인창도 안 떴다.** 조회 실패 한 번 + 클릭 한 번에 답변이 전량 날아갔다.
-     * 프론트는 고쳤지만, **서버가 스스로를 지킬 수 있어야** 다른 진입점에서도 안전하다
-     * (다른 탭·재시도·직접 API 호출).
-     *
-     * 판정은 **서버가 보는 실제 개수**로 한다. 클라이언트가 "없다" 고 말해도 믿지 않는다 —
-     * 그 착각이 바로 이 사고의 원인이었다.
-     *
-     * 🔴 이 검사는 `in_progress` 선점과 LLM 호출 **앞**이다 — 차단 시 코인이 나가면 안 된다.
-     */
-    if (!opts.regenerate) {
-      const existing = await this.questionRepo.count({ where: { sessionId } });
-      if (existing > 0) {
-        /*
-          🔴 **이 가드가 발동했다는 건 클라이언트가 「질문이 없다」고 착각했다는 뜻**이다 —
-          즉 프론트에서 질문 조회가 실패했을 확률이 높다. 코인이 안 나가서 `llm_call_logs` 에는
-          아무것도 안 남으므로, 여기서 남기지 않으면 **조회 실패가 재발해도 운영에서 볼 수 없다.**
-          사용자를 막았다는 사실보다 **왜 여기까지 왔는가**가 정보다.
-        */
-        this.logger.warn(
-          `파괴적 재생성 차단 (session=${sessionId}, user=${userId}, 기존 질문 ${existing}개) — ` +
-            `클라이언트가 질문 없음으로 판단해 최초 생성을 보냈다. 프론트 질문 조회 실패 의심`,
-        );
-        return {
-          status: 'blocked',
-          code: 'REGENERATE_REQUIRED',
-          reason:
-            '이미 만들어 둔 질문이 있어요. 새로 만들면 지금 질문과 작성한 답변이 모두 삭제돼요.',
-        };
-      }
+    const requestedCount = clampGenerateCount(opts.count);
+    const category = opts.category ?? null;
+
+    // 🔴 자소서 게이트는 선점·LLM **앞**이다 — 차단 시 코인도 잠금도 없어야 한다
+    const gate = await this.resolveCoverlettersForGeneration(session);
+    if (gate.blocked) {
+      const { reason, callLogId } = await this.blockNeedCoverletter(
+        userId,
+        sessionId,
+        { requestedCount, effectiveCount: 0 },
+      );
+      return {
+        status: 'blocked',
+        code: NEED_COVERLETTER_CODE,
+        reason,
+        meta: {
+          callLogId,
+          coverlettersUsed: 0,
+          logsUsed: 0,
+          droppedCount: 0,
+          estimatedInputTokens: 0,
+          mainCount: 0,
+          followupCount: 0,
+          requestedCount,
+          effectiveCount: 0,
+          aiCapRemaining: 0,
+        },
+      };
     }
 
-    /**
-     * 🔴 **atomic 시작** — `in_progress` 표시를 조건부 UPDATE 로 건다.
-     *
-     * 이걸 두는 이유는 두 가지다:
-     * ① **새로고침 복귀** — 화면이 "생성 중" 을 다시 보여줄 근거가 된다. 없으면
-     *    사용자는 빈 화면을 보고 실패한 줄 안다.
-     * ② **중복 진입 차단의 이중화** — `LlmService` in-flight lock 은 메모리라
-     *    인스턴스가 여러 개면 못 막는다. DB 조건부 UPDATE 는 그걸 막는다.
-     *
-     * stale 회수 — 서버가 중간에 죽으면 `in_progress` 로 남는다. 생성이 ~10초라
-     * **2분 초과면 죽은 것으로 보고 다시 시작**시킨다 (별도 cron 불필요).
-     */
-    const STALE_MS = 2 * 60 * 1000;
-    const claimed = await this.sessionRepo
-      .createQueryBuilder()
-      .update(InterviewPrepSession)
-      .set({ generationStatus: 'in_progress', generationStartedAt: new Date() })
-      .where('id = :id AND user_id = :userId', { id: sessionId, userId })
-      .andWhere(
-        `(generation_status <> 'in_progress'
-          OR generation_started_at IS NULL
-          OR generation_started_at < :stale)`,
-        { stale: new Date(Date.now() - STALE_MS) },
-      )
-      .execute();
-    if ((claimed.affected ?? 0) === 0) {
+    const claimed = await this.claimGeneration(
+      sessionId,
+      userId,
+      gate.changed ? gate.ids : null,
+    );
+    if (!claimed) {
       return {
         status: 'blocked',
         reason:
           '이미 질문을 만들고 있어요. 잠시만 기다려 주세요 (코인은 한 번만 차감돼요).',
       };
     }
+    // 자동 연결·정리 결과를 프롬프트가 그대로 쓰게 한다
+    session.coverletterIds = gate.ids;
 
     /**
-     * 🔴 **종료 경로를 손으로 챙기지 않는다.** blocked 3곳 + ok 1곳 + 예외(직무 게이트 등)
+     * 🔴 **캡 판정은 선점 안이다** (계획 §6.2 TOCTOU). 밖에서 세면 두 요청이 같은
+     * 잔여를 보고 각각 통과해 캡을 넘긴다. 선점이 하나만 통과시키므로 여기서 세면 안전하다.
+     */
+    const existing = await this.loadDepth0Questions(sessionId);
+    const aiCount = existing.filter(
+      (q) => (q.source ?? QUESTION_SOURCE_AI) === QUESTION_SOURCE_AI,
+    ).length;
+    const aiCapRemaining = MAX_AI_QUESTIONS_PER_SESSION - aiCount;
+    if (aiCapRemaining <= 0) {
+      // 만들지 못했으니 바로 다시 시도할 수 있어야 한다 (failed 가 아니라 idle)
+      await this.finishGeneration(sessionId, 'idle');
+      throw new BadRequestException({
+        code: AI_QUESTION_CAP_CODE,
+        message:
+          `AI 질문이 ${MAX_AI_QUESTIONS_PER_SESSION}개까지 모였어요. 충분히 모였으니 ` +
+          `마음에 안 드는 질문을 지우거나 ↻ 로 바꿔 보세요.`,
+      });
+    }
+    const effectiveCount = Math.min(requestedCount, aiCapRemaining);
+
+    /**
+     * 🔴 **종료 경로를 손으로 챙기지 않는다.** blocked 여러 곳 + ok 1곳 + 예외(직무 게이트 등)
      * 까지 있어서 하나라도 빠지면 그 세션은 `in_progress` 로 남아 2분간 잠긴다.
-     * 본문을 분리하고 여기서 한 번에 정리한다.
      *
      * blocked → `idle` — 실제로 만들지 못했으니 바로 다시 시도할 수 있어야 한다.
      * 예외 → `failed` — 화면이 "다시 시도" 를 띄울 근거.
      */
     try {
-      const result = await this.runSessionGeneration(userId, session);
+      const result = await this.runSessionGeneration(userId, session, {
+        requestedCount,
+        effectiveCount,
+        aiCapRemaining,
+        category,
+        existing,
+      });
       await this.finishGeneration(
         sessionId,
         result.status === 'ok' ? 'completed' : 'idle',
@@ -630,13 +965,36 @@ export class InterviewPrepAiService {
     }
   }
 
-  /** `generateSession` 본문 — 상태 전이는 호출부가 책임진다 */
-  private async runSessionGeneration(
+  /**
+   * 질문 생성 LLM 호출 **한 자리** — 세션 생성(N개)과 ↻ 낱개 교체(1개)가 같이 쓴다.
+   *
+   * 🔴 두 벌로 두지 않는 이유는 계획이 ↻ 를 "생성기 count=1 재사용" 으로 정의했기 때문이다.
+   * quota·audit·쿨다운·모델·프롬프트 품질 로직이 갈라지면 ↻ 만 조용히 다른 질문을 낸다.
+   */
+  private async generateQuestionsViaLlm(
     userId: string,
     session: InterviewPrepSession,
-  ): Promise<GenerateSessionResult> {
-    const sessionId = session.id;
-
+    opts: {
+      count: number;
+      category: string | null;
+      existing: ExistingQuestionLine[];
+    },
+  ): Promise<
+    | {
+        ok: true;
+        questions: AiQuestionItem[];
+        callLogId: string;
+        ctx: BuildInterviewContextOutput;
+        estimatedInputTokens: number;
+      }
+    | {
+        ok: false;
+        reason: string;
+        callLogId: string;
+        ctx?: BuildInterviewContextOutput;
+        estimatedInputTokens: number;
+      }
+  > {
     // quota 사전 체크
     const quota = await this.quotaCheck.checkAndPrepare(
       userId,
@@ -649,7 +1007,7 @@ export class InterviewPrepAiService {
         systemPrompt: '',
         userPrompt: '',
         resourceType: 'interview_prep_session',
-        resourceId: sessionId,
+        resourceId: session.id,
         preBlockedStatus: 'blocked_quota',
         preBlockedReason: `${quota.code}: ${quota.reason}`,
       });
@@ -663,21 +1021,29 @@ export class InterviewPrepAiService {
           );
       }
       return {
-        status: 'blocked',
-        reason: quota.reason,
-        meta: {
-          callLogId: blocked.callLogId,
-          coverlettersUsed: 0,
-          logsUsed: 0,
-          droppedCount: 0,
-          estimatedInputTokens: 0,
-          mainCount: 0,
-          followupCount: 0,
-        },
+        ok: false,
+        reason: quota.reason ?? '한도를 초과했어요.',
+        callLogId: blocked.callLogId,
+        estimatedInputTokens: 0,
       };
     }
 
     const ctx = await this.buildContextForSession(userId, session);
+
+    const systemPrompt =
+      ctx.systemPrompt + buildGenerationHint(opts.count, opts.category);
+    /**
+     * 🔴 중복 회피 블록은 **컨텍스트 빌더가 아니라 여기서** 붙인다.
+     * 빌더 안에 넣으면 빌더의 4,000 토큰 예산을 나눠 쓰게 되어 **활동 로그가 밀려난다** —
+     * 자료 밀착도(이 제품의 차별점)를 중복 회피로 맞바꾸는 셈이다.
+     */
+    const userPrompt =
+      ctx.userPrompt +
+      buildExistingQuestionsBlock(opts.existing, {
+        categoryPinned: opts.category !== null,
+      });
+    const estimatedInputTokens =
+      estimatePromptTokens(systemPrompt) + estimatePromptTokens(userPrompt);
 
     /**
      * v2 (2026-08-06) — **단일 호출.** 이전의 2-stage 분할을 폐지했다.
@@ -699,32 +1065,25 @@ export class InterviewPrepAiService {
     const result = await this.llm.call({
       userId,
       feature: 'interview_prep_session',
-      systemPrompt: ctx.systemPrompt + ONECALL_HINT,
-      userPrompt: ctx.userPrompt,
-      jsonSchema: SESSION_JSON_SCHEMA,
+      systemPrompt,
+      userPrompt,
+      jsonSchema: buildSessionJsonSchema(opts.count),
       resourceType: 'interview_prep_session',
-      resourceId: sessionId,
+      resourceId: session.id,
     });
-
-    const failMeta = {
-      coverlettersUsed: ctx.meta.coverlettersUsed,
-      logsUsed: ctx.meta.logsUsed,
-      droppedCount: ctx.meta.droppedCount,
-      estimatedInputTokens: ctx.meta.estimatedInputTokens,
-      mainCount: 0,
-      followupCount: 0,
-    };
 
     if (result.status !== 'ok') {
       return {
-        status: 'blocked',
+        ok: false,
         reason: this.formatBlockReason(
           result.status,
           result.errorMessage,
           result.errorKind,
           result.code,
         ),
-        meta: { callLogId: result.callLogId, ...failMeta },
+        callLogId: result.callLogId,
+        ctx,
+        estimatedInputTokens,
       };
     }
 
@@ -739,74 +1098,308 @@ export class InterviewPrepAiService {
      *
      * 그래서 막는 게 아니라 **거른다.** 19개라도 쓸 수 있는 편이 낫다. 전부 걸러지면
      * 아래 빈 응답 분기가 받는다 (그 경로는 코인 차감 없이 안내한다).
+     *
+     * 🔴 `slice` 는 **캡 60을 지키는 마지막 방어선**이다. 스키마는 강제 수단이 아니라
+     * (Anthropic `tool_use` 가 `maxItems` 를 무시한 전적) 요청보다 많이 올 수 있다.
      */
-    const allQuestions = (parsedSession?.questions ?? []).filter(
-      (q) => typeof q?.question === 'string' && q.question.trim().length > 0,
-    );
-    if (allQuestions.length === 0) {
+    const questions = (parsedSession?.questions ?? [])
+      .filter(
+        (q) => typeof q?.question === 'string' && q.question.trim().length > 0,
+      )
+      .slice(0, opts.count);
+    if (questions.length === 0) {
+      return {
+        ok: false,
+        reason: '질문 생성 결과가 비어있어요. 다시 시도해 주세요.',
+        callLogId: result.callLogId,
+        ctx,
+        estimatedInputTokens,
+      };
+    }
+
+    return {
+      ok: true,
+      questions,
+      callLogId: result.callLogId,
+      ctx,
+      estimatedInputTokens,
+    };
+  }
+
+  /**
+   * hallucination 방어 — **id 실존 + 내용 일치** 2단.
+   *
+   * 🔴 예전엔 id 실존만 봤다. 그래서 "장애 로그가 없어 3시간 헤맸다" 질문에
+   * **코드 리뷰 로그**가 달려도 통과했다. 화면이 "이 기록에서 나온 질문" 으로
+   * 표시하므로, 틀리면 사용자가 자기 활동 기록 자체를 못 믿게 된다.
+   */
+  private filterLogIds(
+    item: AiQuestionItem,
+    pool: Array<{ id: string; body: string }>,
+  ): string[] {
+    return filterAttributableLogIds({
+      text: item.question,
+      claimedIds: item.source_log_ids ?? [],
+      pool,
+    });
+  }
+
+  /** `generateSession` 본문 — 상태 전이는 호출부가 책임진다 */
+  private async runSessionGeneration(
+    userId: string,
+    session: InterviewPrepSession,
+    plan: {
+      requestedCount: number;
+      effectiveCount: number;
+      aiCapRemaining: number;
+      category: string | null;
+      existing: ExistingQuestionLine[];
+    },
+  ): Promise<GenerateSessionResult> {
+    const sessionId = session.id;
+
+    const gen = await this.generateQuestionsViaLlm(userId, session, {
+      count: plan.effectiveCount,
+      category: plan.category,
+      existing: plan.existing,
+    });
+
+    const countMeta = {
+      requestedCount: plan.requestedCount,
+      effectiveCount: plan.effectiveCount,
+      aiCapRemaining: plan.aiCapRemaining,
+    };
+
+    if (!gen.ok) {
       return {
         status: 'blocked',
-        reason: '질문 생성 결과가 비어있어요. 다시 시도해 주세요.',
-        meta: { callLogId: result.callLogId, ...failMeta },
+        reason: gen.reason,
+        meta: {
+          callLogId: gen.callLogId,
+          coverlettersUsed: gen.ctx?.meta.coverlettersUsed ?? 0,
+          logsUsed: gen.ctx?.meta.logsUsed ?? 0,
+          droppedCount: gen.ctx?.meta.droppedCount ?? 0,
+          estimatedInputTokens: gen.estimatedInputTokens,
+          mainCount: 0,
+          followupCount: 0,
+          ...countMeta,
+        },
       };
     }
 
     /**
-     * hallucination 방어 — **id 실존 + 내용 일치** 2단.
+     * 🔴 **삭제 경로가 없다.** 새 질문은 세션 전체 `order_index` 뒤에 붙는다
+     * (직접 추가 `bulkCreate` 와 같은 규칙 — 나중에 넣은 것이 항상 뒤에 온다).
      *
-     * 🔴 예전엔 id 실존만 봤다. 그래서 "장애 로그가 없어 3시간 헤맸다" 질문에
-     * **코드 리뷰 로그**가 달려도 통과했다. 화면이 "이 기록에서 나온 질문" 으로
-     * 표시하므로, 틀리면 사용자가 자기 활동 기록 자체를 못 믿게 된다.
+     * v2 — **답변을 저장하지 않는다** (`suggestedAnswer: null`). 사용자가 `AI 도움` 을 누르면
+     * `interview_prep_answer` 가 그 질문 1개만 채운다.
      */
-    const filterIds = (ids: string[], text: string): string[] =>
-      filterAttributableLogIds({
-        text,
-        claimedIds: ids,
-        pool: ctx.meta.candidateLogs,
-      });
-
-    // 기존 질문 모두 삭제 (재생성) — 트랜잭션
-    //
-    // v2 — **답변을 저장하지 않는다** (`suggestedAnswer: null`). 사용자가 `AI 도움` 을 누르면
-    // `interview_prep_answer` 가 그 질문 1개만 채운다. 꼬리질문도 세션 생성 시점엔 만들지 않는다
-    // (기존 `follow_ups` 는 스키마상 항상 빈 배열이었고 v2 에서 필드 자체를 뺐다).
     let mainCount = 0;
     await this.dataSource.transaction(async (em) => {
-      await em.delete(InterviewPrepQuestion, { sessionId });
-      for (let mi = 0; mi < allQuestions.length; mi++) {
-        const main = allQuestions[mi];
-        const mainRow = em.create(InterviewPrepQuestion, {
+      const max = await em
+        .createQueryBuilder(InterviewPrepQuestion, 'q')
+        .select('MAX(q.orderIndex)', 'maxIdx')
+        .where('q.session_id = :sid', { sid: sessionId })
+        .getRawOne<{ maxIdx: number | null }>();
+      let nextOrderIndex = (max?.maxIdx ?? -1) + 1;
+
+      for (const item of gen.questions) {
+        const row = em.create(InterviewPrepQuestion, {
           sessionId,
           parentQuestionId: null,
           depth: 0,
-          orderIndex: mi,
-          category: normalizeCategory(main.category),
-          mustPrepare: main.must_prepare === true,
-          questionText: main.question.trim(),
+          orderIndex: nextOrderIndex++,
+          // 카테고리를 지정해 부른 호출이면 모델이 딴 값을 내도 그 카테고리로 굳힌다
+          category: plan.category ?? normalizeCategory(item.category),
+          mustPrepare: item.must_prepare === true,
+          questionText: item.question.trim(),
           suggestedAnswer: null,
-          sourceLogIds: filterIds(main.source_log_ids ?? [], main.question),
+          sourceLogIds: this.filterLogIds(item, gen.ctx.meta.candidateLogs),
           myMemo: null,
         });
-        await em.save(InterviewPrepQuestion, mainRow);
+        await em.save(InterviewPrepQuestion, row);
         mainCount++;
       }
     });
 
     return {
       status: 'ok',
+      /**
+       * 🔴 캡 때문에 줄였다는 사실은 **서버가 문구까지** 준다. 프론트가 숫자를 계산해
+       * 안내하면 캡을 바꿀 때 두 곳을 고쳐야 하고, 한 곳만 고쳐지는 날이 온다.
+       */
+      notice:
+        plan.effectiveCount < plan.requestedCount
+          ? `AI 질문은 세션당 ${MAX_AI_QUESTIONS_PER_SESSION}개까지라 ${plan.effectiveCount}개만 만들었어요.`
+          : undefined,
       meta: {
-        callLogId: result.callLogId,
-        coverlettersUsed: ctx.meta.coverlettersUsed,
-        logsUsed: ctx.meta.logsUsed,
-        droppedCount: ctx.meta.droppedCount,
-        estimatedInputTokens: ctx.meta.estimatedInputTokens,
+        callLogId: gen.callLogId,
+        coverlettersUsed: gen.ctx.meta.coverlettersUsed,
+        logsUsed: gen.ctx.meta.logsUsed,
+        droppedCount: gen.ctx.meta.droppedCount,
+        estimatedInputTokens: gen.estimatedInputTokens,
         mainCount,
         // v2 — 세션 생성 시 꼬리질문을 만들지 않으므로 **항상 0**.
         // 🔴 필드를 지우지 않는 이유: 프론트가 아직 이 값으로 토스트를 그린다
         //   (`InterviewSessionPage.tsx` "메인 N개 + 꼬리 M개 생성").
         //   프론트 PR 에서 문구를 고친 뒤 함께 제거한다.
         followupCount: 0,
+        ...countMeta,
       },
+    };
+  }
+
+  // ── 1b. ↻ 낱개 교체 ──
+
+  /**
+   * AI 메인 질문 1개를 **같은 자리에서** 새 질문으로 바꾼다 (계획 §3A · §5).
+   *
+   * 🔴 **이 설계에서 데이터가 사라지는 유일한 자리다.** 그 질문의 답변(`myMemo`)과
+   * 꼬리질문이 FK CASCADE 로 함께 사라진다. 그래서 확인창은 정확히 여기에만 뜬다 —
+   * 개수를 세어 물어보는 건 프론트 몫이고, 서버는 요청이 오면 교체한다.
+   *
+   * 생성과 **같은 feature** 를 쓴다 (`interview_prep_session`) — quota·쿨다운·audit·
+   * 코인이 한 축으로 묶여야 admin 에서 한 번에 조절된다.
+   */
+  async regenerateQuestion(
+    userId: string,
+    questionId: string,
+  ): Promise<RegenerateQuestionResult> {
+    // 🔴 IDOR — 질문 → 세션 → user_id 조인. 남의 질문이면 404
+    const question = await this.questionsService.findOwnedRaw(
+      userId,
+      questionId,
+    );
+
+    /**
+     * 🔴 **내 질문은 ↻ 대상이 아니다.** 내가 적은 문장을 AI 가 갈아엎으면
+     * "내가 모은 기출" 이라는 은행의 전제가 깨진다. 고칠 길(PATCH)이 이미 있다.
+     */
+    if ((question.source ?? QUESTION_SOURCE_AI) !== QUESTION_SOURCE_AI) {
+      throw new BadRequestException(
+        '직접 추가한 질문은 다시 만들 수 없어요. 내용을 고치거나 삭제해 주세요.',
+      );
+    }
+    /**
+     * 🔴 꼬리질문은 부모 맥락에서 나온 것이라 "같은 자리에 새로" 가 성립하지 않는다.
+     * 꼬리를 바꾸려면 삭제 후 ✨ 로 다시 파고들면 된다 (그 경로가 이미 있다).
+     */
+    if (question.depth !== 0) {
+      throw new BadRequestException(
+        '꼬리질문은 다시 만들 수 없어요. 삭제한 뒤 다시 파고들어 주세요.',
+      );
+    }
+
+    const session = await this.sessionRepo.findOne({
+      where: { id: question.sessionId, userId },
+    });
+    if (!session) throw new NotFoundException('면접 세션을 찾을 수 없습니다.');
+
+    const gate = await this.resolveCoverlettersForGeneration(session);
+    if (gate.blocked) {
+      const { reason, callLogId } = await this.blockNeedCoverletter(
+        userId,
+        session.id,
+        { requestedCount: 1, effectiveCount: 0 },
+      );
+      return {
+        status: 'blocked',
+        code: NEED_COVERLETTER_CODE,
+        reason,
+        meta: { callLogId },
+      };
+    }
+
+    /**
+     * 🔴 **세션 선점을 공유한다** (계획 §6.2). 질문 단위 락을 따로 두지 않는 이유는,
+     * 같은 세션에서 동시에 도는 생성·↻ 가 서로의 결과를 덮어쓰는 게 실제 위험이고
+     * 그건 세션 단위로만 막을 수 있어서다. 같은 질문에 ↻ 를 두 번 눌러도 두 번째는
+     * 여기서 걸린다 (409).
+     */
+    const claimed = await this.claimGeneration(
+      session.id,
+      userId,
+      gate.changed ? gate.ids : null,
+    );
+    if (!claimed) {
+      throw new ConflictException({
+        code: GENERATION_IN_PROGRESS_CODE,
+        message: '지금 질문을 만들고 있어요. 끝나면 다시 시도해 주세요.',
+      });
+    }
+    session.coverletterIds = gate.ids;
+
+    try {
+      const result = await this.runQuestionReplacement(
+        userId,
+        session,
+        question,
+      );
+      await this.finishGeneration(
+        session.id,
+        result.status === 'ok' ? 'completed' : 'idle',
+      );
+      return result;
+    } catch (err) {
+      await this.finishGeneration(session.id, 'failed');
+      throw err;
+    }
+  }
+
+  /** `regenerateQuestion` 본문 — 상태 전이는 호출부가 책임진다 */
+  private async runQuestionReplacement(
+    userId: string,
+    session: InterviewPrepSession,
+    target: InterviewPrepQuestion,
+  ): Promise<RegenerateQuestionResult> {
+    /**
+     * 🔴 **교체 대상은 dedup 목록에서 뺀다.** 안 빼면 "이 질문과 겹치지 마라" 안에
+     * 지금 바꾸려는 질문이 들어가 있어서, 모델이 그걸 피하려다 오히려 자연스러운
+     * 후보를 버린다. 남은 형제들과만 겹치지 않으면 된다.
+     */
+    const existing = (await this.loadDepth0Questions(session.id)).filter(
+      (q) => q.id !== target.id,
+    );
+
+    const gen = await this.generateQuestionsViaLlm(userId, session, {
+      count: 1,
+      // 🔴 카테고리 유지 — ↻ 는 "이 자리의 이 유형" 을 바꾸는 것이지 유형을 바꾸는 게 아니다
+      category: target.category,
+      existing,
+    });
+
+    if (!gen.ok) {
+      return {
+        status: 'blocked',
+        reason: gen.reason,
+        meta: { callLogId: gen.callLogId },
+      };
+    }
+
+    const item = gen.questions[0];
+    const saved = await this.dataSource.transaction(async (em) => {
+      // 자손(꼬리질문)은 FK ON DELETE CASCADE 가 지운다 — 규칙을 두 벌로 만들지 않는다
+      await em.delete(InterviewPrepQuestion, { id: target.id });
+      const row = em.create(InterviewPrepQuestion, {
+        sessionId: session.id,
+        parentQuestionId: null,
+        depth: 0,
+        // 같은 자리 — 화면에서 질문이 목록 끝으로 튀지 않아야 "교체" 로 읽힌다
+        orderIndex: target.orderIndex,
+        category: target.category ?? normalizeCategory(item.category),
+        mustPrepare: item.must_prepare === true,
+        questionText: item.question.trim(),
+        suggestedAnswer: null,
+        sourceLogIds: this.filterLogIds(item, gen.ctx.meta.candidateLogs),
+        myMemo: null,
+      });
+      return em.save(InterviewPrepQuestion, row);
+    });
+
+    return {
+      status: 'ok',
+      question: saved,
+      meta: { callLogId: gen.callLogId },
     };
   }
 
@@ -982,7 +1575,8 @@ export class InterviewPrepAiService {
     const userPrompt =
       `${ctx.userPrompt}\n\n` +
       `# 문항 유형\n${question.category ?? '(미분류)'}\n\n` +
-      `# 답변할 질문\n${question.questionText}\n\n` +
+      // 🔴 사용자 작성 질문일 수 있다 (D1) — 개행으로 가짜 `#` 섹션을 못 만들게 접는다
+      `# 답변할 질문\n${flattenQuestionForPrompt(question.questionText)}\n\n` +
       (question.myMemo?.trim()
         ? `# 사용자가 직접 쓴 초안 (있으면 이 방향을 살려서 다듬을 것)\n\`\`\`\n${question.myMemo.trim()}\n\`\`\`\n\n`
         : '') +
@@ -1142,7 +1736,8 @@ export class InterviewPrepAiService {
     });
     const siblingLines = siblings
       .filter((q) => q.id !== parent.id && q.parentQuestionId !== parent.id)
-      .map((q) => `- ${q.questionText}`);
+      // 🔴 D1 이후 형제엔 사용자 작성 질문도 온다 — 개행이 목록을 탈출하지 못하게 접는다
+      .map((q) => `- ${flattenQuestionForPrompt(q.questionText)}`);
     const siblingBlock =
       siblingLines.length > 0
         ? `# 이미 나온 질문들 (겹치지 마라)\n${siblingLines.join('\n')}\n` +
@@ -1152,7 +1747,8 @@ export class InterviewPrepAiService {
     const userPrompt =
       `# 회사·직무\n${companyLine}\n` +
       `면접 차수: ${roundLine}\n\n` +
-      `# 부모 질문\n${parent.questionText}\n\n` +
+      // 🔴 부모가 사용자 작성 질문일 수 있다 (D1) — 개행으로 가짜 `#` 섹션을 못 만들게 접는다
+      `# 부모 질문\n${flattenQuestionForPrompt(parent.questionText)}\n\n` +
       /**
        * v2 — 부모 답변이 **없을 수 있다.** 세션 생성이 질문만 만들기 때문이다
        * (`suggestedAnswer` 는 사용자가 `AI 도움` 을 눌렀을 때만 채워진다).

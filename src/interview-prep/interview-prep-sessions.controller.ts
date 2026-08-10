@@ -14,24 +14,15 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 import { CompanyResearchService } from './company-research.service';
+import { BulkCreateQuestionsDto } from './dto/bulk-create-questions.dto';
 import { CreateSessionDto } from './dto/create-session.dto';
+import { GenerateSessionDto } from './dto/generate-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { InterviewPrepAiService } from './interview-prep-ai.service';
 import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
 import { InterviewPrepSessionsService } from './interview-prep-sessions.service';
-
-/**
- * 🔴 **파괴적 재생성 의사표시.** 생성은 기존 질문과 사용자가 쓴 답변을 전부 지우므로,
- * 이미 질문이 있는 세션은 `regenerate: true` 없이는 서버가 거절한다
- * (`GenerateBlockCode.REGENERATE_REQUIRED`). 기본값 없이 **안 보내면 거절**이 안전 방향이다.
- */
-class GenerateSessionDto {
-  @IsOptional()
-  @IsBoolean()
-  regenerate?: boolean;
-}
 
 class UpdateUserNotesDto {
   @IsOptional()
@@ -108,6 +99,19 @@ export class InterviewPrepSessionsController {
     return this.questions.listTreeBySession(user.id, id);
   }
 
+  /**
+   * 질문 은행 — 내가 직접 적은 질문 1~50개를 한 번에 추가.
+   * 단건(✍️)·붙여넣기(📋)·직접 꼬리가 **모두 이 하나**를 쓴다 (body 형태가 같다).
+   */
+  @Post(':id/questions/bulk')
+  bulkCreateQuestions(
+    @CurrentUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: BulkCreateQuestionsDto,
+  ) {
+    return this.questions.bulkCreate(user.id, id, dto);
+  }
+
   /** Phase 4 — coverletter/log id 배열을 title·카테고리로 expand (사이드바 메타카드 표시) */
   @Get(':id/refs')
   listRefs(
@@ -117,6 +121,10 @@ export class InterviewPrepSessionsController {
     return this.sessions.getRefs(user.id, id);
   }
 
+  /**
+   * AI 질문 생성 — **추가(additive)** 다. 아무것도 지우지 않는다 (질문 은행 D1b).
+   * `dto.regenerate` 는 옛 프론트 호환으로 받기만 하고 **읽지 않는다** (DTO 주석 참조).
+   */
   @Post(':id/generate')
   generate(
     @CurrentUser() user: { id: string },
@@ -124,7 +132,8 @@ export class InterviewPrepSessionsController {
     @Body() dto: GenerateSessionDto,
   ) {
     return this.ai.generateSession(user.id, id, {
-      regenerate: dto?.regenerate === true,
+      count: dto?.count,
+      category: dto?.category,
     });
   }
 

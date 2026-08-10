@@ -26,6 +26,7 @@ import { AdminAiUsageService } from './admin-ai-usage.service';
 import { AdminAiUsageController } from './admin-ai-usage.controller';
 import { AdminFeatureQuotasController } from './admin-feature-quotas.controller';
 import { AdminFeatureQuotasService } from './admin-feature-quotas.service';
+import { MyAiCostsController } from './my-ai-costs.controller';
 import { MyAiQuotasController } from './my-ai-quotas.controller';
 import { AbuserBanService } from './abuser-ban.service';
 import { QuotaNotifyService } from './quota-notify.service';
@@ -75,6 +76,7 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
     AdminQuotaResetController,
     AdminUserQuotaOverrideController, // cost hardening B-4 — 유저 개별 한도
     MyAiQuotasController,
+    MyAiCostsController, // 질문 은행 D1c — 예상 코인 공개 조회
     MyCoinController, // PR_B1
   ],
   providers: [
