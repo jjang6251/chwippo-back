@@ -14,13 +14,24 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CompanyResearchService } from './company-research.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { InterviewPrepAiService } from './interview-prep-ai.service';
 import { InterviewPrepQuestionsService } from './interview-prep-questions.service';
 import { InterviewPrepSessionsService } from './interview-prep-sessions.service';
+
+/**
+ * 🔴 **파괴적 재생성 의사표시.** 생성은 기존 질문과 사용자가 쓴 답변을 전부 지우므로,
+ * 이미 질문이 있는 세션은 `regenerate: true` 없이는 서버가 거절한다
+ * (`GenerateBlockCode.REGENERATE_REQUIRED`). 기본값 없이 **안 보내면 거절**이 안전 방향이다.
+ */
+class GenerateSessionDto {
+  @IsOptional()
+  @IsBoolean()
+  regenerate?: boolean;
+}
 
 class UpdateUserNotesDto {
   @IsOptional()
@@ -110,8 +121,11 @@ export class InterviewPrepSessionsController {
   generate(
     @CurrentUser() user: { id: string },
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: GenerateSessionDto,
   ) {
-    return this.ai.generateSession(user.id, id);
+    return this.ai.generateSession(user.id, id, {
+      regenerate: dto?.regenerate === true,
+    });
   }
 
   /**

@@ -336,6 +336,115 @@ describe('InterviewPrepAiService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
+    /**
+     * 🔴 **파괴적 재생성 가드** (2026-08-09 실사고 대응).
+     *
+     * `generateSession` 은 `em.delete(InterviewPrepQuestion, { sessionId })` 로 질문과
+     * **사용자가 쓴 답변(`myMemo`)을 전부 지운다.** 그런데 서버는 지워도 되는지 묻지 않았다.
+     *
+     * 실제로 열려 있던 경로: 프론트에서 질문 **조회가 실패**하면 `data = []` 라 화면이
+     * "아직 질문이 없어요 + [AI 질문 생성]" 을 띄웠고, 그 버튼은 최초 생성으로 취급돼
+     * **확인창도 안 떴다.** 조회 실패 1회 + 클릭 1회 = 답변 전량 소실 + 코인 차감.
+     *
+     * 프론트 화면을 고쳐도 다른 진입점(다른 탭·재시도·직접 API 호출)이 남으므로
+     * **서버가 스스로를 지켜야** 한다. 판정은 클라이언트 말이 아니라 **서버가 센 개수**로 한다 —
+     * 그 착각이 사고의 원인이었다.
+     */
+    describe('파괴적 재생성 가드', () => {
+      /** Stage1 성공 + Stage2 빈 응답 — 생성이 끝까지 가는 최소 조건 */
+      const mockOkGeneration = () => {
+        llm.call
+          .mockResolvedValueOnce({
+            status: 'ok',
+            text: '',
+            json: {
+              questions: [
+                { category: 'self_intro', question: 'q1', source_log_ids: [] },
+              ],
+            },
+            promptTokens: 500,
+            completionTokens: 300,
+            costUsd: 0.001,
+            latencyMs: 1500,
+            callLogId: 'log-1',
+            outputRedacted: false,
+          })
+          .mockResolvedValueOnce(EMPTY_STAGE2);
+      };
+
+      it('질문이 없으면 regenerate 없이도 생성한다 (최초 생성 — 기존 동작 무변경)', async () => {
+        questionRepo.count.mockResolvedValueOnce(0);
+        mockOkGeneration();
+
+        const r = await service.generateSession(USER_ID, SESSION_ID);
+
+        expect(r.status).toBe('ok');
+        expect(llm.call).toHaveBeenCalled();
+      });
+
+      it('🔴 질문이 있는데 regenerate 없이 오면 차단한다 — 삭제·LLM·코인 전부 안 일어난다', async () => {
+        questionRepo.count.mockResolvedValueOnce(20);
+
+        const r = await service.generateSession(USER_ID, SESSION_ID);
+
+        expect(r.status).toBe('blocked');
+        // 문구가 아니라 **코드**로 분기한다 — 카피를 다듬어도 안 깨지게
+        expect(r.code).toBe('REGENERATE_REQUIRED');
+
+        // ① 지우지 않았다 (삭제는 트랜잭션 안에서만 일어난다)
+        expect(dataSource.transaction).not.toHaveBeenCalled();
+        // ② 모델을 부르지 않았다 = 코인이 나가지 않았다
+        expect(llm.call).not.toHaveBeenCalled();
+        expect(quotaCheck.checkAndPrepare).not.toHaveBeenCalled();
+        // ③ `in_progress` 선점도 안 했다 — 걸어두면 2분간 재시도가 막힌다
+        expect(sessionRepo.createQueryBuilder).not.toHaveBeenCalled();
+      });
+
+      it('regenerate: true 면 진행한다 (사용자가 확인창에서 동의한 경로)', async () => {
+        questionRepo.count.mockResolvedValueOnce(20);
+        mockOkGeneration();
+
+        const r = await service.generateSession(USER_ID, SESSION_ID, {
+          regenerate: true,
+        });
+
+        expect(r.status).toBe('ok');
+        expect(llm.call).toHaveBeenCalled();
+        // regenerate 면 개수를 셀 이유가 없다 — 어차피 지운다
+        expect(questionRepo.count).not.toHaveBeenCalled();
+      });
+
+      /**
+       * 🔴 **차단은 `llm_call_logs` 에 안 남는다** (코인이 안 나가므로). 여기서 로그를
+       * 남기지 않으면 **프론트 조회 실패가 재발해도 운영에서 볼 방법이 없다** —
+       * 이 가드가 발동했다는 건 클라이언트가 「질문 없음」으로 착각했다는 뜻이기 때문이다.
+       */
+      it('🔴 차단 시 운영이 볼 수 있게 경고를 남긴다', async () => {
+        questionRepo.count.mockResolvedValueOnce(20);
+        const warn = jest
+          .spyOn(service['logger'], 'warn')
+          .mockImplementation(() => undefined);
+
+        await service.generateSession(USER_ID, SESSION_ID);
+
+        expect(warn).toHaveBeenCalledTimes(1);
+        const msg = warn.mock.calls[0][0] as string;
+        expect(msg).toContain(SESSION_ID);
+        expect(msg).toContain('20개'); // 몇 개가 남아 있었는지가 진단의 핵심
+        warn.mockRestore();
+      });
+
+      it('🔴 판정 근거는 이 세션의 실제 질문 수 — 클라이언트 주장이 아니다', async () => {
+        questionRepo.count.mockResolvedValueOnce(1);
+
+        await service.generateSession(USER_ID, SESSION_ID);
+
+        expect(questionRepo.count).toHaveBeenCalledWith({
+          where: { sessionId: SESSION_ID },
+        });
+      });
+    });
+
     it('QuotaCheck DAY_LIMIT → blocked + abuser ban 트리거 + audit row', async () => {
       quotaCheck.checkAndPrepare.mockResolvedValueOnce({
         blocked: true,
