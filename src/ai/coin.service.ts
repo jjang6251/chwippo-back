@@ -199,6 +199,32 @@ export class CoinService {
   // ──────────────────────────────────────────────────────────────
 
   /**
+   * **예약치(reservation)** — 호출 시작 전 "이 정도는 들 것" 추정. 사용자 무관, feature 단위.
+   *
+   * 🔴 실제 차감과 다르다 — 차감은 `charge()` 의 토큰 실비 환산이고 보통 이 값보다 적다.
+   * 여기는 "잔액이 이만큼은 있어야 시작한다" 는 **게이트 기준**이다.
+   *
+   * `canCharge` 와 `GET /me/ai-costs`(D1c) 가 **같은 이 메서드**를 쓴다. 공개 조회 API 를
+   * 신설한 이유가 "프론트가 단가를 하드코딩하지 않게" 인데, 그 값을 서버 안에서 두 번
+   * 계산하면 같은 종류의 드리프트가 백엔드로 옮겨갈 뿐이다.
+   */
+  async estimateCoins(
+    feature: LlmFeature,
+  ): Promise<{ chargesCoins: boolean; estimatedCoins: number }> {
+    const meta = await this.featureMetaRepo.findOne({ where: { feature } });
+    // 회사조사·노트요약 (우리 부담) · 행 자체가 없는 feature 도 여기로 (chargesCoins() 와 동일 취급)
+    if (!meta?.chargesCoins) return { chargesCoins: false, estimatedCoins: 0 };
+
+    // PR_B1c — fixed_coin_cost 우선 (token 환산 무시). NULL 이면 기존 avg × 1.2 buffer
+    const estimatedCoins =
+      meta.fixedCoinCost !== null
+        ? meta.fixedCoinCost
+        : Math.ceil(parseFloat(meta.avgCoinCost) * 1.2 * 10) / 10;
+
+    return { chargesCoins: true, estimatedCoins };
+  }
+
+  /**
    * 호출 시작 전 — 추정 (평균 × 1.2) 잔여 ≥ 진행 보장.
    * COIN_SYSTEM_ENABLED=false 또는 charges_coins=false feature → 항상 통과.
    */
@@ -208,14 +234,9 @@ export class CoinService {
   ): Promise<{ ok: boolean; reason?: string }> {
     if (process.env.COIN_SYSTEM_ENABLED === 'false') return { ok: true };
 
-    const meta = await this.featureMetaRepo.findOne({ where: { feature } });
-    if (!meta?.chargesCoins) return { ok: true }; // 회사조사·노트요약 (우리 부담)
-
-    // PR_B1c — fixed_coin_cost 우선 (token 환산 무시). NULL 이면 기존 avg × 1.2 buffer
-    const estimate =
-      meta.fixedCoinCost !== null
-        ? meta.fixedCoinCost
-        : Math.ceil(parseFloat(meta.avgCoinCost) * 1.2 * 10) / 10;
+    const { chargesCoins, estimatedCoins: estimate } =
+      await this.estimateCoins(feature);
+    if (!chargesCoins) return { ok: true };
 
     const balance = await this.getBalanceWithLazyReset(userId);
     if (balance.balance < estimate) {

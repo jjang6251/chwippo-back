@@ -38,10 +38,8 @@ import {
   getModelSpec,
 } from '../../src/ai/model-registry';
 import { buildInterviewContext } from '../../src/interview-prep/interview-context-builder';
-import {
-  INTERVIEW_CATEGORIES,
-  SESSION_JSON_SCHEMA,
-} from '../../src/interview-prep/interview-prep-ai.service';
+import { INTERVIEW_CATEGORIES } from '../../src/interview-prep/interview-categories.const';
+import { SESSION_JSON_SCHEMA } from '../../src/interview-prep/interview-prep-ai.service';
 
 /**
  * 🔴 **v1 당시 프로덕션 힌트를 그대로 고정한 사본이다.** 프로덕션에서는 2026-08-06 v2 전환으로

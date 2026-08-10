@@ -25,6 +25,9 @@ const VALID_FEATURES: LlmFeature[] = [
   'coverletter_recommend',
   'interview_prep_session',
   'interview_prep_followup',
+  // 2026-08-11 — 신설(2026-08-06) 때부터 여기 없어서 `feature_quota_configs` 행이 있는데도
+  // admin 이 못 고치는 상태였다. 모든 LLM caller 는 admin 한도 조절이 가능해야 한다.
+  'interview_prep_answer',
   'jobposting_parse',
 ];
 
