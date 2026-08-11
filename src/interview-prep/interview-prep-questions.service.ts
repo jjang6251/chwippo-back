@@ -275,8 +275,8 @@ export class InterviewPrepQuestionsService {
    * my_memo PATCH (autosave 대상). suggestedAnswer 변경은 차단 — LLM 호출만 변경 가능.
    * 빈 문자열은 null 로 정규화.
    *
-   * 질문 은행 D1 — `questionText`·`category` 추가. 🔴 **그 둘만 `source='user'` 전용**이고
-   * `myMemo` 는 출처와 무관하게 열려 있다 (내 답변은 AI 질문에도 쓴다).
+   * 질문 은행 D1 — `questionText`·`category` 추가. 🔴 **`source='user'` 전용은
+   * `questionText` 하나뿐**이다. `category`·`mustPrepare`·`myMemo` 는 출처와 무관하게 열려 있다.
    */
   async update(
     userId: string,
@@ -289,8 +289,14 @@ export class InterviewPrepQuestionsService {
      * 🔴 AI 질문의 **본문**은 못 고친다 — 고칠 수 있게 하면 ↻(낱개 교체)의 기준이 사라진다.
      *   "AI 가 준 질문" 이 아니게 된 것을 무엇을 근거로 다시 뽑을지가 없어지기 때문이다.
      *   막다른 길이 되지 않게 문구가 **대안(삭제)** 을 같이 알려 준다.
+     *
+     * 🔴 **`category` 는 여기서 빠졌다** (2026-08-12). `mustPrepare` 가 전 질문 허용이 된 것과
+     *   **같은 논지**다 — 「⭐만」 필터가 직접 추가 질문에서 영원히 비면 안 되듯, AI 가 유형을
+     *   애매하게 붙였을 때 사용자가 바로잡지 못하면 **흐름 정렬·시험 범위 필터 자체가 성립하지
+     *   않는다.** 유형은 "AI 가 만든 것" 의 정체성이 아니라 **내가 이 질문을 어떻게 분류해 두는가**
+     *   이고, 그래서 본문(정체성)과 축이 다르다. 유형이 아니라 질문이 마음에 안 들면 ↻·삭제다.
      */
-    if (dto.questionText !== undefined || dto.category !== undefined) {
+    if (dto.questionText !== undefined) {
       if (q.source !== QUESTION_SOURCE_USER) {
         throw new BadRequestException(
           'AI 가 만든 질문은 내용을 고칠 수 없어요. 마음에 안 들면 삭제해 주세요.',
@@ -306,8 +312,9 @@ export class InterviewPrepQuestionsService {
      * 🔴 **⭐ 는 모든 질문에서 켤 수 있다** (D1a 판정 #4). `mustPrepare` 는 원래
      * LLM 전용 필드였는데, 그 상태로 「⭐만」 필터를 내보내면 **직접 추가한 질문에서는
      * 영원히 빈 목록**이 나온다 — 은행의 중심이 「내가 모은 질문」인데 우선순위를
-     * 못 매기는 셈이다. `questionText`·`category` 의 user 전용 제한과 성격이 다르다
+     * 못 매기는 셈이다. `questionText` 의 user 전용 제한과 성격이 다르다
      * (그건 "AI 가 만든 것" 의 정체성 문제이고, 이건 내 준비 표시다).
+     * `category` 도 같은 논지로 전 질문 허용이 됐다 (위 가드 주석).
      */
     if (dto.mustPrepare !== undefined) {
       q.mustPrepare = dto.mustPrepare;

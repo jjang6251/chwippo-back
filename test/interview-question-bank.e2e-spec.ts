@@ -41,6 +41,16 @@
  * ── D1c (2026-08-11) — 예상 코인 공개 조회 ──
  *  E28 🔴 `feature_coin_meta` 값을 고치면 `GET /me/ai-costs` 응답이 따라 바뀐다
  *  E29 비로그인 → 401 · E30 화이트리스트 밖 feature → 400 · E31 count 경계 → 400
+ *
+ * ── D2 (2026-08-12) — 세션 생성 자소서 게이트 제거 ──
+ *  E32 🔴 자소서 없이 POST /interview-prep-sessions → 201 · coverletterIds []
+ *
+ * ── D2 (2026-08-12) — 면접 AI 4경로가 자소서 게이트를 공유한다 ──
+ *  E33 🔴 자소서 0건 세션의 질문에 답변 생성 → NEED_COVERLETTER (코인 미차감 audit)
+ *  E34 🔴 자소서 0건 세션의 질문에 꼬리질문 → NEED_COVERLETTER
+ *
+ * ── D2 (2026-08-12) — category 는 AI 질문에서도 고칠 수 있다 ──
+ *  E35 🔴 PATCH AI 질문 category → 200 (본문은 여전히 400 — E17 과 축이 다르다)
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -75,8 +85,8 @@ describe('면접 질문 은행 D1 (e2e)', () => {
   });
 
   /**
-   * 세션을 **repo 로 직접** 만든다. `POST /interview-prep-sessions` 는 자소서·직무
-   * 게이트를 통과해야 해서 픽스처가 길어지는데, 여기서 보려는 건 질문 endpoint 다.
+   * 세션을 **repo 로 직접** 만든다. `POST /interview-prep-sessions` 는 직무 게이트를
+   * 통과해야 해서 픽스처가 길어지는데, 여기서 보려는 건 질문 endpoint 다.
    */
   async function setupSession() {
     const { accessToken, user } = await signInAsUser(app);
@@ -405,6 +415,40 @@ describe('면접 질문 은행 D1 (e2e)', () => {
     expect(res.body.data.myMemo).toBe('내가 쓴 답변');
   });
 
+  /**
+   * 🔴 **E17 과 짝으로 읽어야 하는 케이스** (2026-08-12 반전). 같은 AI 질문에
+   * 본문은 400, 유형은 200 이다 — 축이 다르기 때문이다. 본문은 "AI 가 만든 것" 의
+   * 정체성이라 ↻ 의 기준이고, 유형은 **내 분류**라 흐름 정렬·시험 범위 필터의 근거다.
+   * AI 가 유형을 애매하게 붙였을 때 못 고치면 그 필터들이 통째로 못 믿을 것이 된다.
+   * (`mustPrepare` 가 먼저 같은 논지로 열렸다 — E26)
+   */
+  it('E35 🔴 PATCH AI 질문 category → 200 · 본문 동봉 시엔 400 이고 유형도 안 바뀐다', async () => {
+    const { accessToken, session } = await setupSession();
+    const aiQ = await insertAiQuestion(session.id, {
+      category: 'company_industry',
+    });
+
+    const res = await request(app.getHttpServer())
+      .patch(`/interview-prep-questions/${aiQ.id}`)
+      .set(bearer(accessToken))
+      .send({ category: 'motivation' })
+      .expect(200);
+    expect(res.body.data.category).toBe('motivation');
+
+    // 막힌 필드를 섞으면 전부 무효 — 부분 반영이 없다
+    await request(app.getHttpServer())
+      .patch(`/interview-prep-questions/${aiQ.id}`)
+      .set(bearer(accessToken))
+      .send({ category: 'failure', questionText: '몰래 고치기' })
+      .expect(400);
+
+    const row = await ds
+      .getRepository(InterviewPrepQuestion)
+      .findOneByOrFail({ id: aiQ.id });
+    expect(row.category).toBe('motivation');
+    expect(row.questionText).toBe('AI 가 만든 질문');
+  });
+
   it('E19 source 를 안 넘긴 행은 DB DEFAULT 로 ai 가 된다 (옛 질문 백필과 같은 경로)', async () => {
     const { accessToken, session } = await setupSession();
     await insertAiQuestion(session.id);
@@ -720,6 +764,108 @@ describe('면접 질문 은행 D1 (e2e)', () => {
       await get(`feature=${FEATURE}&count=0`).expect(400);
       await get(`feature=${FEATURE}&count=21`).expect(400);
       await get(`feature=${FEATURE}&userId=someone-else`).expect(400);
+    });
+  });
+
+  /**
+   * ── D2 (2026-08-12) — 세션 생성의 자소서 게이트 제거 ──
+   *
+   * v2 는 create 에서 "자소서 0건 → 400" 으로 막았고, 그 게이트가 남은 채 프론트만
+   * 열리자 **실기에서 세션 생성이 통째로 막혔다**. unit spec 은 service 만 보므로
+   * 이 미스를 잡았어야 할 층은 **실제 API 경계**다 — DTO·컨트롤러·서비스를 다 통과해
+   * 정말 201 이 나오는지 여기서 본다. (직무 게이트는 그대로 유지 — jobTitle 은 필요하다)
+   */
+  describe('POST /interview-prep-sessions — 자소서 없이 생성 (질문 은행 D2)', () => {
+    it('E32 🔴 coverletterIds 미전송 → 201 · 빈 배열로 저장된다', async () => {
+      const { accessToken, user } = await signInAsUser(app);
+      const application = await ds.getRepository(Application).save(
+        ds.getRepository(Application).create({
+          userId: user.id,
+          companyName: '치뽀',
+          jobTitle: '백엔드 개발자',
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post('/interview-prep-sessions')
+        .set(bearer(accessToken))
+        .send({ applicationId: application.id, round: '1차' })
+        .expect(201);
+
+      expect(res.body.data.coverletterIds).toEqual([]);
+    });
+  });
+
+  /**
+   * ── D2 (2026-08-12) — 면접 AI 4경로가 같은 자소서 게이트를 쓴다 ──
+   *
+   * 🔴 D1 은 게이트를 생성·↻ 에만 달았다. 그래서 자소서 없는 세션에서도 `AI 도움`(답변)과
+   * ✨(꼬리질문)은 게이트 없이 돌며 **코인을 썼다** — 실기에서 발견됐다. unit spec 은
+   * 서비스만 보므로 이 미스를 잡았어야 할 층은 **실제 API 경계**다: 컨트롤러가 `code` 를
+   * 흘려보내야 프론트가 "자소서를 추가하세요" 안내로 분기할 수 있다.
+   *
+   * 이 e2e 유저는 AI 사용 동의도 없다 — 게이트가 없었다면 `blocked_consent` 로 끝났을
+   * 자리다. **코드가 NEED_COVERLETTER 인 것**이 여기서 보려는 값이다.
+   */
+  describe('면접 AI 자소서 게이트 — 답변·꼬리질문 (질문 은행 D2)', () => {
+    it('E33 🔴 자소서 0건 → 답변 생성이 NEED_COVERLETTER 로 막힌다 (코인 미차감)', async () => {
+      const { accessToken, user, session } = await setupSession();
+      const aiQ = await insertAiQuestion(session.id);
+
+      const res = await request(app.getHttpServer())
+        .post(`/interview-prep-questions/${aiQ.id}/answer`)
+        .set(bearer(accessToken))
+        .expect(201);
+
+      expect(res.body.data.status).toBe('blocked');
+      expect(res.body.data.code).toBe('NEED_COVERLETTER');
+      expect(res.body.data.reason).toContain('자소서');
+
+      // 답변은 저장되지 않았다
+      const after = await ds
+        .getRepository(InterviewPrepQuestion)
+        .findOneByOrFail({ id: aiQ.id });
+      expect(after.suggestedAnswer).toBeNull();
+
+      // audit 은 **그 경로의 feature** 로 남고, provider 미호출이라 토큰·비용 0
+      const logs = await ds.getRepository(LlmCallLog).find({
+        where: { userId: user.id, feature: 'interview_prep_answer' },
+      });
+      expect(logs).toHaveLength(1);
+      expect(logs[0].status).toBe('blocked_quota'); // preBlocked 3종 재사용
+      expect(logs[0].errorMessage).toContain('NEED_COVERLETTER');
+      expect(Number(logs[0].costUsd)).toBe(0);
+      expect(logs[0].promptTokens).toBe(0);
+    });
+
+    it('E34 🔴 자소서 0건 → 꼬리질문이 NEED_COVERLETTER 로 막힌다 (코인 미차감)', async () => {
+      const { accessToken, user, session } = await setupSession();
+      const aiQ = await insertAiQuestion(session.id);
+
+      const res = await request(app.getHttpServer())
+        .post(`/interview-prep-questions/${aiQ.id}/followups`)
+        .set(bearer(accessToken))
+        .send({})
+        .expect(201);
+
+      expect(res.body.data.status).toBe('blocked');
+      expect(res.body.data.code).toBe('NEED_COVERLETTER');
+      expect(res.body.data.reason).toContain('자소서');
+
+      // 꼬리질문 row 가 생기지 않았다 (원본 질문 1개 그대로)
+      expect(
+        await ds
+          .getRepository(InterviewPrepQuestion)
+          .countBy({ sessionId: session.id }),
+      ).toBe(1);
+
+      const logs = await ds.getRepository(LlmCallLog).find({
+        where: { userId: user.id, feature: 'interview_prep_followup' },
+      });
+      expect(logs).toHaveLength(1);
+      expect(logs[0].status).toBe('blocked_quota');
+      expect(logs[0].errorMessage).toContain('NEED_COVERLETTER');
+      expect(Number(logs[0].costUsd)).toBe(0);
     });
   });
 });
