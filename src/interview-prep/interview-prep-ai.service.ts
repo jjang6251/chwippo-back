@@ -131,6 +131,11 @@ export interface RegenerateQuestionResult {
 export interface GenerateFollowupResult {
   status: GenerateStatus;
   reason?: string;
+  /**
+   * `status: 'blocked'` 일 때만. 없으면 쿼터·동의 등 기존 차단.
+   * 🔴 생성·↻ 와 **같은 코드**를 쓴다 — 프론트가 한 벌의 분기로 자소서 안내를 띄운다.
+   */
+  code?: GenerateBlockCode;
   question?: InterviewPrepQuestion;
   meta?: {
     callLogId: string;
@@ -141,6 +146,8 @@ export interface GenerateFollowupResult {
 export interface GenerateAnswerResult {
   status: GenerateStatus;
   reason?: string;
+  /** `status: 'blocked'` 일 때만. 없으면 쿼터·동의 등 기존 차단 */
+  code?: GenerateBlockCode;
   question?: InterviewPrepQuestion;
   meta?: {
     callLogId: string;
@@ -770,10 +777,20 @@ export class InterviewPrepAiService {
     userId: string,
     sessionId: string,
     counts: { requestedCount: number; effectiveCount: number },
+    /**
+     * 🔴 audit 는 **그 경로의 feature 로** 남긴다. 넷을 전부
+     * `interview_prep_session` 으로 남기면 admin 사용량 표에서 "답변·꼬리가 자소서
+     * 없이 몇 번 막혔는지" 가 생성 차단에 섞여 안 보인다 — 게이트를 어디에 안내로
+     * 바꿔야 하는지 판단할 근거가 사라진다.
+     */
+    feature:
+      | 'interview_prep_session'
+      | 'interview_prep_answer'
+      | 'interview_prep_followup' = 'interview_prep_session',
   ): Promise<{ reason: string; callLogId: string }> {
     const blocked = await this.llm.call({
       userId,
-      feature: 'interview_prep_session',
+      feature,
       systemPrompt: '',
       userPrompt: '',
       resourceType: 'interview_prep_session',
@@ -787,6 +804,45 @@ export class InterviewPrepAiService {
       preBlockedReason: `${NEED_COVERLETTER_CODE}: 세션·카드 모두 자소서 0건 (요청 ${counts.requestedCount}개)`,
     });
     return { reason: NEED_COVERLETTER_MESSAGE, callLogId: blocked.callLogId };
+  }
+
+  /**
+   * 답변(`AI 도움`)·꼬리질문의 자소서 게이트 (2026-08-12).
+   *
+   * 🔴 **게이트가 생성·↻ 에만 있었다.** 그래서 자소서 없는 세션에서도 답변 생성과
+   * 꼬리질문은 그대로 돌며 코인을 썼다 — 사용자는 "자소서를 넣어야 한다" 는 안내를
+   * 어디서도 못 받고, 재료 없이 만든 일반론 답변만 받았다. 면접 AI 4경로는 같은
+   * 게이트를 공유한다.
+   *
+   * 생성·↻ 는 자동 연결 UPDATE 를 **선점 claim 과 한 트랜잭션**으로 묶는다 (둘이
+   * 갈리면 "게이트를 통과한 자소서 ≠ 실제로 쓰인 자소서" 가 되기 때문). 이 두 경로엔
+   * claim 이 없어서 묶을 상대가 없고, 남는 건 단일 UPDATE 하나뿐이라 그 자체로 원자적이다.
+   *
+   * 반환이 `null` 이면 통과 — `session.coverletterIds` 는 게이트 결과(죽은 id 정리 ·
+   * 자동 연결)로 갱신돼 있어 호출부가 그대로 프롬프트에 쓰면 된다.
+   */
+  private async gateCoverlettersWithoutClaim(
+    userId: string,
+    session: InterviewPrepSession,
+    feature: 'interview_prep_answer' | 'interview_prep_followup',
+  ): Promise<{ reason: string; callLogId: string } | null> {
+    const gate = await this.resolveCoverlettersForGeneration(session);
+    if (gate.blocked) {
+      return this.blockNeedCoverletter(
+        userId,
+        session.id,
+        { requestedCount: 1, effectiveCount: 0 },
+        feature,
+      );
+    }
+    if (gate.changed) {
+      await this.sessionRepo.update(
+        { id: session.id },
+        { coverletterIds: gate.ids },
+      );
+    }
+    session.coverletterIds = gate.ids;
+    return null;
   }
 
   /**
@@ -1539,6 +1595,21 @@ export class InterviewPrepAiService {
     });
     if (!session) throw new NotFoundException('면접 세션을 찾을 수 없습니다.');
 
+    // 🔴 자소서 게이트는 쿼터·LLM **앞**이다 — 차단 시 코인도 쿨다운도 쓰지 않는다
+    const needCl = await this.gateCoverlettersWithoutClaim(
+      userId,
+      session,
+      'interview_prep_answer',
+    );
+    if (needCl) {
+      return {
+        status: 'blocked',
+        code: NEED_COVERLETTER_CODE,
+        reason: needCl.reason,
+        meta: { callLogId: needCl.callLogId },
+      };
+    }
+
     const quota = await this.quotaCheck.checkAndPrepare(
       userId,
       'interview_prep_answer',
@@ -1652,6 +1723,21 @@ export class InterviewPrepAiService {
       where: { id: parent.sessionId, userId },
     });
     if (!session) throw new NotFoundException('면접 세션을 찾을 수 없습니다.');
+
+    // 🔴 자소서 게이트는 쿼터·LLM **앞**이다 — 차단 시 코인도 쿨다운도 쓰지 않는다
+    const needCl = await this.gateCoverlettersWithoutClaim(
+      userId,
+      session,
+      'interview_prep_followup',
+    );
+    if (needCl) {
+      return {
+        status: 'blocked',
+        code: NEED_COVERLETTER_CODE,
+        reason: needCl.reason,
+        meta: { callLogId: needCl.callLogId },
+      };
+    }
 
     // Phase 4 — 회사·직무 컨텍스트 fetch (followup prompt 에 사용)
     const app = await this.appRepo.findOne({

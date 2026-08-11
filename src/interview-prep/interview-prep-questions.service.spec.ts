@@ -9,6 +9,7 @@ import {
   type SelectQueryBuilder,
 } from 'typeorm';
 import { BulkCreateQuestionsDto } from './dto/bulk-create-questions.dto';
+import { UpdateQuestionDto } from './dto/update-question.dto';
 import { InterviewPrepQuestion } from './entities/interview-prep-question.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
 import {
@@ -17,6 +18,7 @@ import {
   MAX_CUSTOM_QUESTIONS_PER_SESSION,
   QUESTION_SOURCE_AI,
   QUESTION_SOURCE_USER,
+  type QuestionNode,
 } from './interview-prep-questions.service';
 import { InterviewPrepSessionsService } from './interview-prep-sessions.service';
 
@@ -81,11 +83,20 @@ import { InterviewPrepSessionsService } from './interview-prep-sessions.service'
  *  U2  user 질문 category 수정 OK
  *  U3  user 질문 category: null → 미분류로 되돌림
  *  U4  🔴 AI 질문 questionText → 400
- *  U5  🔴 AI 질문 category → 400
+ *  U5  🔴 AI 질문 category → **200** (2026-08-12 반전. 아래 근거)
+ *  U5b 🔴 AI 질문 category: null 되돌리기도 200
  *  U6  🔴 AI 질문 myMemo → **여전히 OK** (기존 동작 불변)
  *  U7  AI 질문에 myMemo + questionText 동시 → 400 이고 myMemo 도 저장 안 됨
  *  U8  user 질문 questionText 501자 → 400
  *  U9  user 질문 questionText 공백만 → 400
+ *  U10 🔴 **대응표** — 필드 × AI 질문 허용 (questionText ✗ / category ✓ / mustPrepare ✓ / myMemo ✓)
+ *  U11 AI 질문에 category + questionText 동시 → 400 이고 category 도 저장 안 됨
+ *
+ * 🔴 **U5 는 원래 400 이었다** (2026-08-12 반전). AI 가 유형을 애매하게 붙였을 때
+ * 사용자가 바로잡지 못하면 **흐름 정렬·시험 범위 필터 자체가 성립하지 않는다.**
+ * `mustPrepare` 가 같은 논지로 먼저 전 질문 허용이 됐다 (「⭐만」 필터가 직접 추가
+ * 질문에서 영원히 비면 안 된다). 유형은 "AI 가 만든 것" 의 정체성이 아니라 **내 분류**라
+ * 본문과 축이 다르다 — 그래서 `questionText` 만 user 전용으로 남는다.
  *
  * ## 응답 필드 (저장은 되는데 안 실리는 사고 재발 방지)
  *  R1  source·lastPracticedAt·lastPracticeResult 가 트리 응답에 실린다
@@ -953,7 +964,7 @@ describe('InterviewPrepQuestionsService', () => {
   });
 
   // ── update 확장 (questionText · category) ──
-  describe('update 확장 — 내 질문만 본문·카테고리 수정', () => {
+  describe('update 확장 — 본문은 내 질문만 · 카테고리는 전 질문', () => {
     it('U1 user 질문 questionText 수정 OK (+ trim)', async () => {
       qQb.getOne.mockResolvedValueOnce(
         makeQuestionEntity({ source: QUESTION_SOURCE_USER }),
@@ -995,13 +1006,37 @@ describe('InterviewPrepQuestionsService', () => {
       expect(questionRepo.save).not.toHaveBeenCalled();
     });
 
-    it('U5 🔴 AI 질문 category 수정 → 400', async () => {
+    /**
+     * 🔴 **여기가 2026-08-12 에 뒤집힌 자리다** (전에는 400 이었다).
+     *
+     * AI 가 「왜 우리 회사인가요」에 `motivation` 이 아니라 `company_industry` 를 붙이는 식으로
+     * 유형을 애매하게 매기는 일이 있는데, 그걸 사용자가 못 고치면 **흐름 정렬과 시험 범위
+     * 필터가 근거를 잃는다** — 필터는 유형 값이 맞다는 전제 위에서만 쓸모가 있다.
+     * `mustPrepare` 가 먼저 같은 논지로 열렸다. 유형은 정체성이 아니라 내 분류다.
+     */
+    it('U5 🔴 AI 질문도 category 는 고칠 수 있다 — 흐름 정렬·필터의 근거', async () => {
       qQb.getOne.mockResolvedValueOnce(
-        makeQuestionEntity({ source: QUESTION_SOURCE_AI }),
+        makeQuestionEntity({
+          source: QUESTION_SOURCE_AI,
+          category: 'company_industry',
+        }),
       );
-      await expect(
-        service.update(USER_ID, 'q-1', { category: 'failure' }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      const node = await service.update(USER_ID, 'q-1', {
+        category: 'motivation',
+      });
+      expect(node.category).toBe('motivation');
+      expect(questionRepo.save).toHaveBeenCalled();
+    });
+
+    it('U5b 🔴 AI 질문 category: null → 미분류로 되돌리기도 된다', async () => {
+      qQb.getOne.mockResolvedValueOnce(
+        makeQuestionEntity({
+          source: QUESTION_SOURCE_AI,
+          category: 'company_industry',
+        }),
+      );
+      const node = await service.update(USER_ID, 'q-1', { category: null });
+      expect(node.category).toBeNull();
     });
 
     /**
@@ -1009,8 +1044,9 @@ describe('InterviewPrepQuestionsService', () => {
      *
      * 🔴 원래 LLM 전용 필드였다. 그 상태로 「⭐만」 필터를 내보내면 **직접 추가한
      * 질문에서는 영원히 빈 목록**이 나온다 — 은행의 중심이 「내가 모은 질문」인데
-     * 우선순위를 못 매기는 셈이다. `questionText`·`category` 의 user 전용 제한과
-     * 성격이 다르다 (그건 "AI 가 만든 것" 의 정체성, 이건 내 준비 표시).
+     * 우선순위를 못 매기는 셈이다. `questionText` 의 user 전용 제한과 성격이 다르다
+     * (그건 "AI 가 만든 것" 의 정체성, 이건 내 준비 표시).
+     * `category` 도 뒤이어 같은 논지로 열렸다 (U5 · U10 대응표).
      */
     it('M1 user 질문 mustPrepare 켜기 OK', async () => {
       qQb.getOne.mockResolvedValueOnce(
@@ -1117,6 +1153,98 @@ describe('InterviewPrepQuestionsService', () => {
       await expect(
         service.update(USER_ID, 'q-1', { questionText: '   ' }),
       ).rejects.toThrow(/1~500/);
+    });
+
+    /**
+     * U10 🔴 **필드 × 출처 대응표.** "AI 질문에서 무엇이 열려 있나" 를 한 표에 모은다.
+     *
+     * 개별 it 으로 흩어 두면 정책이 바뀔 때마다 **어디를 다 고쳐야 하는지**가 안 보이고,
+     * 실제로 `category` 는 그렇게 흩어진 채 `questionText` 와 한 덩어리로 묶여 있었다.
+     * 표로 두면 정책 변경 = 줄 하나 수정이고, 각 줄이 **왜 열렸/막혔는지**를 같이 들고 있어
+     * 다음 사람이 "이건 왜 되고 저건 왜 안 되나" 를 추측하지 않는다.
+     *
+     * 축이 둘이다 — **정체성**(AI 가 만든 것인가: `questionText`)과 **내 것**(내 분류·내 준비
+     * 표시·내 답변: 나머지 전부). 새 필드를 열 때 물어야 할 질문은 "user 전용인가" 가 아니라
+     * "이 필드는 어느 축인가" 다.
+     */
+    const AI_PATCH_MATRIX: ReadonlyArray<{
+      field: string;
+      patch: UpdateQuestionDto;
+      allowedOnAi: boolean;
+      why: string;
+      expect: (node: QuestionNode) => void;
+    }> = [
+      {
+        field: 'questionText',
+        patch: { questionText: '몰래 고치기' },
+        allowedOnAi: false,
+        why: '고치면 ↻(낱개 교체)가 무엇을 근거로 다시 뽑을지 사라진다 — 정체성 축',
+        expect: () => undefined,
+      },
+      {
+        field: 'category',
+        patch: { category: 'motivation' },
+        allowedOnAi: true,
+        why: 'AI 가 유형을 애매하게 붙였을 때 못 고치면 흐름 정렬·시험 범위 필터가 성립하지 않는다',
+        expect: (node) => expect(node.category).toBe('motivation'),
+      },
+      {
+        field: 'mustPrepare',
+        patch: { mustPrepare: true },
+        allowedOnAi: true,
+        why: '「⭐만」 필터가 직접 추가 질문에서 영원히 비면 안 된다 — 내 준비 표시 축',
+        expect: (node) => expect(node.mustPrepare).toBe(true),
+      },
+      {
+        field: 'myMemo',
+        patch: { myMemo: '내가 쓴 답변' },
+        allowedOnAi: true,
+        why: '내 답변은 질문을 누가 만들었는지와 무관하다',
+        expect: (node) => expect(node.myMemo).toBe('내가 쓴 답변'),
+      },
+    ];
+
+    it.each(AI_PATCH_MATRIX)(
+      'U10 대응표 — AI 질문 $field (허용=$allowedOnAi): $why',
+      async ({ patch, allowedOnAi, expect: assertNode }) => {
+        qQb.getOne.mockResolvedValueOnce(
+          makeQuestionEntity({
+            source: QUESTION_SOURCE_AI,
+            category: 'company_industry',
+            mustPrepare: false,
+          }),
+        );
+        if (!allowedOnAi) {
+          await expect(
+            service.update(USER_ID, 'q-1', patch),
+          ).rejects.toBeInstanceOf(BadRequestException);
+          expect(questionRepo.save).not.toHaveBeenCalled();
+          return;
+        }
+        const node = await service.update(USER_ID, 'q-1', patch);
+        assertNode(node);
+        expect(questionRepo.save).toHaveBeenCalled();
+      },
+    );
+
+    /**
+     * U11 — 열린 필드와 막힌 필드를 **한 요청에 섞으면 전부 무효**다.
+     * 가드가 저장보다 먼저 서므로 부분 반영이 없다 (U7 의 myMemo 판과 같은 모양).
+     */
+    it('U11 AI 질문에 category + questionText 동시 → 400 이고 category 도 저장 안 된다', async () => {
+      qQb.getOne.mockResolvedValueOnce(
+        makeQuestionEntity({
+          source: QUESTION_SOURCE_AI,
+          category: 'company_industry',
+        }),
+      );
+      await expect(
+        service.update(USER_ID, 'q-1', {
+          category: 'motivation',
+          questionText: '몰래 고치기',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(questionRepo.save).not.toHaveBeenCalled();
     });
   });
 

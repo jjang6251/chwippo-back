@@ -93,6 +93,15 @@ import { InterviewPrepQuestionsService } from './interview-prep-questions.servic
  *  R6 in_progress 중이면 409
  *  R7 quota 차단 → blocked (provider 미호출)
  *  R8 자소서 0건 → NEED_COVERLETTER blocked
+ *
+ * ── 답변·꼬리 자소서 게이트 (2026-08-12) ──
+ *
+ * 🔴 D1 은 게이트를 **생성·↻ 에만** 달았다. 자소서 없는 세션에서 답변 생성·꼬리질문이
+ * 게이트 없이 코인을 쓰며 돌았다 (실기 발견). 면접 AI 4경로가 같은 게이트를 공유한다.
+ *  AN1 답변 — 자소서 0건 → blocked + code + provider 미호출 + 쿼터 미진입
+ *  AN2 답변 — 자동 연결 후 정상 진행 (프롬프트에도 실린다)
+ *  AN3 답변 — 죽은 id 정리
+ *  FU1~FU3 꼬리질문 — 같은 3종
  */
 describe('InterviewPrepAiService', () => {
   let service: InterviewPrepAiService;
@@ -1804,6 +1813,88 @@ describe('InterviewPrepAiService', () => {
       const r = await service.generateAnswer(USER_ID, QUESTION_ID);
       expect(r.question?.sourceLogIds).toEqual([]);
     });
+
+    /**
+     * 🔴 **자소서 게이트 (2026-08-12)** — D1 은 게이트를 생성·↻ 에만 달았다. 그래서
+     * 자소서 없는 세션에서 `AI 도움` 은 게이트 없이 돌며 **코인을 썼다** (실기 발견).
+     * 사용자는 자소서를 넣어야 한다는 안내를 어디서도 못 받은 채 일반론 답변만 받았다.
+     * 면접 AI 4경로(생성·↻·답변·꼬리)가 같은 게이트를 공유한다.
+     */
+    describe('🔴 NEED_COVERLETTER 게이트', () => {
+      it('AN1 자소서 0건 → 차단 · provider 미호출 · 쿼터 미진입', async () => {
+        sessionRepo.findOne.mockResolvedValue(
+          makeSession({ coverletterIds: [] }),
+        );
+        clRepo.find.mockResolvedValue([]);
+        llm.call.mockResolvedValue({
+          status: 'blocked_quota',
+          text: null,
+          errorMessage: 'need coverletter',
+          callLogId: 'log-need-answer',
+        });
+
+        const r = await service.generateAnswer(USER_ID, QUESTION_ID);
+
+        expect(r.status).toBe('blocked');
+        // 문구가 아니라 코드로 분기한다 (생성·↻ 와 같은 코드)
+        expect(r.code).toBe('NEED_COVERLETTER');
+        expect(r.reason).toContain('자소서');
+        // ① audit row 1건뿐 = provider 미호출 = 코인 미차감
+        expect(llm.call).toHaveBeenCalledTimes(1);
+        expect(llm.call).toHaveBeenCalledWith(
+          expect.objectContaining({
+            // 🔴 audit 은 그 경로의 feature 로 남아야 admin 에서 구분된다
+            feature: 'interview_prep_answer',
+            preBlockedStatus: 'blocked_quota',
+            preBlockedReason: expect.stringContaining('NEED_COVERLETTER'),
+          }),
+        );
+        // ② 게이트가 쿼터 앞이다 — 차단이 쿨다운·일일 한도를 먹지 않는다
+        expect(quotaCheck.checkAndPrepare).not.toHaveBeenCalled();
+        // ③ 저장도 없다
+        expect(questionRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('AN2 자동 연결 — 세션 0건 · 카드에 있음 → 연결 후 정상 진행', async () => {
+        sessionRepo.findOne.mockResolvedValue(
+          makeSession({ coverletterIds: [] }),
+        );
+        clRepo.find.mockResolvedValue([
+          makeCoverletter('cl-a'),
+          makeCoverletter('cl-b'),
+        ]);
+        llm.call.mockResolvedValue(okAnswer);
+
+        const r = await service.generateAnswer(USER_ID, QUESTION_ID);
+
+        expect(r.status).toBe('ok');
+        // 선점(claim)이 없는 경로라 세션 UPDATE 단독 — 트랜잭션을 열지 않는다
+        expect(sessionRepo.update).toHaveBeenCalledWith(
+          { id: SESSION_ID },
+          { coverletterIds: ['cl-a', 'cl-b'] },
+        );
+        // 🔴 연결만 하고 프롬프트엔 안 실리면 게이트만 통과한 셈이다
+        expect(llm.call.mock.calls[0][0].userPrompt).toContain(
+          '# 자소서 문항·답변',
+        );
+      });
+
+      it('AN3 죽은 id 는 정리하고 살아 있는 것만 쓴다', async () => {
+        sessionRepo.findOne.mockResolvedValue(
+          makeSession({ coverletterIds: ['cl-dead', CL_ID] }),
+        );
+        clRepo.find.mockResolvedValue([makeCoverletter()]);
+        llm.call.mockResolvedValue(okAnswer);
+
+        const r = await service.generateAnswer(USER_ID, QUESTION_ID);
+
+        expect(r.status).toBe('ok');
+        expect(sessionRepo.update).toHaveBeenCalledWith(
+          { id: SESSION_ID },
+          { coverletterIds: [CL_ID] },
+        );
+      });
+    });
   });
 
   /**
@@ -2527,6 +2618,81 @@ describe('InterviewPrepAiService', () => {
       expect(p).toContain('이미 있는 질문 A');
       // 본인은 빼야 한다 (부모 블록에 이미 있다)
       expect(p).not.toContain('- 부모 자신');
+    });
+
+    /**
+     * 🔴 **자소서 게이트 (2026-08-12)** — 답변과 같은 이유로 여기도 뚫려 있었다.
+     * 꼬리질문은 프롬프트에 자소서를 싣지 않지만, 게이트의 뜻은 "이 세션에 재료가
+     * 있는가" 다 — 재료 없는 세션에서 AI 를 계속 쓰게 두면 사용자는 코인만 쓰고
+     * 왜 결과가 얕은지 모른다. 4경로가 같은 판정을 공유해야 안내가 한 벌로 선다.
+     */
+    describe('🔴 NEED_COVERLETTER 게이트', () => {
+      it('FU1 자소서 0건 → 차단 · provider 미호출 · 쿼터 미진입', async () => {
+        sessionRepo.findOne.mockResolvedValue(
+          makeSession({ coverletterIds: [] }),
+        );
+        clRepo.find.mockResolvedValue([]);
+        llm.call.mockResolvedValue({
+          status: 'blocked_quota',
+          text: null,
+          errorMessage: 'need coverletter',
+          callLogId: 'log-need-followup',
+        });
+
+        const r = await service.generateFollowup(USER_ID, 'q-parent');
+
+        expect(r.status).toBe('blocked');
+        expect(r.code).toBe('NEED_COVERLETTER');
+        expect(r.reason).toContain('자소서');
+        // ① audit row 1건뿐 = provider 미호출 = 코인 미차감
+        expect(llm.call).toHaveBeenCalledTimes(1);
+        expect(llm.call).toHaveBeenCalledWith(
+          expect.objectContaining({
+            feature: 'interview_prep_followup',
+            preBlockedStatus: 'blocked_quota',
+            preBlockedReason: expect.stringContaining('NEED_COVERLETTER'),
+          }),
+        );
+        // ② 게이트가 쿼터 앞이다
+        expect(quotaCheck.checkAndPrepare).not.toHaveBeenCalled();
+        // ③ 꼬리질문도 안 생긴다
+        expect(questionRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('FU2 자동 연결 — 세션 0건 · 카드에 있음 → 연결 후 정상 진행', async () => {
+        sessionRepo.findOne.mockResolvedValue(
+          makeSession({ coverletterIds: [] }),
+        );
+        clRepo.find.mockResolvedValue([
+          makeCoverletter('cl-a'),
+          makeCoverletter('cl-b'),
+        ]);
+        llm.call.mockResolvedValue(okFollowup);
+
+        const r = await service.generateFollowup(USER_ID, 'q-parent');
+
+        expect(r.status).toBe('ok');
+        expect(sessionRepo.update).toHaveBeenCalledWith(
+          { id: SESSION_ID },
+          { coverletterIds: ['cl-a', 'cl-b'] },
+        );
+      });
+
+      it('FU3 죽은 id 는 정리하고 살아 있는 것만 쓴다', async () => {
+        sessionRepo.findOne.mockResolvedValue(
+          makeSession({ coverletterIds: ['cl-dead', CL_ID] }),
+        );
+        clRepo.find.mockResolvedValue([makeCoverletter()]);
+        llm.call.mockResolvedValue(okFollowup);
+
+        const r = await service.generateFollowup(USER_ID, 'q-parent');
+
+        expect(r.status).toBe('ok');
+        expect(sessionRepo.update).toHaveBeenCalledWith(
+          { id: SESSION_ID },
+          { coverletterIds: [CL_ID] },
+        );
+      });
     });
   });
 

@@ -21,7 +21,7 @@ import { InterviewPrepQuestionsService } from './interview-prep-questions.servic
 /**
  * F6 PR 2 Phase 2 — 면접 질문 endpoints.
  *
- * - PATCH  /interview-prep-questions/:id              — my_memo autosave + (내 질문만) 본문·카테고리 수정
+ * - PATCH  /interview-prep-questions/:id              — my_memo autosave + 카테고리·⭐ 수정 + (내 질문만) 본문 수정
  * - DELETE /interview-prep-questions/:id              — 질문 삭제 (AI·내 질문 모두 · 자손 CASCADE)
  * - POST   /interview-prep-questions/:id/practice     — 「면접 보기」 자가평가 저장
  * - POST   /interview-prep-questions/:id/answer       — AI 예상 답변 1개 생성 (v2)
