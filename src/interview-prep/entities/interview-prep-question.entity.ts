@@ -123,6 +123,44 @@ export class InterviewPrepQuestion {
   @Column({ name: 'my_memo', type: 'text', nullable: true })
   myMemo: string | null;
 
+  /**
+   * 질문 출처 — `'ai'` | `'user'` (질문 은행 D1, 2026-08-11).
+   *
+   * 🔴 **`NOT NULL DEFAULT 'ai'` 인 이유** — 이미 저장된 질문은 전부 AI 가 만든 것이라
+   * 기본값이 곧 정확한 백필이다. 별도 UPDATE 없이 마이그레이션 한 줄로 끝난다.
+   *
+   * 이 값이 갈라놓는 것: 「내 질문」 배지 · 텍스트/카테고리 수정권(user 만) ·
+   * 직접 꼬리를 달 수 있는 트리(루트가 user) · 면접 보기의 출처 필터.
+   *
+   * varchar 로 두고 CHECK 를 안 건 이유는 `interview_type`·`category` 와 같다 —
+   * 값 추가가 마이그레이션을 부르지 않게 한다. 실제 강제는 DTO 화이트리스트가 한다.
+   */
+  @Column({ name: 'source', type: 'varchar', length: 10, default: 'ai' })
+  source: string;
+
+  /**
+   * 마지막으로 **면접 보기(연습)** 에서 이 질문을 평가한 시각.
+   *
+   * 🔴 **서버 `now()` 만 쓴다.** 클라이언트 시각은 기기 설정으로 조작되고, 이 값이
+   * "최근에 안 본 것부터" 정렬의 근거가 되면 조작이 곧 순서 조작이 된다.
+   */
+  @Column({ name: 'last_practiced_at', type: 'timestamptz', nullable: true })
+  lastPracticedAt: Date | null;
+
+  /**
+   * 마지막 연습 결과 — `'good'` | `'soso'` | `'again'`. NULL = 아직 연습 안 함.
+   *
+   * 시험 설정의 「다시 볼 것만」 범위가 `'again'` 을 고른다. 이력이 아니라 **최신 1건만**
+   * 남기는 이유는, 사용자가 묻는 게 "지금 약한 게 뭐냐" 하나라서다 (이력 테이블은 Out of Scope).
+   */
+  @Column({
+    name: 'last_practice_result',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  lastPracticeResult: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

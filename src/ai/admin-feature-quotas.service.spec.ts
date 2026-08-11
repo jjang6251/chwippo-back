@@ -120,6 +120,18 @@ describe('AdminFeatureQuotasService', () => {
       expect(r.dayLimit).toBe(77);
     });
 
+    it('interview_prep_answer 도 유효 feature — VALID_FEATURES 누락 회귀 방지 (2026-08-06 신설 시 등록 누락)', async () => {
+      const row = makeRow({
+        feature: 'interview_prep_answer',
+        dayLimit: 10000,
+      });
+      repo.findOne.mockResolvedValue(row);
+      const r = await service.update(ADMIN, 'interview_prep_answer', 'free', {
+        dayLimit: 20,
+      });
+      expect(r.dayLimit).toBe(20);
+    });
+
     it('정상 — dayLimit 만 변경 + audit 기록', async () => {
       const row = makeRow({ dayLimit: 30 });
       repo.findOne.mockResolvedValue(row);

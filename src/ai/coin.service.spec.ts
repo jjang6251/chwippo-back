@@ -291,6 +291,101 @@ describe('CoinService', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────
+  // estimateCoins — 예약치 (D1c: canCharge 와 GET /me/ai-costs 의 공통 기준)
+  // ───────────────────────────────────────────────────────────────────
+
+  describe('estimateCoins — feature 단위 예약치', () => {
+    it('avg_coin_cost 3 → 3.6 (×1.2)', async () => {
+      featureMetaRepo.findOne.mockResolvedValue({
+        feature: 'interview_prep_session',
+        chargesCoins: true,
+        avgCoinCost: '3.0',
+        fixedCoinCost: null,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const r = await service.estimateCoins('interview_prep_session');
+      expect(r).toEqual({ chargesCoins: true, estimatedCoins: 3.6 });
+    });
+
+    it('0.1 단위 ceil — avg 2.5 → 3.0 (2.5×1.2=3.0 정확)', async () => {
+      featureMetaRepo.findOne.mockResolvedValue({
+        feature: 'interview_prep_session',
+        chargesCoins: true,
+        avgCoinCost: '2.5',
+        fixedCoinCost: null,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const r = await service.estimateCoins('interview_prep_session');
+      expect(r.estimatedCoins).toBe(3);
+    });
+
+    it('fixed_coin_cost 가 있으면 avg 를 무시하고 그 값', async () => {
+      featureMetaRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        chargesCoins: true,
+        avgCoinCost: '3.0',
+        fixedCoinCost: 50,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const r = await service.estimateCoins('note_summary');
+      expect(r).toEqual({ chargesCoins: true, estimatedCoins: 50 });
+    });
+
+    it('charges_coins=false (우리 부담) → 0', async () => {
+      featureMetaRepo.findOne.mockResolvedValue({
+        feature: 'note_summary',
+        chargesCoins: false,
+        avgCoinCost: '0',
+        fixedCoinCost: null,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const r = await service.estimateCoins('note_summary');
+      expect(r).toEqual({ chargesCoins: false, estimatedCoins: 0 });
+    });
+
+    it('meta 행 자체가 없음 → 0 (chargesCoins() 와 같은 취급)', async () => {
+      featureMetaRepo.findOne.mockResolvedValue(null);
+      const r = await service.estimateCoins('interview_prep_session');
+      expect(r).toEqual({ chargesCoins: false, estimatedCoins: 0 });
+    });
+
+    it('🔴 canCharge 의 게이트 기준과 같은 숫자 — 잔여가 예약치보다 0.1 모자라면 막힌다', async () => {
+      featureMetaRepo.findOne.mockResolvedValue({
+        feature: 'interview_prep_session',
+        chargesCoins: true,
+        avgCoinCost: '3.0',
+        fixedCoinCost: null,
+        description: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const { estimatedCoins } = await service.estimateCoins(
+        'interview_prep_session',
+      );
+      balanceRepo.findOne.mockResolvedValue({
+        userId: USER_ID,
+        tier: 'free',
+        balance: (estimatedCoins - 0.1).toFixed(1),
+        cycleStartAt: new Date(),
+        nextResetAt: new Date(Date.now() + 86400000),
+        planStartedAt: null,
+        planExpiresAt: null,
+      } as unknown as UserCoinBalance);
+      const r = await service.canCharge(USER_ID, 'interview_prep_session');
+      expect(r.ok).toBe(false);
+      expect(r.reason).toContain(String(estimatedCoins));
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────
   // canCharge — 호출 시작 전 추정 check
   // ───────────────────────────────────────────────────────────────────
 

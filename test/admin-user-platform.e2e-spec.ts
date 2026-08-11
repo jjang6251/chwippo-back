@@ -59,7 +59,9 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
    * 🔴 `DataSource.query` 만 감시하면 **QueryBuilder 로 나가는 쿼리를 통째로 놓친다** —
    * 둘 다 결국 `QueryRunner.query` 를 거치므로 **프로토타입**에 스파이를 건다.
    */
-  async function countQueries<T>(fn: () => Promise<T>): Promise<[T, number]> {
+  async function countQueries<T>(
+    fn: () => Promise<T>,
+  ): Promise<[T, number, string[]]> {
     const runner = ds.createQueryRunner();
     const proto = Object.getPrototypeOf(runner) as {
       query: (...a: never[]) => unknown;
@@ -69,10 +71,35 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
     const spy = jest.spyOn(proto, 'query');
     try {
       const out = await fn();
-      return [out, spy.mock.calls.length];
+      const sqls = spy.mock.calls.map((c) => String(c[0]));
+      return [out, spy.mock.calls.length, sqls];
     } finally {
       spy.mockRestore();
     }
+  }
+
+  /**
+   * 🔴 **여러 번 재고 최소값을 취한다.**
+   *
+   * 스파이가 프로토타입에 걸려 있어 **프로세스 전체 쿼리**를 센다 — 측정 대상과 무관한
+   * 비동기 작업의 잔류 쿼리(await 하지 않고 발사되는 best-effort audit insert 류)가
+   * 느린 러너에서 측정 창 안에 늦게 착지하면 카운트가 부푼다.
+   * CI #435 실사고: `q1=6 > q5=4` — **N+1 이면 사용자가 많은 쪽이 적을 수 없다.** 측정 오염이다.
+   *
+   * 노이즈는 카운트를 **더하기만 하고 빼지는 못하므로 최소값이 참값**이다.
+   * 잔류 promise 는 유한개라 첫 샘플이 소진시킨다 — 재발하려면 3회 연속 오염돼야 한다.
+   */
+  async function measureQueriesStable(
+    fn: () => Promise<unknown>,
+    samples = 3,
+  ): Promise<{ count: number; sqls: string[] }> {
+    const [, count, sqls] = await countQueries(fn);
+    let best = { count, sqls };
+    for (let i = 1; i < samples; i += 1) {
+      const [, c, s] = await countQueries(fn);
+      if (c < best.count) best = { count: c, sqls: s };
+    }
+    return best;
   }
 
   describe('GET /admin/users — 목록 뱃지', () => {
@@ -120,7 +147,7 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
         .set(bearer(admin.accessToken))
         .expect(200);
 
-      const [, q1] = await countQueries(async () => {
+      const m1 = await measureQueriesStable(async () => {
         await request(app.getHttpServer())
           .get('/admin/users?limit=100')
           .set(bearer(admin.accessToken))
@@ -132,14 +159,45 @@ describe('Admin 회원 사용 환경 (e2e)', () => {
         await seedLogin(u.user.id, i % 2 === 0 ? 'app' : 'web');
       }
 
-      const [, q5] = await countQueries(async () => {
+      const m5 = await measureQueriesStable(async () => {
         await request(app.getHttpServer())
           .get('/admin/users?limit=100')
           .set(bearer(admin.accessToken))
           .expect(200);
       });
 
-      expect(q5).toBe(q1);
+      // 실패하면 **어떤 쿼리가 침입했는지**가 그대로 찍혀야 다음 조사에서 헤매지 않는다
+      if (m5.count !== m1.count) {
+        throw new Error(
+          [
+            `쿼리 수 불일치 — 1명: ${m1.count} vs 5명: ${m5.count}`,
+            '(최소값 3회 측정 후에도 다르면 진짜 회귀이거나 지속적 백그라운드 쿼리다)',
+            '--- 1명 측정에 잡힌 SQL ---',
+            ...m1.sqls,
+            '--- 5명 측정에 잡힌 SQL ---',
+            ...m5.sqls,
+          ].join('\n'),
+        );
+      }
+    });
+
+    /**
+     * 🔴 **경화 자체의 회귀 가드다.** 첫 샘플에만 노이즈를 심으므로
+     * `measureQueriesStable` 을 단일 측정으로 되돌리면 이 spec 이 즉시 실패한다.
+     */
+    it('🔴 잔류 쿼리가 측정 창에 착지해도 최소값 측정은 오염되지 않는다 (CI #435 재현)', async () => {
+      let first = true;
+      const measured = async () => {
+        if (first) {
+          first = false;
+          // best-effort audit insert 의 모형 — await 없이 발사돼 측정 창 안에 착지한다
+          void ds.query('SELECT 1');
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        await ds.query('SELECT 2');
+      };
+      const m = await measureQueriesStable(measured);
+      expect(m.count).toBe(1); // 1번째 샘플은 2로 오염되지만 2·3번째가 참값 1을 돌려준다
     });
   });
 

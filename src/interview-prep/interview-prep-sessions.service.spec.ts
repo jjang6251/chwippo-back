@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
@@ -91,9 +87,9 @@ describe('InterviewPrepSessionsService', () => {
     clQb.innerJoin.mockReturnThis();
     clQb.where.mockReturnThis();
     clQb.andWhere.mockReturnThis();
-    // v2 — 세션 생성에 자소서가 **필수**가 되면서, 대부분의 create 테스트가
-    //   자소서 1개를 넘긴다. 기본값을 1 로 두면 각 테스트가 IDOR mock 을 매번 안 세워도 된다.
-    //   (0개 케이스는 아래 전용 테스트에서 명시적으로 다룬다)
+    // 대부분의 create 테스트가 자소서 1개를 넘긴다. 기본값을 1 로 두면 각 테스트가
+    //   IDOR mock 을 매번 안 세워도 된다. (0개 케이스는 IDOR batch 가 early return 이라
+    //   이 mock 을 아예 안 탄다 — 아래 D2 테스트 참조)
     clQb.getCount.mockReset().mockResolvedValue(1);
 
     appRepo.createQueryBuilder.mockReturnValue(appQb);
@@ -219,30 +215,32 @@ describe('InterviewPrepSessionsService', () => {
     });
 
     /**
-     * 🔴 v2 (2026-08-06 CEO 결정) — **자소서 없이는 세션을 만들 수 없다.**
+     * 🔴 질문 은행 D2 (2026-08-12) — **자소서 없이도 세션을 만들 수 있다.**
      *
-     * 이 기능의 값어치가 "내 자소서를 파고드는 질문" 이라 자소서가 없으면 검색으로 되는
-     * 일반 질문지가 된다. 동시에 자소서를 등록할 이유를 만드는 장치다.
+     * v2(2026-08-06)의 "자소서 없이는 세션을 못 만든다" 게이트를 뒤집은 자리다. 당시 근거였던
+     * "질문 생성에서 막으면 쓸 수 없는 빈 세션이 막다른 길로 남는다" 가 정확히 뒤집혔다 —
+     * 빈 세션은 이제 **직접 질문을 모으는 시작점**이고(추가 폼이 primary), AI 재료가 필요한
+     * 순간의 경계는 generate 의 NEED_COVERLETTER 게이트가 지킨다 (ADR-077 세트).
      *
-     * **프론트 버튼 disabled 만으로는 부족하다** — devtools·직접 호출로 우회된다.
-     * 여기가 진짜 경계이므로 서버에서 막는 걸 고정한다.
+     * 게이트를 지우는 대신 **반대 불변식으로 고정한다** — 다시 create 에서 막으면 여기서 깨진다.
      */
-    it('🔴 자소서 0건 → BadRequest (프론트 우회 방어) + 저장 안 함', async () => {
-      await expect(
-        service.create(USER_ID, {
-          applicationId: APP_ID,
-          round: '1차',
-          coverletterIds: [],
-        }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(sessionRepo.save).not.toHaveBeenCalled();
+    it('🔴 자소서 0건이어도 만들어진다 — 빈 세션은 기출을 쌓는 시작점 (질문 은행 D2)', async () => {
+      const r = await service.create(USER_ID, {
+        applicationId: APP_ID,
+        round: '1차',
+        coverletterIds: [],
+      });
+      expect(r.coverletterIds).toEqual([]);
+      expect(sessionRepo.save).toHaveBeenCalled();
     });
 
-    it('🔴 coverletterIds 자체를 안 보내도 BadRequest (undefined 우회 방어)', async () => {
-      await expect(
-        service.create(USER_ID, { applicationId: APP_ID, round: '1차' }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(sessionRepo.save).not.toHaveBeenCalled();
+    it('coverletterIds 미전송도 만들어진다 + 빈 배열로 저장', async () => {
+      const r = await service.create(USER_ID, {
+        applicationId: APP_ID,
+        round: '1차',
+      });
+      expect(r.coverletterIds).toEqual([]);
+      expect(sessionRepo.save).toHaveBeenCalled();
     });
 
     /**
@@ -254,7 +252,7 @@ describe('InterviewPrepSessionsService', () => {
       ['공백만', { jobCategory: '   ', jobTitle: '  ' }],
     ])('🔴 직무 없음(%s) → BadRequest + 저장 안 함', async (_label, patch) => {
       appQb.getOne.mockResolvedValue(makeApp(patch));
-      // 🔴 메시지까지 본다 — BadRequest 만 보면 자소서 게이트가 대신 던져도 통과한다
+      // 🔴 메시지까지 본다 — BadRequest 만 보면 다른 400(DTO·IDOR 등)이 대신 던져도 통과한다
       await expect(
         service.create(USER_ID, {
           applicationId: APP_ID,
