@@ -8,6 +8,7 @@ import { MyinfoModule } from '../myinfo/myinfo.module';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
+import { StepNoteSheet } from './step-note-sheet.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { CoverletterSourceRef } from './coverletter-source-ref.entity';
 import { CoverletterChatMessage } from './coverletter-chat-message.entity';
@@ -29,6 +30,8 @@ import { CoverletterChatCleanupCron } from './coverletter-chat-cleanup.cron';
 import { CoverletterGenerationStuckCron } from './coverletter-generation-stuck.cron';
 import { JobPostingController } from './job-posting.controller';
 import { JobPostingService } from './job-posting.service';
+import { StepNoteSheetsController } from './step-note-sheets.controller';
+import { StepNoteSheetsService } from './step-note-sheets.service';
 
 @Module({
   imports: [
@@ -36,6 +39,7 @@ import { JobPostingService } from './job-posting.service';
       Application,
       ApplicationStep,
       StepChecklistItem,
+      StepNoteSheet,
       ApplicationCoverletter,
       CoverletterSourceRef,
       CoverletterChatMessage,
@@ -63,6 +67,7 @@ import { JobPostingService } from './job-posting.service';
     AiCoverletterController,
     CoverletterDocController,
     JobPostingController,
+    StepNoteSheetsController,
   ],
   providers: [
     ApplicationsService,
@@ -74,6 +79,7 @@ import { JobPostingService } from './job-posting.service';
     CoverletterChatCleanupCron,
     CoverletterGenerationStuckCron,
     JobPostingService,
+    StepNoteSheetsService,
   ],
   // F5 hard delete 가드가 ActivityLog/Reflection 서비스에서
   // CoverletterSourceRef Repository 를 조회하므로 TypeOrmModule export 필요
