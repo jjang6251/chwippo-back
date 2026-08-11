@@ -9,9 +9,10 @@ import {
   IsInt,
   Min,
   Max,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { EmptyToNull, EmptyToUndef } from './transforms';
+import { EmptyToNull, EmptyToUndef, TrimToNull } from './transforms';
 
 // ── Language Cert ─────────────────────────────────────────
 export class CreateLanguageCertDto {
@@ -142,6 +143,9 @@ export class EducationMinorDto {
   name: string;
 }
 
+/** gpa · gpa_max 컬럼이 numeric(4,2) — 0~99.99, 소수점 이하 2자리까지만 허용. */
+const GPA_PATTERN = /^\d{1,2}(\.\d{1,2})?$/;
+
 export class CreateEducationDto {
   @IsString()
   @MaxLength(100)
@@ -150,8 +154,8 @@ export class CreateEducationDto {
   @IsOptional() @IsString() @MaxLength(100) major?: string;
   @IsOptional() @IsString() @MaxLength(100) minor?: string;
   @IsOptional() @IsString() @MaxLength(50) degree?: string;
-  @IsOptional() @IsString() @MaxLength(10) gpa?: string;
-  @IsOptional() @IsString() @MaxLength(10) gpa_max?: string;
+  @IsOptional() @TrimToNull() @Matches(GPA_PATTERN) gpa?: string;
+  @IsOptional() @TrimToNull() @Matches(GPA_PATTERN) gpa_max?: string;
   @IsOptional() @EmptyToUndef() @IsDateString() start_at?: string;
   @IsOptional() @EmptyToUndef() @IsDateString() end_at?: string;
   @IsOptional() @IsString() @MaxLength(20) status?: string;
@@ -174,8 +178,8 @@ export class UpdateEducationDto {
   @IsOptional() @IsString() @MaxLength(100) major?: string;
   @IsOptional() @IsString() @MaxLength(100) minor?: string;
   @IsOptional() @IsString() @MaxLength(50) degree?: string;
-  @IsOptional() @IsString() @MaxLength(10) gpa?: string;
-  @IsOptional() @IsString() @MaxLength(10) gpa_max?: string;
+  @IsOptional() @TrimToNull() @Matches(GPA_PATTERN) gpa?: string;
+  @IsOptional() @TrimToNull() @Matches(GPA_PATTERN) gpa_max?: string;
   @IsOptional() @EmptyToUndef() @IsDateString() start_at?: string;
   @IsOptional() @EmptyToUndef() @IsDateString() end_at?: string;
   @IsOptional() @IsString() @MaxLength(20) status?: string;
