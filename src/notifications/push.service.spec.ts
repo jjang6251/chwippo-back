@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { mock } from 'jest-mock-extended';
-import Expo from 'expo-server-sdk';
+import Expo, { ExpoPushTicket } from 'expo-server-sdk';
 import { PushService } from './push.service';
 import { UserDevice } from '../devices/user-device.entity';
 
@@ -43,6 +43,23 @@ describe('PushService', () => {
     });
     expect(result.sent).toBe(2); // bad 제외
     expect(result.removedInvalid).toBe(0);
+  });
+
+  it('발송 메시지 전부 priority high (Android 절전 배달 유예 방지)', async () => {
+    const okTickets: ExpoPushTicket[] = [
+      { status: 'ok', id: 'r1' },
+      { status: 'ok', id: 'r2' },
+    ];
+    const sendSpy = jest
+      .spyOn(Expo.prototype, 'sendPushNotificationsAsync')
+      .mockResolvedValue(okTickets);
+
+    await service.sendToTokens([VALID, VALID2], { title: 't', body: 'b' });
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    const chunk = sendSpy.mock.calls[0][0];
+    expect(chunk).toHaveLength(2);
+    chunk.forEach((message) => expect(message.priority).toBe('high'));
   });
 
   it('DeviceNotRegistered ticket → 해당 device 삭제', async () => {
