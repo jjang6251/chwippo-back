@@ -66,6 +66,9 @@ export class PushService {
       title: payload.title,
       body: payload.body,
       sound: 'default',
+      // Android 절전 기기에서 기본(normal) 은 배달이 수십 분 유예됨 (실측).
+      // 마감·면접 리마인더는 시간 민감 알림이라 high 로 즉시 배달.
+      priority: 'high' as const,
       data: {
         ...(payload.data ?? {}),
         ...(payload.deepLink ? { deepLink: payload.deepLink } : {}),
