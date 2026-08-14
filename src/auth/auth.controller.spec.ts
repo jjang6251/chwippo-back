@@ -466,6 +466,7 @@ describe('AuthController', () => {
 
       const result = await controller.refresh(
         authenticatedUser,
+        {},
         makeReq(),
         res,
       );
@@ -527,7 +528,7 @@ describe('AuthController', () => {
         sampleCardsDismissedAt: new Date('2026-06-27'),
       };
 
-      const result = await controller.refresh(answeredUser, makeReq(), res);
+      const result = await controller.refresh(answeredUser, {}, makeReq(), res);
 
       expect(result.user).toMatchObject({
         signupJobCategories: ['백엔드 개발', 'UI/UX·프로덕트 디자이너'],
@@ -545,6 +546,7 @@ describe('AuthController', () => {
 
       const result = await controller.refresh(
         authenticatedUser,
+        {},
         makeReq(),
         res,
       );

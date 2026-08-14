@@ -6,6 +6,7 @@
  * "실 cookie → strategy → DB" 흐름 회귀 방어.
  */
 import { INestApplication } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
@@ -77,6 +78,78 @@ describe('Auth refresh·logout (e2e)', () => {
         .post('/auth/refresh')
         .set('Cookie', `refresh_token=${refreshToken}`)
         .expect(401);
+    });
+
+    /**
+     * ── 회전 멱등성 (plan refresh-rotation-idempotency, 2026-08-15) ──────────
+     *
+     * 🔴 **여기서만 검증되는 것**: 단위 spec 은 DB 를 mock 하므로 "소비된 행에 rotation_id 가
+     * 실제로 적히고, 그 값으로 다시 찾아진다" 를 못 본다. 컬럼 이름 오타·마이그레이션 누락은
+     * 실 HTTP + 실 DB 왕복에서만 드러난다.
+     *
+     * 시나리오는 실사고 그대로다 — 회전이 서버엔 처리됐는데 응답만 유실돼 기기엔 **소비된
+     * 낡은 RT** 만 남은 상태에서, 같은 접수번호로 재시도한다.
+     */
+    it('🔴 같은 rotationId 재제출 (응답 유실 복구) → 200 + 새 cookie (실 DB 왕복)', async () => {
+      const { refreshToken } = await signInAsUser(app);
+      const rotationId = randomUUID();
+
+      // 1회전 — 이 응답이 유실됐다고 가정한다
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `refresh_token=${refreshToken}`)
+        .send({ rotationId })
+        .expect(200);
+
+      // 기기엔 소비된 옛 쿠키만 남아 있다 → 같은 접수번호로 재전송
+      const res = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `refresh_token=${refreshToken}`)
+        .send({ rotationId })
+        .expect(200);
+
+      expect(typeof res.body.data.accessToken).toBe('string');
+      // 🔴 쿠키가 반드시 와야 한다 — 409 는 쿠키를 안 줘서 재시도가 원리적으로 실패했다
+      const setCookie = res.headers['set-cookie'];
+      const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+      expect(cookies.some((c) => c.startsWith('refresh_token='))).toBe(true);
+    });
+
+    it('🔴 다른 rotationId 로 소비된 토큰 재제출 → 409 (창 안 · 기존 판정 유지)', async () => {
+      const { refreshToken } = await signInAsUser(app);
+
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `refresh_token=${refreshToken}`)
+        .send({ rotationId: randomUUID() })
+        .expect(200);
+
+      // 접수번호가 다르면 재현 대상이 아니다 → 기존 경합 판정 그대로
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `refresh_token=${refreshToken}`)
+        .send({ rotationId: randomUUID() })
+        .expect(409);
+    });
+
+    it('rotationId 없이 회전 → 200 (구버전 클라 호환)', async () => {
+      const { refreshToken } = await signInAsUser(app);
+
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `refresh_token=${refreshToken}`)
+        .expect(200);
+    });
+
+    // ⑦ 임의 문자열로 rotation_id(uuid) 컬럼·audit detail 을 오염시키지 못한다
+    it('UUID 형식 아닌 rotationId → 400', async () => {
+      const { refreshToken } = await signInAsUser(app);
+
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `refresh_token=${refreshToken}`)
+        .send({ rotationId: 'not-a-uuid' })
+        .expect(400);
     });
 
     it('admin도 refresh 흐름 동일 (role 응답에 반영)', async () => {

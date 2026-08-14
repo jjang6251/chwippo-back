@@ -8,6 +8,12 @@ import {
 export type AuditAction =
   /** refresh token 재사용 감지 → 세션 revoke (2026-08-08). detail 에 ageMs 포함 */
   | 'refresh_reuse_detected'
+  /**
+   * 회전 멱등 재현 — 소비된 RT + **같은 rotationId** + 창 안 → 새 토큰 재발급 (2026-08-15).
+   * 침해가 아니라 응답 유실 복구라 알람은 안 붙인다. 빈도를 보고 나중에 붙일 수 있게 audit 만 남긴다.
+   * targetType='refresh_session', targetId=sessionId, detail: { userId, rotationId, ageMs, ageSec, windowSeconds }
+   */
+  | 'refresh_rotation_replayed'
   | 'suspend'
   | 'unsuspend'
   | 'grant_admin'
