@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { Repository } from 'typeorm';
+import { FindOperator, Repository } from 'typeorm';
 import { ForbiddenException } from '@nestjs/common';
 import { UserDevice } from './user-device.entity';
 import { UserDevicesService } from './user-devices.service';
@@ -14,9 +14,12 @@ import type { RegisterDeviceDto } from './dto/register-device.dto';
  * 시나리오:
  *   1) registerDevice — 신규 · 같은 사용자 재등록 (upsert) · 다른 사용자 재사용 (기기 이전)
  *   2) app_version 갱신 · lastActiveAt 갱신
- *   3) 5+ device 시 Discord alert (fair-use)
+ *   3) 최근 활동 device 5+ 시 Discord alert (fair-use) · 죽은 행 제외 · 하루 1회 억제
  *   4) removeDevice — 정상 · 없음 (no-op) · 다른 사용자 (ForbiddenException · IDOR)
  *   5) listMyDevices — lastActiveAt DESC 정렬
+ *
+ * ⚠️ 알람 억제 Map 은 **모듈 레벨**이라 테스트 간에도 살아남는다.
+ * 알람 경로를 타는 케이스는 서로 다른 userId 를 쓴다 (앞 테스트가 뒤를 억제하지 않도록).
  */
 describe('UserDevicesService', () => {
   let service: UserDevicesService;
@@ -138,27 +141,74 @@ describe('UserDevicesService', () => {
       );
     });
 
-    it('user 당 5+ device → Discord alert 발송 (fair-use)', async () => {
+    it('활성 device 5+ → Discord alert 발송 (ops 채널 · fair-use)', async () => {
       repo.findOne.mockResolvedValueOnce(null);
       repo.count.mockResolvedValueOnce(5);
 
-      await service.registerDevice('user-1', baseDto);
+      await service.registerDevice('user-alert-5', baseDto);
       await new Promise((r) => setImmediate(r));
 
       expect(discord.notify).toHaveBeenCalledWith(
         expect.objectContaining({ title: '⚠️ Multi-device alert' }),
-        'critical',
+        'ops',
       );
     });
 
-    it('user 당 4 device → Discord alert 미발송', async () => {
+    it('활성 device 4 → Discord alert 미발송', async () => {
       repo.findOne.mockResolvedValueOnce(null);
       repo.count.mockResolvedValueOnce(4);
 
-      await service.registerDevice('user-1', baseDto);
+      await service.registerDevice('user-alert-4', baseDto);
       await new Promise((r) => setImmediate(r));
 
       expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    it('활성 4 + 죽은(31일 전) 3 → 카운트는 활성만 · alert 미발송', async () => {
+      repo.findOne.mockResolvedValueOnce(null);
+      // count 는 lastActiveAt >= cutoff 조건이 붙으므로 죽은 3행은 애초에 안 세진다
+      repo.count.mockResolvedValueOnce(4);
+
+      await service.registerDevice('user-dead-rows', baseDto);
+      await new Promise((r) => setImmediate(r));
+
+      const where = repo.count.mock.calls[0][0]?.where as {
+        userId: string;
+        lastActiveAt: FindOperator<Date>;
+      };
+      expect(where.userId).toBe('user-dead-rows');
+      // 30일 전 cutoff 이상만 카운트 (죽은 행 제외)
+      const cutoff = where.lastActiveAt.value;
+      const daysAgo = (Date.now() - cutoff.getTime()) / 86_400_000;
+      expect(daysAgo).toBeCloseTo(30, 1);
+      expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    it('같은 유저 연속 등록 → alert 1회만 (하루 1회 억제)', async () => {
+      repo.findOne.mockResolvedValue(null);
+      repo.count.mockResolvedValue(6);
+
+      await service.registerDevice('user-suppress', baseDto);
+      await service.registerDevice('user-suppress', baseDto);
+      await service.registerDevice('user-suppress', baseDto);
+      await new Promise((r) => setImmediate(r));
+
+      expect(discord.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it('하루 지난 뒤 재등록 → alert 다시 1회', async () => {
+      repo.findOne.mockResolvedValue(null);
+      repo.count.mockResolvedValue(6);
+      const t0 = new Date('2026-08-13T10:00:00Z').getTime();
+      const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(t0);
+
+      await service.registerDevice('user-cooldown', baseDto);
+      nowSpy.mockReturnValue(t0 + 25 * 60 * 60 * 1000); // 25시간 뒤
+      await service.registerDevice('user-cooldown', baseDto);
+      await new Promise((r) => setImmediate(r));
+
+      expect(discord.notify).toHaveBeenCalledTimes(2);
+      nowSpy.mockRestore();
     });
 
     it('Discord alert 실패해도 register 는 정상 성공', async () => {
@@ -167,7 +217,7 @@ describe('UserDevicesService', () => {
       discord.notify.mockRejectedValueOnce(new Error('webhook down'));
 
       await expect(
-        service.registerDevice('user-1', baseDto),
+        service.registerDevice('user-alert-fail', baseDto),
       ).resolves.toBeTruthy();
     });
   });
