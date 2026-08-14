@@ -26,12 +26,14 @@ const makeTokenRow = (
     token_id: string;
     session_id: string;
     used_at: Date | null;
+    rotation_id: string | null;
     session_created_at: Date;
   }> = {},
 ) => ({
   token_id: 'tok-1',
   session_id: 'sid-1',
   used_at: null as Date | null,
+  rotation_id: null as string | null,
   session_created_at: new Date(),
   ...overrides,
 });
@@ -842,6 +844,273 @@ describe('AuthService', () => {
       );
       expect(sessionRepo.query).not.toHaveBeenCalled();
       expect(discord.notify).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * ── 회전 멱등성 (B안 · plan refresh-rotation-idempotency, 2026-08-15) ──────────
+   *
+   * 🔴 **고치는 구멍**: 회전 요청이 서버엔 도달해 처리됐는데 응답(새 RT 쿠키)만 유실되면
+   * 기기엔 이미 소비된 낡은 RT 만 남는다. 재시도해도 그것밖에 못 내고, 서버는 창 안이면
+   * 409 를 주면서 쿠키는 갱신하지 않는다 — **재시도가 원리적으로 성공할 수 없다.**
+   * 창을 넘기면 탈취 replay 로 판정돼 세션 revoke + 강제 로그아웃 (실측 2026-08-14).
+   *
+   * 🔴 **7월 기각안(유예 재발급)과의 차이가 이 describe 의 존재 이유다.** 기각안은 창 안이면
+   * **제시자가 누구든** 유효 토큰을 내줬다. 여기서는 **같은 rotationId 제시자에게만** 재현하고,
+   * 불일치·미제시·창 밖은 기존 판정이 한 글자도 안 바뀐다 — 그 불변을 ②③④ 가 고정한다.
+   */
+  describe('rotateTokens — 회전 멱등성 (rotationId)', () => {
+    const ROT = '11111111-1111-4111-8111-111111111111';
+    const OTHER_ROT = '22222222-2222-4222-8222-222222222222';
+    const base = {
+      userId: 'user-uuid-1',
+      role: 'user',
+      sid: 'sid-1',
+      rawToken: 'raw-rt',
+    };
+
+    it('① 같은 rotationId 재제출 (창 안) → 200 새 토큰 · revoke·알림 없음', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        // 5초 전 이 rotationId 로 소비된 행 = 응답만 유실된 그 회전
+        makeTokenRow({
+          used_at: new Date(Date.now() - 5000),
+          rotation_id: ROT,
+        }),
+      ]);
+      jwtService.sign
+        .mockReturnValueOnce('replay-refresh') // #1 refresh
+        .mockReturnValueOnce('replay-access'); // #2 access
+
+      const result = await service.rotateTokens({ ...base, rotationId: ROT });
+
+      expect(result).toEqual({
+        accessToken: 'replay-access',
+        refreshToken: 'replay-refresh',
+      });
+      // 침해 판정 아님 — 세션 revoke·Discord critical 어느 것도 발동하지 않는다
+      expect(sessionRepo.query).not.toHaveBeenCalled();
+      expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 **기각안과 갈리는 지점.** 창 안이라도 접수번호가 다르면 재현하지 않는다.
+     * 이게 죽으면 "창 안 아무에게나 유효 토큰" 이 되어 7월 HIGH 지적으로 되돌아간다.
+     */
+    it('② 다른 rotationId (창 안) → 기존 409 RETRY · 토큰 발급 없음', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({
+          used_at: new Date(Date.now() - 5000),
+          rotation_id: ROT,
+        }),
+      ]);
+
+      const err = await service
+        .rotateTokens({ ...base, rotationId: OTHER_ROT })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as ConflictException).getResponse()).toEqual({
+        code: 'RETRY',
+      });
+      expect(manager.query).not.toHaveBeenCalled(); // 발급 TX 없음
+      expect(sessionRepo.query).not.toHaveBeenCalled();
+    });
+
+    it('③ rotationId 미제시 (구버전 클라) → 기존 409 RETRY (행에 id 가 있어도)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({
+          used_at: new Date(Date.now() - 5000),
+          rotation_id: ROT,
+        }),
+      ]);
+
+      const err = await service.rotateTokens(base).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(manager.query).not.toHaveBeenCalled();
+    });
+
+    it('③-b 구버전 클라가 소비한 행(rotation_id NULL) + id 제시 → 409 (NULL 은 누구와도 불일치)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({
+          used_at: new Date(Date.now() - 5000),
+          rotation_id: null,
+        }),
+      ]);
+
+      const err = await service
+        .rotateTokens({ ...base, rotationId: ROT })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(manager.query).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 🔴 **멱등은 창(30초) 안에서만.** 창 밖은 정상 클라라면 이미 새 쿠키로 갈아탔을 시간이라
+     * 옛 토큰이 오는 것 자체가 replay 신호다. rotationId 가 같아도 예외를 두지 않는다 —
+     * 두면 탈취자가 요청을 통째로 복사해 무기한 재생할 수 있다.
+     */
+    it('④ 창 밖 + 같은 rotationId → revoke + 401 (멱등 예외 없음)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({
+          used_at: new Date(Date.now() - 60_000), // 60초 = 창의 2배
+          rotation_id: ROT,
+        }),
+      ]);
+      sessionRepo.query.mockResolvedValue([] as never);
+
+      await expect(
+        service.rotateTokens({ ...base, rotationId: ROT }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      const [revokeSql, revokeParams] = sessionRepo.query.mock.calls[0];
+      expect(revokeSql).toContain('UPDATE refresh_sessions SET revoked_at');
+      expect(revokeParams).toEqual(['sid-1', 'user-uuid-1']);
+      expect(discord.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ title: expect.stringContaining('재사용') }),
+        'critical',
+      );
+    });
+
+    it('⑤ 정상 회전이 소비되는 행에 rotation_id 를 기록한다', async () => {
+      tokenRepo.query.mockResolvedValueOnce([makeTokenRow()]);
+      manager.query.mockResolvedValueOnce([[{ id: 'tok-1' }], 1]); // 원자 소비 1행
+      jwtService.sign.mockReturnValue('t');
+
+      await service.rotateTokens({ ...base, rotationId: ROT });
+
+      const [markSql, markParams] = manager.query.mock.calls[0];
+      expect(String(markSql)).toContain('used_at = NOW(), rotation_id = $2');
+      expect(markParams).toEqual(['tok-1', ROT]);
+    });
+
+    it('⑤-b rotationId 없는 회전은 rotation_id 에 NULL 을 남긴다 (구버전 무영향)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([makeTokenRow()]);
+      manager.query.mockResolvedValueOnce([[{ id: 'tok-1' }], 1]);
+      jwtService.sign.mockReturnValue('t');
+
+      await service.rotateTokens(base);
+
+      expect(manager.query.mock.calls[0][1]).toEqual(['tok-1', null]);
+    });
+
+    it('⑥ 멱등 재현이 audit 에 남는다 (알람은 안 붙인다 — 정상 복구라 노이즈)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({
+          used_at: new Date(Date.now() - 5000),
+          rotation_id: ROT,
+        }),
+      ]);
+      jwtService.sign.mockReturnValue('t');
+
+      await service.rotateTokens({ ...base, rotationId: ROT });
+
+      expect(audit.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          adminUserId: null, // 시스템이 남기는 기록
+          action: 'refresh_rotation_replayed',
+          targetType: 'refresh_session',
+          targetId: 'sid-1',
+          detail: expect.objectContaining({
+            userId: 'user-uuid-1',
+            rotationId: ROT,
+            ageSec: 5,
+            windowSeconds: 30,
+          }),
+        }),
+      );
+      // 재현은 침해가 아니다 — Discord 알람 금지 (붙이면 정상 복구마다 critical 이 울린다)
+      expect(discord.notify).not.toHaveBeenCalled();
+    });
+
+    it('⑥-b audit 기록이 실패해도 재현은 정상 발급된다 (best-effort)', async () => {
+      audit.save.mockRejectedValueOnce(new Error('audit DB down'));
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({
+          used_at: new Date(Date.now() - 5000),
+          rotation_id: ROT,
+        }),
+      ]);
+      jwtService.sign
+        .mockReturnValueOnce('replay-refresh')
+        .mockReturnValueOnce('replay-access');
+
+      await expect(
+        service.rotateTokens({ ...base, rotationId: ROT }),
+      ).resolves.toEqual({
+        accessToken: 'replay-access',
+        refreshToken: 'replay-refresh',
+      });
+    });
+
+    /**
+     * 🔴 **소비된 행을 또 소비하지 않는다.** 그 행의 used_at·rotation_id 는 재현 판정의
+     * 근거다 — 덮으면 재시도마다 창이 연장돼 "창 안/밖" 기준 자체가 흔들린다.
+     * 반면 sliding 은 반드시 갱신해야 한다 (재현도 사용자가 살아 있다는 증거다).
+     */
+    it('⑧ 재현은 새 토큰 INSERT + 세션 sliding 만 한다 (소비 마킹 재실행 X · 1 TX)', async () => {
+      tokenRepo.query.mockResolvedValueOnce([
+        makeTokenRow({
+          used_at: new Date(Date.now() - 5000),
+          rotation_id: ROT,
+        }),
+      ]);
+      jwtService.sign.mockReturnValue('t');
+
+      await service.rotateTokens({ ...base, rotationId: ROT });
+
+      const sqls = manager.query.mock.calls.map((c) => String(c[0]));
+      expect(sqls.some((s) => s.includes('INSERT INTO refresh_tokens'))).toBe(
+        true,
+      );
+      expect(
+        sqls.some((s) => s.includes("expires_at = NOW() + INTERVAL '60 days'")),
+      ).toBe(true);
+      // 이미 소비된 행을 다시 마킹하지 않는다
+      expect(sqls.some((s) => s.includes('SET used_at = NOW()'))).toBe(false);
+      // 반쪽 상태(토큰만 서고 sliding 누락) 금지 — 두 문장이 한 트랜잭션
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * 🔴 **패자 경로에도 재현이 필요하다.** 클라가 8s 상한에 걸려 abort 하고 재시도하면
+     * 앞 시도가 **아직 서버에서 진행 중**일 수 있다. 그 재시도는 조회 시점엔 used_at IS NULL
+     * 을 보고 들어왔다가 원자 UPDATE 에서 패자가 된다 — 같은 rotationId 인데 조회 분기를
+     * 못 타는 유일한 경로다. 여기서 대조하지 않으면 수리가 절반만 된다.
+     */
+    it('⑨ 원자 UPDATE 패자 재조회에서도 같은 rotationId 면 재현한다', async () => {
+      tokenRepo.query
+        .mockResolvedValueOnce([makeTokenRow()]) // 조회 시점엔 미사용
+        .mockResolvedValueOnce([
+          // 재조회 — 그 사이 같은 rotationId 로 소비돼 있다 (앞 시도가 완주)
+          { used_at: new Date(Date.now() - 1000), rotation_id: ROT },
+        ]);
+      // manager.query 기본값 [] → returningRows 0행 = 패자
+      jwtService.sign.mockReturnValue('t');
+
+      await expect(
+        service.rotateTokens({ ...base, rotationId: ROT }),
+      ).resolves.toEqual({ accessToken: 't', refreshToken: 't' });
+
+      const reReadSql = String(tokenRepo.query.mock.calls[1][0]);
+      expect(reReadSql).toContain('rotation_id'); // 대조 근거를 함께 읽어야 한다
+      expect(sessionRepo.query).not.toHaveBeenCalled();
+    });
+
+    it('⑨-b 패자 재조회 rotationId 불일치 → 기존 409 그대로', async () => {
+      tokenRepo.query
+        .mockResolvedValueOnce([makeTokenRow()])
+        .mockResolvedValueOnce([
+          { used_at: new Date(Date.now() - 1000), rotation_id: OTHER_ROT },
+        ]);
+      jwtService.sign.mockReturnValue('t');
+
+      const err = await service
+        .rotateTokens({ ...base, rotationId: ROT })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ConflictException);
     });
   });
 
