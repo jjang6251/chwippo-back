@@ -4,6 +4,7 @@ import { Notification } from './notification.entity';
 import { NotificationLog } from './notification-log.entity';
 import { User } from '../users/user.entity';
 import { UserDevice } from '../devices/user-device.entity';
+import { PushReceipt } from './push-receipt.entity';
 import { AuthModule } from '../auth/auth.module';
 import { ApplicationStep } from '../applications/application-step.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
@@ -11,6 +12,8 @@ import { DailyNote } from '../calendar/daily-note.entity';
 import { NotificationsService } from './notifications.service';
 import { AlarmConfigService } from './alarm-config.service';
 import { PushService } from './push.service';
+import { PushReceiptService } from './push-receipt.service';
+import { PushReceiptCron } from './push-receipt.cron';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { BriefingService } from './briefing.service';
 import { DeadlineUrgentService } from './deadline-urgent.service';
@@ -31,6 +34,7 @@ import { AdminNotifyService } from './admin-notify.service';
       NotificationLog,
       User,
       UserDevice,
+      PushReceipt,
       ApplicationStep,
       ExamSchedule,
       DailyNote,
@@ -44,6 +48,8 @@ import { AdminNotifyService } from './admin-notify.service';
     NotificationsService,
     AlarmConfigService,
     PushService,
+    PushReceiptService,
+    PushReceiptCron,
     NotificationDispatchService,
     BriefingService,
     DeadlineUrgentService,

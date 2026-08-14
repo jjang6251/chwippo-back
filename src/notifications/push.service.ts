@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import Expo, { ExpoPushMessage, ExpoPushTicket } from 'expo-server-sdk';
 import { UserDevice } from '../devices/user-device.entity';
+import { PushReceipt } from './push-receipt.entity';
 
 export interface PushPayload {
   title: string;
@@ -30,7 +31,8 @@ export interface PushSendResult {
  * - `DeviceNotRegistered` ticket → 죽은 device 자동 삭제 (user_devices).
  * - EXPO_ACCESS_TOKEN 있으면 사용 (rate limit 완화 · 없어도 발송 됨).
  *
- * receipt polling (전송 성공 최종 확인) 은 별도 · ticket 저장까지가 이 서비스 책임.
+ * ticket 단계로는 죽은 토큰이 다 안 잡힌다 (FCM 은 대개 영수증 단계에서 알려준다).
+ * 그래서 정상 ticket id 를 `push_receipts` 에 적어두고 뒤처리는 PushReceiptService 가 맡는다.
  */
 @Injectable()
 export class PushService {
@@ -40,6 +42,8 @@ export class PushService {
   constructor(
     @InjectRepository(UserDevice)
     private readonly deviceRepo: Repository<UserDevice>,
+    @InjectRepository(PushReceipt)
+    private readonly receiptRepo: Repository<PushReceipt>,
   ) {
     this.expo = new Expo(
       process.env.EXPO_ACCESS_TOKEN
@@ -77,6 +81,7 @@ export class PushService {
 
     const tickets: ExpoPushTicket[] = [];
     const invalidTokens: string[] = [];
+    const pendingReceipts: { ticketId: string; deviceToken: string }[] = [];
     const chunks = this.expo.chunkPushNotifications(messages);
 
     for (const chunk of chunks) {
@@ -84,18 +89,32 @@ export class PushService {
         const chunkTickets = await this.expo.sendPushNotificationsAsync(chunk);
         chunkTickets.forEach((ticket, i) => {
           tickets.push(ticket);
-          if (
-            ticket.status === 'error' &&
-            ticket.details?.error === 'DeviceNotRegistered'
-          ) {
-            // chunk 순서 = valid 순서 (chunk 는 순차 slice)
-            const token = chunk[i].to;
-            if (typeof token === 'string') invalidTokens.push(token);
+          // chunk 순서 = valid 순서 (chunk 는 순차 slice)
+          const token = chunk[i].to;
+          if (typeof token !== 'string') return;
+
+          if (ticket.status === 'ok') {
+            // 영수증 확인 대기열 — 진짜 배달 실패는 여기서만 드러난다
+            pendingReceipts.push({ ticketId: ticket.id, deviceToken: token });
+          } else if (ticket.details?.error === 'DeviceNotRegistered') {
+            invalidTokens.push(token);
           }
         });
       } catch (err) {
         this.logger.error(
           `Expo push chunk 발송 실패: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // best-effort — 대기열 저장이 실패해도 발송은 이미 끝났고 사용자에겐 영향이 없다.
+    // (놓친 티켓은 죽은 토큰 정리가 한 주기 늦어질 뿐이다)
+    if (pendingReceipts.length > 0) {
+      try {
+        await this.receiptRepo.insert(pendingReceipts);
+      } catch (err) {
+        this.logger.warn(
+          `push ticket 저장 실패 (영수증 확인 skip): ${(err as Error).message}`,
         );
       }
     }

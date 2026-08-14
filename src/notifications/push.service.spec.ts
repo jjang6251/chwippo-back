@@ -5,6 +5,7 @@ import { mock } from 'jest-mock-extended';
 import Expo, { ExpoPushTicket } from 'expo-server-sdk';
 import { PushService } from './push.service';
 import { UserDevice } from '../devices/user-device.entity';
+import { PushReceipt } from './push-receipt.entity';
 
 const VALID = 'ExponentPushToken[aaaaaaaaaaaaaaaaaaaaaa]';
 const VALID2 = 'ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbb]';
@@ -12,13 +13,16 @@ const VALID2 = 'ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbb]';
 describe('PushService', () => {
   let service: PushService;
   let deviceRepo: jest.Mocked<Repository<UserDevice>>;
+  let receiptRepo: jest.Mocked<Repository<PushReceipt>>;
 
   beforeEach(async () => {
     deviceRepo = mock<Repository<UserDevice>>();
+    receiptRepo = mock<Repository<PushReceipt>>();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PushService,
         { provide: getRepositoryToken(UserDevice), useValue: deviceRepo },
+        { provide: getRepositoryToken(PushReceipt), useValue: receiptRepo },
       ],
     }).compile();
     service = module.get(PushService);
@@ -84,6 +88,46 @@ describe('PushService', () => {
       'device_token IN (:...tokens)',
       { tokens: [VALID] },
     );
+  });
+
+  it('정상 ticket → 영수증 대기열에 ticket id · token 저장 (R4)', async () => {
+    jest.spyOn(Expo.prototype, 'sendPushNotificationsAsync').mockResolvedValue([
+      { status: 'ok', id: 'ticket-1' },
+      { status: 'ok', id: 'ticket-2' },
+    ]);
+
+    await service.sendToTokens([VALID, VALID2], { title: 't', body: 'b' });
+
+    expect(receiptRepo.insert).toHaveBeenCalledWith([
+      { ticketId: 'ticket-1', deviceToken: VALID },
+      { ticketId: 'ticket-2', deviceToken: VALID2 },
+    ]);
+  });
+
+  it('error ticket 은 대기열에 안 넣는다 (영수증이 없으므로)', async () => {
+    jest
+      .spyOn(Expo.prototype, 'sendPushNotificationsAsync')
+      .mockResolvedValue([
+        { status: 'error', message: 'x', details: { error: 'MessageTooBig' } },
+      ]);
+
+    await service.sendToTokens([VALID], { title: 't', body: 'b' });
+
+    expect(receiptRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('대기열 저장 실패해도 발송은 성공 (best-effort)', async () => {
+    jest
+      .spyOn(Expo.prototype, 'sendPushNotificationsAsync')
+      .mockResolvedValue([{ status: 'ok', id: 'ticket-1' }]);
+    receiptRepo.insert.mockRejectedValue(new Error('db down'));
+
+    const result = await service.sendToTokens([VALID], {
+      title: 't',
+      body: 'b',
+    });
+
+    expect(result.sent).toBe(1);
   });
 
   it('Expo 발송 throw → 조용히 처리 (removedInvalid 0)', async () => {
