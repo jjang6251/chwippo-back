@@ -15,6 +15,11 @@ export interface ExpoPushTicket {
   id?: string;
   details?: { error?: string };
 }
+export interface ExpoPushReceipt {
+  status: 'ok' | 'error';
+  message?: string;
+  details?: { error?: string };
+}
 
 export default class Expo {
   static isExpoPushToken(token: unknown): boolean {
@@ -31,5 +36,20 @@ export default class Expo {
     messages: ExpoPushMessage[],
   ): Promise<ExpoPushTicket[]> {
     return messages.map(() => ({ status: 'ok' as const, id: 'mock-ticket' }));
+  }
+  /** 실제 SDK 와 같은 300개 단위 (Expo 요청 상한 1000 보다 보수적) */
+  chunkPushNotificationReceiptIds(receiptIds: string[]): string[][] {
+    const chunks: string[][] = [];
+    for (let i = 0; i < receiptIds.length; i += 300) {
+      chunks.push(receiptIds.slice(i, i + 300));
+    }
+    return chunks;
+  }
+  async getPushNotificationReceiptsAsync(
+    receiptIds: string[],
+  ): Promise<Record<string, ExpoPushReceipt>> {
+    return Object.fromEntries(
+      receiptIds.map((id) => [id, { status: 'ok' as const }]),
+    );
   }
 }
