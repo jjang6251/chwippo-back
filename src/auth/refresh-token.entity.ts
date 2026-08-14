@@ -36,4 +36,14 @@ export class RefreshToken {
   /** rotation 소비 시각. NULL=미사용(유효), NOT NULL=소비됨(재사용 시 탈취/경합 판정) */
   @Column({ name: 'used_at', type: 'timestamptz', nullable: true })
   usedAt!: Date | null;
+
+  /**
+   * 회전 멱등성 — **이 행을 소비한 회전 요청의 id** (클라가 보낸 `rotationId`).
+   *
+   * 응답 유실로 클라가 같은 낡은 RT 를 다시 낼 때, 같은 `rotationId` 를 들고 오면
+   * "새 시도" 가 아니라 **"같은 회전의 재전송"** 임을 알아본다 → 창 안에서 새 토큰 재발급.
+   * NULL = 구버전 클라(미전송) 또는 아직 미소비 행 — 둘 다 기존 판정 경로 그대로.
+   */
+  @Column({ name: 'rotation_id', type: 'uuid', nullable: true })
+  rotationId!: string | null;
 }

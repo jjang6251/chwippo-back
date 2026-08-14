@@ -106,6 +106,12 @@ export interface RotateParams {
   rawToken: string;
   /** UA 문자열 (세션 표시용) */
   deviceInfo?: string | null;
+  /**
+   * 회전 멱등성 — 클라가 발급한 이 **회전 1건의 접수번호**(UUID).
+   * 재시도는 같은 값을 재사용한다 → 응답 유실로 소비된 RT 만 남아도 창 안에서 복구 가능.
+   * 구버전 클라는 보내지 않는다(undefined) → 기존 판정 경로 그대로.
+   */
+  rotationId?: string | null;
 }
 
 /** rotation 조회 결과 (refresh_tokens ⋈ refresh_sessions) */
@@ -113,6 +119,8 @@ interface TokenRow {
   token_id: string;
   session_id: string;
   used_at: Date | null;
+  /** 이 행을 소비한 회전 요청의 id (미소비·구버전 클라는 null) */
+  rotation_id: string | null;
   session_created_at: Date;
 }
 
@@ -307,17 +315,18 @@ export class AuthService {
    *  1. presentedHash 로 refresh_tokens 조회 (session join · revoked_at IS NULL · user_id 스코프)
    *     - 없음 → 위조·만료·revoke·타유저 → 401
    *  2. used_at NOT NULL (이미 소비된 토큰 재사용) → 재조회 없이 판정
-   *     - used_at 5초 이내 → 정상 경합 → 409 (RETRY) / 초과 → 명백한 탈취 → session revoke + 401
+   *     - 같은 rotationId + 창(30초) 안 → **멱등 재현** → 새 토큰 발급 (200)
+   *     - 그 외 used_at 30초 이내 → 정상 경합 → 409 (RETRY) / 초과 → 명백한 탈취 → session revoke + 401
    *  3. absolute cap: session.created_at +180일 초과 → session revoke + 401
-   *  4. used_at IS NULL (미사용) → 원자 UPDATE used_at=NOW WHERE used_at IS NULL RETURNING
+   *  4. used_at IS NULL (미사용) → 원자 UPDATE used_at=NOW, rotation_id=$2 WHERE used_at IS NULL RETURNING
    *     - 1행(승자) → 새 토큰 INSERT(같은 sid) + expires_at sliding +60d + 새 쌍 반환
-   *     - 0행(방금 다른 요청이 선점) → 재조회 used_at 로 2번과 동일 판정 (경합 409 / 탈취 revoke+401)
+   *     - 0행(방금 다른 요청이 선점) → 재조회 used_at·rotation_id 로 2번과 동일 판정
    *  0. sid 없음(sid 이전 발급 구 토큰) → 세션 매핑 불가 → 재로그인 유도(401)
    *
    * 전 경로 (session.user_id = JWT sub) 스코프 유지 (BOLA A01/API1).
    */
   async rotateTokens(params: RotateParams): Promise<TokenPair> {
-    const { userId, role, sid, rawToken } = params;
+    const { userId, role, sid, rawToken, rotationId } = params;
     const presentedHash = hashRefreshToken(rawToken);
 
     if (!sid) {
@@ -326,7 +335,7 @@ export class AuthService {
 
     // 1. presentedHash 로 토큰 조회 (활성 세션 · user_id 스코프)
     const found: unknown = await this.tokenRepo.query(
-      `SELECT t.id AS token_id, t.session_id, t.used_at,
+      `SELECT t.id AS token_id, t.session_id, t.used_at, t.rotation_id,
               s.created_at AS session_created_at
          FROM refresh_tokens t
          JOIN refresh_sessions s ON s.id = t.session_id
@@ -340,13 +349,17 @@ export class AuthService {
     }
     const row = found[0] as TokenRow;
 
-    // 2. 이미 소비된 토큰 재사용 → 경합(409) or 탈취(revoke+401)
+    // 2. 이미 소비된 토큰 재사용 → 멱등 재현(200) / 경합(409) / 탈취(revoke+401)
     if (row.used_at) {
-      return this.rejectUsedToken(
-        row.session_id,
+      return this.settleUsedToken({
         userId,
-        new Date(row.used_at),
-      );
+        role,
+        sid,
+        sessionId: row.session_id,
+        usedAt: new Date(row.used_at),
+        rowRotationId: row.rotation_id ?? null,
+        requestRotationId: rotationId ?? null,
+      });
     }
 
     // 3. absolute cap (created_at +180일 초과)
@@ -368,16 +381,23 @@ export class AuthService {
     let won = false;
 
     await this.dataSource.transaction(async (manager) => {
+      /*
+        소비 마킹에 `rotation_id` 를 함께 남긴다 — **이 행을 소비한 회전 요청의 접수번호**.
+        같은 요청이 재전송돼 올 때(응답 유실) 이 값이 유일한 대조 근거가 된다.
+        구버전 클라는 null 이 들어가고, null 은 어떤 요청과도 일치하지 않으므로
+        (`settleUsedToken` 이 요청 rotationId 존재를 먼저 요구한다) 기존 판정 그대로다.
+      */
       const marked: unknown = await manager.query(
-        `UPDATE refresh_tokens SET used_at = NOW()
+        `UPDATE refresh_tokens SET used_at = NOW(), rotation_id = $2
           WHERE id = $1 AND used_at IS NULL
         RETURNING id`,
-        [row.token_id],
+        [row.token_id, rotationId ?? null],
       );
       if (returningRows(marked).length === 0) {
         return; // 방금 다른 요청이 선점 — tx 밖에서 재판정 (won=false)
       }
       won = true;
+      // 새 행은 아직 소비되지 않았으므로 rotation_id 를 남기지 않는다 (자기 차례에 채워진다)
       await manager.query(
         `INSERT INTO refresh_tokens (id, session_id, token_hash, created_at, used_at)
          VALUES ($1, $2, $3, NOW(), NULL)`,
@@ -398,22 +418,156 @@ export class AuthService {
       };
     }
 
-    // 원자 UPDATE 0행 = 방금 다른 요청이 소비 → 재조회 후 경합/탈취 판정
+    /*
+      원자 UPDATE 0행 = 방금 다른 요청이 소비 → 재조회 후 멱등 재현/경합/탈취 판정.
+
+      🔴 `rotation_id` 도 함께 읽는다 — 이 경로에도 멱등 재현이 필요하다.
+      클라가 8s 상한에 걸려 abort 한 뒤 재시도하면, **앞 시도가 아직 서버에서 진행 중**일 수
+      있다. 그때 재시도는 조회 시점엔 used_at IS NULL 을 보고 들어왔다가 여기서 패자가 된다
+      (같은 rotationId 인데 위 2번 분기를 못 타는 유일한 경로). 여기서 대조하지 않으면
+      "같은 회전의 재전송" 이 409 로 떨어져 수리가 절반만 되는 셈이다.
+    */
     const reRead: unknown = await this.tokenRepo.query(
-      `SELECT used_at FROM refresh_tokens WHERE id = $1`,
+      `SELECT used_at, rotation_id FROM refresh_tokens WHERE id = $1`,
       [row.token_id],
     );
-    const usedAt =
+    const reReadRow =
       Array.isArray(reRead) && reRead.length > 0
-        ? ((reRead[0] as { used_at: Date | null }).used_at ?? null)
+        ? (reRead[0] as { used_at: Date | null; rotation_id: string | null })
         : null;
+    const usedAt = reReadRow?.used_at ?? null;
     if (!usedAt) throw new UnauthorizedException(); // 재조회 실패 (극히 드묾)
-    return this.rejectUsedToken(row.session_id, userId, new Date(usedAt));
+    return this.settleUsedToken({
+      userId,
+      role,
+      sid,
+      sessionId: row.session_id,
+      usedAt: new Date(usedAt),
+      rowRotationId: reReadRow?.rotation_id ?? null,
+      requestRotationId: rotationId ?? null,
+    });
+  }
+
+  /**
+   * 소비된(used_at NOT NULL) 토큰이 다시 왔을 때의 단일 판정 지점.
+   *
+   * 🔴 **7월에 기각된 "유예 재발급"(A안)과 여기가 갈린다.** A안은 창(30초) 안이면
+   * **제시자가 누구든** 유효 토큰을 내줬다 — 그래서 창 안에 replay 하는 탈취자가 세션을
+   * 획득한다(보안 검토 HIGH). 여기서는 **그 회전을 처음 낸 클라이언트만** 알 수 있는
+   * `rotationId` 가 일치할 때만 재현한다. 값이 없거나(구버전 클라·탈취자) 다르면
+   * 기존 판정(창 안 409 / 창 밖 revoke+401)이 **한 글자도 바뀌지 않고** 그대로 간다.
+   *
+   * 재현이 새 권한을 주지 않는 이유: 같은 rotationId 를 제시할 수 있다는 건 그 회전 요청
+   * 본체를 만든 주체라는 뜻이고, 그 주체는 어차피 정상 회전이 가능했다.
+   */
+  private async settleUsedToken(args: {
+    userId: string;
+    role: string;
+    sid: string;
+    sessionId: string;
+    usedAt: Date;
+    /** DB 행에 기록된 "이 행을 소비한 회전" 의 id */
+    rowRotationId: string | null;
+    /** 이번 요청이 들고 온 접수번호 */
+    requestRotationId: string | null;
+  }): Promise<TokenPair> {
+    const { userId, role, sid, sessionId, usedAt, requestRotationId } = args;
+    const ageMs = Date.now() - usedAt.getTime();
+
+    if (
+      requestRotationId !== null &&
+      args.rowRotationId === requestRotationId &&
+      ageMs <= CONCURRENCY_WINDOW_MS // 창 밖은 재현 대상 아님 — 탈취 판정 그대로
+    ) {
+      return this.replayRotation({
+        userId,
+        role,
+        sid,
+        sessionId,
+        rotationId: requestRotationId,
+        ageMs,
+      });
+    }
+    return this.rejectUsedToken(sessionId, userId, usedAt);
+  }
+
+  /**
+   * 회전 멱등 재현 — 같은 rotationId 의 재전송에 **새 토큰**을 발급한다.
+   *
+   * 🔴 "발급했던 그 토큰을 되준다" 가 아니다. RT 는 sha256 해시로만 저장하므로 원본이 서버에
+   * 없고, 그대로 주려면 평문을 새로 보관해야 한다 — 지금 없는 비밀을 만드는 일이다.
+   * 재발급 대상을 "새 토큰" 으로 두면 보관할 것이 사라져 컬럼 하나로 끝난다.
+   *
+   * 🔴 **이미 소비된 행을 또 소비하지 않는다.** 그 행의 `used_at`·`rotation_id` 는 재현의
+   * 근거이므로 그대로 둔다(덮으면 창이 매 재시도마다 연장돼 판정 기준이 흔들린다).
+   * 여기서 하는 일은 새 토큰 INSERT + 세션 sliding 갱신 둘뿐이며, 정상 회전과 같은 이유로
+   * 한 트랜잭션에 묶는다 (토큰만 서고 세션 만료가 안 밀리는 반쪽 상태 금지).
+   */
+  private async replayRotation(args: {
+    userId: string;
+    role: string;
+    sid: string;
+    sessionId: string;
+    rotationId: string;
+    ageMs: number;
+  }): Promise<TokenPair> {
+    const { userId, role, sid, sessionId, rotationId, ageMs } = args;
+    const newRefreshToken = this.signRefreshToken(userId, role, sid);
+    const newTokenId = randomUUID();
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `INSERT INTO refresh_tokens (id, session_id, token_hash, created_at, used_at)
+         VALUES ($1, $2, $3, NOW(), NULL)`,
+        [newTokenId, sessionId, hashRefreshToken(newRefreshToken)],
+      );
+      await manager.query(
+        `UPDATE refresh_sessions
+            SET expires_at = NOW() + INTERVAL '${SLIDING_DAYS} days'
+          WHERE id = $1 AND user_id = $2`,
+        [sessionId, userId],
+      );
+    });
+
+    this.logger.log(
+      `[session] 회전 멱등 재현 — session ${sessionId} user ${userId} ` +
+        `age ${Math.round(ageMs / 1000)}s (창 ${CONCURRENCY_WINDOW_SECONDS}s)`,
+    );
+
+    /*
+      audit 만 남기고 알람은 붙이지 않는다 — 정상 복구라 초기 노이즈가 크다.
+      빈도가 보이면 나중에 알람을 붙일 수 있다(되돌리기 쉬운 방향). 탈취 조사 시
+      "재현이었나" 는 이 행으로 구분된다. best-effort — 기록 실패가 회전을 막지 않는다.
+    */
+    void this.auditRepo
+      .save(
+        Object.assign(new AdminAuditLog(), {
+          adminUserId: null, // admin 이 아니라 시스템이 남기는 기록
+          action: 'refresh_rotation_replayed' as const,
+          targetType: 'refresh_session',
+          targetId: sessionId,
+          detail: {
+            userId,
+            rotationId,
+            ageMs,
+            ageSec: Math.round(ageMs / 1000),
+            windowSeconds: CONCURRENCY_WINDOW_SECONDS,
+          },
+          ip: null,
+          userAgent: null,
+        }),
+      )
+      .catch(() => undefined);
+
+    return {
+      accessToken: this.signAccessToken(userId, role),
+      refreshToken: newRefreshToken,
+    };
   }
 
   /**
    * 이미 소비된(used_at NOT NULL) 토큰 재사용 처리 — 경합 vs 탈취 구분.
-   *  - used_at 이 5초 이내 → 정상 동시 경합 → 409 (RETRY, 세션 유지)
+   *  - used_at 이 창(30초) 이내 → 정상 동시 경합 → 409 (RETRY, 세션 유지)
    *  - 초과 → 명백한 탈취 replay → 세션 전체 revoke + audit + Discord critical + 401
    */
   private async rejectUsedToken(
@@ -451,8 +605,8 @@ export class AuthService {
    * 데이터가 아무 데도 없었다.**
    *
    * 판정 기준:
-   *  - 수 초~수십 초 → **오탐 의심.** 창(`CONCURRENCY_WINDOW_SECONDS=5`)이 모바일에 좁은 것이다.
-   *    네트워크 전환(WiFi↔LTE)·OS 백그라운드 정지·응답 유실 후 재시도가 전부 5초를 넘긴다
+   *  - 수 초~수십 초 → **오탐 의심.** 창(`CONCURRENCY_WINDOW_SECONDS=30`)이 모바일에 좁은 것이다.
+   *    네트워크 전환(WiFi↔LTE)·OS 백그라운드 정지·응답 유실 후 재시도가 전부 창을 넘긴다
    *  - 시간·일 단위 → 진짜 replay. 지금 동작이 정답
    *
    * 🔴 **데이터 없이 창부터 넓히지 말 것** — 근거 없이 보안 장치를 약화시키는 일이 된다.

@@ -27,6 +27,7 @@ import { ReviewerLoginDto } from './dto/reviewer-login.dto';
 import { deriveLoginProviders } from './login-providers.util';
 import { AppleS2SNotificationDto } from './dto/apple-s2s-notification.dto';
 import { KakaoNativeLoginDto } from './dto/kakao-native-login.dto';
+import { RefreshDto } from './dto/refresh.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Public } from '../common/decorators/public.decorator';
@@ -581,6 +582,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async refresh(
     @CurrentUser() user: AuthenticatedUser,
+    @Body() body: RefreshDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
@@ -589,13 +591,16 @@ export class AuthController {
     //   - 401 (UnauthorizedException): 위조·만료·absolute cap·탈취 replay → 프론트 axios 가 로그아웃 처리
     //   - 409 (ConflictException, body { code:'RETRY' }): 정상 동시 요청 경합 → 재시도 유도.
     //     기존 프론트는 401 만 로그아웃 처리하므로 409 는 자동 로그아웃 안 됨(안전). 쿠키는 갱신 안 함
-    //     (승자가 세운 새 쿠키로 클라이언트가 재시도하면 성공). 프론트 재시도 최적화는 후속.
+    //     (승자가 세운 새 쿠키로 클라이언트가 재시도하면 성공).
+    //   - 200 + 새 쿠키: 정상 회전, **또는** 같은 rotationId 의 재전송(회전 멱등 재현).
+    //     후자가 없으면 응답 유실 시 클라에 소비된 RT 만 남아 재시도가 원리적으로 실패한다.
     const { accessToken, refreshToken } = await this.authService.rotateTokens({
       userId: user.id,
       role: user.role,
       sid: user.sid ?? undefined,
       rawToken: user.refreshTokenRaw ?? '',
       deviceInfo: req.headers['user-agent'] ?? null,
+      rotationId: body?.rotationId ?? null,
     });
     res.cookie('refresh_token', refreshToken, REFRESH_COOKIE_OPTIONS);
     return {
