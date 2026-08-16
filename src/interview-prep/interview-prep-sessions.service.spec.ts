@@ -4,6 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
 import type { Repository, SelectQueryBuilder } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
+import { ApplicationStep } from '../applications/application-step.entity';
 import { Application } from '../applications/application.entity';
 import { ApplicationCoverletter } from '../applications/application-coverletter.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
@@ -26,6 +27,7 @@ describe('InterviewPrepSessionsService', () => {
   let appRepo: jest.Mocked<Repository<Application>>;
   let clRepo: jest.Mocked<Repository<ApplicationCoverletter>>;
   let logRepo: jest.Mocked<Repository<ActivityLog>>;
+  let stepRepo: jest.Mocked<Repository<ApplicationStep>>;
 
   const USER_ID = 'user-1';
   const APP_ID = 'app-1';
@@ -65,6 +67,7 @@ describe('InterviewPrepSessionsService', () => {
       userId: USER_ID,
       applicationId: APP_ID,
       round: '1차',
+      stepId: null,
       interviewType: null,
       coverletterIds: [],
       extraLogIds: [],
@@ -79,6 +82,7 @@ describe('InterviewPrepSessionsService', () => {
     appRepo = mock<Repository<Application>>();
     clRepo = mock<Repository<ApplicationCoverletter>>();
     logRepo = mock<Repository<ActivityLog>>();
+    stepRepo = mock<Repository<ApplicationStep>>();
 
     // QueryBuilder 재초기화
     appQb.where.mockReturnThis();
@@ -121,6 +125,8 @@ describe('InterviewPrepSessionsService', () => {
           useValue: clRepo,
         },
         { provide: getRepositoryToken(ActivityLog), useValue: logRepo },
+        // 세션↔스텝 연결 소유 확인용 — 이 spec 은 stepId 를 안 쓰는 케이스가 대부분이라 빈 mock
+        { provide: getRepositoryToken(ApplicationStep), useValue: stepRepo },
       ],
     }).compile();
     service = module.get<InterviewPrepSessionsService>(
@@ -416,7 +422,76 @@ describe('InterviewPrepSessionsService', () => {
   });
 
   // ── update ──
+  /**
+   * 🔴 **세션↔스텝 연결 (2026-08-16).** `stepId` 는 클라이언트가 보내는 값이라
+   * 타 사용자·타 카드의 스텝 id 를 붙일 수 있다 — **IDOR 2겹의 두 번째 겹**이다.
+   * 막지 않고 **연결만 끊는** 설계라, 「막혔나」가 아니라 「null 로 저장됐나」를 봐야 한다.
+   */
+  describe('stepId — 세션↔스텝 연결', () => {
+    it('내 카드의 스텝이면 연결된다', async () => {
+      stepRepo.count.mockResolvedValue(1);
+      const r = await service.create(USER_ID, {
+        applicationId: APP_ID,
+        round: '2차 면접',
+        stepId: 'st-1',
+      });
+      expect(r.stepId).toBe('st-1');
+    });
+
+    it('🔴 다른 카드의 스텝이면 **막지 않고 연결만 끊는다** (null 저장)', async () => {
+      stepRepo.count.mockResolvedValue(0); // applicationId 조건으로 못 찾음
+      const r = await service.create(USER_ID, {
+        applicationId: APP_ID,
+        round: '2차 면접',
+        stepId: 'other-card-step',
+      });
+      expect(r.stepId).toBeNull();
+      // 소유를 카드 범위로 확인했는지 — stepId 만으로 조회하면 IDOR 이다
+      expect(stepRepo.count).toHaveBeenCalledWith({
+        where: { id: 'other-card-step', applicationId: APP_ID },
+      });
+    });
+
+    it('「직접 입력」이면 stepId 없이 round 만 저장된다', async () => {
+      const r = await service.create(USER_ID, {
+        applicationId: APP_ID,
+        round: '모의 면접',
+      });
+      expect(r.stepId).toBeNull();
+      expect(r.round).toBe('모의 면접');
+      expect(stepRepo.count).not.toHaveBeenCalled();
+    });
+  });
+
   describe('update', () => {
+    /**
+     * 🔴 편집 모달은 `round` 를 **자유 텍스트**로 받는다. `stepId` 를 그대로 두면
+     * 「stepId 는 2차 면접을 가리키는데 round 만 임원 면접」이 되어 어긋난다.
+     */
+    it('🔴 round 를 바꾸면 stepId 연결이 끊긴다', async () => {
+      sessionRepo.findOne.mockResolvedValueOnce(
+        makeSession({ stepId: 'st-1', round: '1차' }),
+      );
+      const r = await service.update(USER_ID, 'sess-1', { round: '임원 면접' });
+      expect(r.stepId).toBeNull();
+    });
+
+    it('round 를 같은 값으로 보내면 stepId 는 유지된다', async () => {
+      sessionRepo.findOne.mockResolvedValueOnce(
+        makeSession({ stepId: 'st-1', round: '1차' }),
+      );
+      const r = await service.update(USER_ID, 'sess-1', { round: '1차' });
+      expect(r.stepId).toBe('st-1');
+    });
+
+    it('round 를 안 보내면 stepId 는 유지된다', async () => {
+      sessionRepo.findOne.mockResolvedValueOnce(
+        makeSession({ stepId: 'st-1' }),
+      );
+      const r = await service.update(USER_ID, 'sess-1', { myMemo: '메모' });
+      expect(r.stepId).toBe('st-1');
+    });
+
     it('round 변경', async () => {
       sessionRepo.findOne.mockResolvedValueOnce(makeSession());
       const r = await service.update(USER_ID, 'sess-1', { round: '2차' });

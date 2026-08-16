@@ -226,6 +226,25 @@ export class User {
   calendarHomeIntroDismissedAt: Date | null;
 
   /**
+   * 면접 유도 모달 — 「이 안내 다시 보지 않기」.
+   *
+   * NULL = 면접 단계로 이동할 때 안내 노출 가능.
+   * NOT NULL = **전 카드에서 영구히 안 뜸.**
+   *
+   * 🔴 되돌리는 UI 가 없다. 그래서 모달에서 **버튼이 아니라 체크박스**로 받는다 —
+   * 프로젝트 표준이 `영구 dismiss = 파괴적 액션 = 확인 필요`(ui-specs.md)인데
+   * 모달 위에 확인 모달을 또 띄우는 건 과하므로 체크박스가 그 단계를 대신한다.
+   *
+   * 노출 1회 소진은 여기가 아니라 `application_steps.interview_nudge_shown_at` 이다 (스텝당 1회).
+   */
+  @Column({
+    name: 'interview_nudge_dismissed_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  interviewNudgeDismissedAt: Date | null;
+
+  /**
    * 세션 지속성 웨이브 — 푸시-세션 분리.
    *
    * 유효 refresh 세션 0개(만료·reuse revoke) + 디바이스 토큰 살아있는 사용자에게

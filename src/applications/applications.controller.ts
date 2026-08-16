@@ -69,6 +69,20 @@ export class ApplicationsController {
     return this.service.updateCurrentStep(user.id, id, dto.stepIndex);
   }
 
+  /**
+   * 면접 유도 모달을 이 스텝에서 띄웠다고 기록 (멱등).
+   * 닫는 방법 4가지가 전부 여기로 온다 — 「다시 보지 않기」만 `POST /users/me/dismiss-interview-nudge` 로 따로 간다.
+   */
+  @Post(':id/steps/:stepId/interview-nudge-shown')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  markInterviewNudgeShown(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('stepId', ParseUUIDPipe) stepId: string,
+  ) {
+    return this.service.markInterviewNudgeShown(user.id, id, stepId);
+  }
+
   @Put(':id/steps')
   updateSteps(
     @CurrentUser() user: AuthUser,

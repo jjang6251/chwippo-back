@@ -56,6 +56,8 @@ interface AuthenticatedUser {
   sampleCardsDismissedAt: Date | null;
   /** 캘린더 UX 재구성 — "이제 캘린더가 홈이에요" 안내 배너 dismiss 시각. NULL → 첫 방문 배너 노출 */
   calendarHomeIntroDismissedAt: Date | null;
+  /** 면접 유도 모달 「다시 보지 않기」 시각. NULL → 면접 단계 이동 시 안내 노출 가능 */
+  interviewNudgeDismissedAt: Date | null;
   /** 알림 — soft-ask 모달 표시 시각. NULL → native 최초 1회 모달 */
   alarmPromptedAt: Date | null;
   /** 세션 지속성 — refresh 경로 전용: JWT sid claim (legacy 토큰은 null) */
@@ -623,6 +625,7 @@ export class AuthController {
         signupOtherText: user.signupOtherText ?? null,
         sampleCardsDismissedAt: user.sampleCardsDismissedAt ?? null,
         calendarHomeIntroDismissedAt: user.calendarHomeIntroDismissedAt ?? null,
+        interviewNudgeDismissedAt: user.interviewNudgeDismissedAt ?? null,
         alarmPromptedAt: user.alarmPromptedAt ?? null,
       },
     };

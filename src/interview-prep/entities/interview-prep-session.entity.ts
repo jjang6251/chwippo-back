@@ -46,6 +46,26 @@ export class InterviewPrepSession {
   @JoinColumn({ name: 'application_id' })
   application: Application;
 
+  /**
+   * 이 세션이 만들어진 **전형 스텝** (2026-08-16 신설).
+   *
+   * 🔴 **`round` 와 둘 중 하나로 통일하려 들지 말 것.** 성격이 다르다:
+   * 생성 모달 드롭다운에서 스텝을 고르면 `stepId` + `round`(그 스텝 이름)가 같이 저장되고,
+   * 「직접 입력…」(`모의 면접` 등)은 스텝이 없어 **`stepId=null` + `round`=입력값** 이 된다.
+   *
+   * **왜 만들었나** — 예전엔 드롭다운이 `value={s.name}` 이라 **이름 문자열만** 남았다. 그래서
+   * ① 스텝 이름을 고치면 `round` 가 옛 이름으로 굳고 ② **「이 스텝의 세션이 있나?」를 물을 수 없었다**
+   * (이름 매칭은 「직접 입력」 값과 섞여 불투명하다). ②가 면접 유도 모달의 핵심 판정이라 FK 로 올렸다.
+   *
+   * `ON DELETE SET NULL` — 스텝을 지워도 **세션은 남는다.** 코인을 써서 만든 질문이고
+   * `round` 문자열이 남아 의미를 유지한다.
+   *
+   * 🔴 **`relations: ['step']` 를 붙이지 말 것** — 세션 N개 = 쿼리 N+1 이 된다.
+   * 스텝 이름은 `round` 가 이미 들고 있어 조인할 이유가 없다.
+   */
+  @Column({ name: 'step_id', type: 'uuid', nullable: true })
+  stepId: string | null;
+
   /** 차수/명칭 (예: '1차 실무면접', '임원면접', '코딩테스트 회고' 등 자유 입력 ≤40자) */
   @Column({ type: 'varchar', length: 40 })
   round: string;

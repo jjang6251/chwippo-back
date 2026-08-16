@@ -1092,6 +1092,48 @@ describe('UsersService', () => {
     });
   });
 
+  // ── 면접 유도 모달: dismissInterviewNudge ─────────────
+  /**
+   * 🔴 다른 dismiss 와 **실패 처리 방향이 반대**인 유일한 항목이다.
+   * 스텝 노출 기록은 실패해도 「한 번 더 뜨는」 정도라 안전하지만, 이건 사용자가
+   * **명시적으로 체크한 약속**이라 실패 후 또 뜨면 약속 파기다 (프론트가 재시도 + localStorage 로 보강).
+   */
+  describe('dismissInterviewNudge', () => {
+    it('정상 → users.interview_nudge_dismissed_at 에 현재 시각 저장', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ interviewNudgeDismissedAt: null }),
+      );
+
+      await service.dismissInterviewNudge('user-uuid-1');
+
+      expect(userRepo.update).toHaveBeenCalledWith(
+        'user-uuid-1',
+        expect.objectContaining({
+          interviewNudgeDismissedAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('이미 dismiss 됨 → no-op (멱등 — 시각을 덮어쓰지 않는다)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ interviewNudgeDismissedAt: new Date('2026-08-16') }),
+      );
+
+      await service.dismissInterviewNudge('user-uuid-1');
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 user → NotFoundException', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.dismissInterviewNudge('nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
   // ── 캘린더 UX 재구성: dismissCalendarHomeIntro ─────────────
   describe('dismissCalendarHomeIntro', () => {
     it('정상 → users.calendar_home_intro_dismissed_at 에 현재 시각 저장', async () => {

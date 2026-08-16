@@ -68,6 +68,13 @@ export class UsersController {
     await this.usersService.dismissCalendarHomeIntro(user.id);
   }
 
+  /** 면접 유도 모달 「다시 보지 않기」 — 전 카드 영구 차단 (멱등) */
+  @Post('me/dismiss-interview-nudge')
+  @HttpCode(204)
+  async dismissInterviewNudge(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.usersService.dismissInterviewNudge(user.id);
+  }
+
   @Post('me/ai-consent')
   @HttpCode(204)
   async agreeAiConsent(

@@ -6,6 +6,9 @@ import {
 import { DiscordNotifier } from '../common/discord-notifier';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { User } from '../users/user.entity';
+import { InterviewPrepSession } from '../interview-prep/entities/interview-prep-session.entity';
+import { ApplicationCoverletter } from './application-coverletter.entity';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { LlmService } from '../ai/llm.service';
@@ -115,6 +118,19 @@ describe('ApplicationsService', () => {
         {
           provide: getRepositoryToken(StepChecklistItem),
           useValue: mock<Repository<StepChecklistItem>>(),
+        },
+        // 면접 유도 모달 판정용 — 이 spec 은 판정을 검증하지 않으므로 빈 mock
+        {
+          provide: getRepositoryToken(User),
+          useValue: mock<Repository<User>>(),
+        },
+        {
+          provide: getRepositoryToken(InterviewPrepSession),
+          useValue: mock<Repository<InterviewPrepSession>>(),
+        },
+        {
+          provide: getRepositoryToken(ApplicationCoverletter),
+          useValue: mock<Repository<ApplicationCoverletter>>(),
         },
         // checklistRepo는 module.get로 따로 받지 않고 위 inline mock 그대로 사용
         { provide: DataSource, useValue: mockDataSource },
