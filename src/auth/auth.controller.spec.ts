@@ -62,6 +62,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    interviewNudgeDismissedAt: null,
     sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,
@@ -451,6 +452,7 @@ describe('AuthController', () => {
       signupOtherText: null,
       sampleCardsDismissedAt: null,
       calendarHomeIntroDismissedAt: null,
+      interviewNudgeDismissedAt: null,
       alarmPromptedAt: null,
       // 세션 지속성 — refresh 경로 전용 필드 (strategy 가 주입)
       sid: 'sid-1',
@@ -510,6 +512,7 @@ describe('AuthController', () => {
           signupOtherText: null,
           sampleCardsDismissedAt: null,
           calendarHomeIntroDismissedAt: null,
+          interviewNudgeDismissedAt: null,
           alarmPromptedAt: null,
         },
       });

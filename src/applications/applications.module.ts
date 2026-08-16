@@ -6,6 +6,8 @@ import { CompaniesModule } from '../companies/companies.module';
 import { InterviewPrepModule } from '../interview-prep/interview-prep.module';
 import { MyinfoModule } from '../myinfo/myinfo.module';
 import { Application } from './application.entity';
+import { User } from '../users/user.entity';
+import { InterviewPrepSession } from '../interview-prep/entities/interview-prep-session.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
 import { StepNoteSheet } from './step-note-sheet.entity';
@@ -47,6 +49,10 @@ import { StepNoteSheetsService } from './step-note-sheets.service';
       Coverletter,
       CoverletterCustom,
       // myinfo 수상 — chat selectedAwardIds inject
+      // 면접 유도 모달 판정 — 서비스가 아니라 **엔티티만** 등록해 레포를 직접 주입한다.
+      // 🔴 모듈을 import 하면 전이 순환이 생긴다 (2026-08-08 CI E2E 210 전량 실패 전례).
+      User,
+      InterviewPrepSession,
       Award,
     ]),
     // ActivityModule TypeOrmModule (ActivityLog/Reflection repo) — IDOR batch + ref source 조회

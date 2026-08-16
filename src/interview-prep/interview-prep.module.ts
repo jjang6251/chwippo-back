@@ -6,6 +6,7 @@ import { ApplicationsModule } from '../applications/applications.module';
 import { CompanyResearchCache } from './entities/company-research-cache.entity';
 import { InterviewPrepQuestion } from './entities/interview-prep-question.entity';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
+import { ApplicationStep } from '../applications/application-step.entity';
 import { AdminCompanyResearchController } from './admin-company-research.controller';
 import { CompanyResearchService } from './company-research.service';
 import { CompanyResearchSeedService } from './company-research-seed.service';
@@ -31,6 +32,9 @@ import { InterviewPrepSessionsService } from './interview-prep-sessions.service'
     TypeOrmModule.forFeature([
       InterviewPrepSession,
       InterviewPrepQuestion,
+      // 세션↔스텝 연결 소유 확인 — **엔티티만** 등록 (ApplicationsModule 은 이미 forwardRef 지만
+      // 레포는 직접 주입해 순환 표면을 늘리지 않는다)
+      ApplicationStep,
       CompanyResearchCache,
     ]),
     forwardRef(() => ActivityModule),

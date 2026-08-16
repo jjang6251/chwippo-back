@@ -12,6 +12,9 @@ import { CompaniesService } from '../companies/companies.service';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
+import { ApplicationCoverletter } from './application-coverletter.entity';
+import { User } from '../users/user.entity';
+import { InterviewPrepSession } from '../interview-prep/entities/interview-prep-session.entity';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { DiscordNotifier, DISCORD_COLORS } from '../common/discord-notifier';
 import { UpdateApplicationDto } from './dto/update-application.dto';
@@ -34,6 +37,13 @@ export class ApplicationsService {
     private readonly stepRepo: Repository<ApplicationStep>,
     @InjectRepository(StepChecklistItem)
     private readonly checklistRepo: Repository<StepChecklistItem>,
+    // 면접 유도 모달 판정 — 엔티티 레포만 직접 주입 (모듈 순환 회피)
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    @InjectRepository(InterviewPrepSession)
+    private readonly prepSessionRepo: Repository<InterviewPrepSession>,
+    @InjectRepository(ApplicationCoverletter)
+    private readonly appCoverletterRepo: Repository<ApplicationCoverletter>,
     private readonly dataSource: DataSource,
     // PR_B1c — generateCoverletter (자소서 생성 시 회사조사 + 50 코인 차감)
     private readonly llmService: LlmService,
@@ -261,7 +271,100 @@ export class ApplicationsService {
     }
 
     await this.appRepo.update(id, updateData);
-    return this.findOne(userId, id);
+    const app = await this.findOne(userId, id);
+    return {
+      ...app,
+      interviewNudge: await this.judgeInterviewNudge(
+        userId,
+        id,
+        steps[stepIndex],
+      ),
+    };
+  }
+
+  /**
+   * 면접 유도 모달 판정 — **단계 이동 응답에 얹는다.**
+   *
+   * 🔴 **왜 여기서 하나** — 프론트가 판정하려면 세션 목록을 따로 불러야 하는데,
+   * `BoardDetail` 은 세션을 **안 부른다**(면접 탭 전용). 그러면 ① 카드 진입마다 쿼리가 늘고
+   * ② 왕복이 끝나야 판정돼 **모달이 한 박자 늦게 뜬다.** 단계 이동은 어차피 이 요청을 타므로
+   * 여기 얹으면 **추가 쿼리 0 · 추가 왕복 0** 이다.
+   *
+   * 🔴 **「이 스텝이 면접인가」는 판정하지 않는다.** 그 정규식(`getStepType`)은 프론트에만 있고,
+   * 백엔드에 복제하면 프론트에 `온사이트` 를 추가하고 여기를 잊는 순간 **조용히 어긋난다.**
+   * 서버는 ②③④(서버만 아는 것)만 보고, 프론트가 `isInterviewLikeForNudge(name) && show` 로 합친다.
+   * 면접이 아닌 스텝에도 계산이 도는 건 `EXISTS` 2줄이라 비용이 없다.
+   */
+  private async judgeInterviewNudge(
+    userId: string,
+    applicationId: string,
+    step: ApplicationStep | undefined,
+  ): Promise<{
+    show: boolean;
+    variant: 'first' | 'again' | 'noCoverletter';
+  }> {
+    const hidden = { show: false, variant: 'first' as const };
+    if (!step) return hidden;
+
+    // ② 이 스텝에서 이미 띄웠다
+    if (step.interviewNudgeShownAt) return hidden;
+
+    // ③ 「다시 보지 않기」 — 전역 영구 차단
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, interviewNudgeDismissedAt: true },
+    });
+    if (user?.interviewNudgeDismissedAt) return hidden;
+
+    // ④ 이 **스텝**의 세션이 이미 있다 (카드 단위가 아니다 — 1차가 있어도 2차는 물어야 한다).
+    //    ⚠️ 마이그레이션 이전 세션은 stepId=NULL 이라 여기 안 걸린다. 백필하지 않기로 한 대가이고,
+    //       「다시 보지 않기」로 닫힌다.
+    const sessionOnThisStep = await this.prepSessionRepo.count({
+      where: { userId, stepId: step.id },
+    });
+    if (sessionOnThisStep > 0) return hidden;
+
+    /**
+     * 문구 분기 — 자소서 0건이 최우선이다.
+     * 🔴 자소서가 없으면 AI 질문 생성이 서버 게이트(NEED_COVERLETTER)에 막힌다.
+     *    그 사람에게 「무료로 체험해 보세요」라고 하면 체험할 수 없는 걸 권하는 게 된다.
+     *
+     * ⚠️ 한때 문항 제목 1건을 같이 실어 모달에 보여줬다(「show, don't tell」). 문구를
+     *    「무료」 강조로 바꾸면서 화면에서 뺐고, 안 쓰는 필드를 남기면 죽은 코드가 되므로
+     *    count 로 되돌렸다. 되살릴 땐 `findOne(select: id·question)` 이면 된다 — 쿼리 수는 같다.
+     */
+    const coverletterCount = await this.appCoverletterRepo.count({
+      where: { applicationId },
+    });
+    if (coverletterCount === 0) return { show: true, variant: 'noCoverletter' };
+
+    const sessionsOnCard = await this.prepSessionRepo.count({
+      where: { userId, applicationId },
+    });
+    return { show: true, variant: sessionsOnCard === 0 ? 'first' : 'again' };
+  }
+
+  /**
+   * 면접 유도 모달을 이 스텝에서 띄웠다고 기록 — **스텝당 1회 소진** (멱등).
+   *
+   * 닫는 방법 4가지(X · 오버레이 탭 · ESC · CTA)가 **전부 여기로 온다.** 넷은 동등하고,
+   * 「다시 보지 않기」 체크만 별도로 `users.interview_nudge_dismissed_at` 에 간다.
+   *
+   * 🔴 **IDOR 2겹** — 스텝은 카드를 통해서만 소유가 확인된다.
+   * `stepId` 만으로 조회하면 **타 사용자 스텝에 도장을 찍을 수 있다.**
+   */
+  async markInterviewNudgeShown(
+    userId: string,
+    applicationId: string,
+    stepId: string,
+  ): Promise<void> {
+    await this.findEntity(userId, applicationId); // 카드 소유 확인
+    const step = await this.stepRepo.findOne({
+      where: { id: stepId, applicationId },
+    });
+    if (!step) throw new NotFoundException('스텝을 찾을 수 없습니다.');
+    if (step.interviewNudgeShownAt) return; // 멱등
+    await this.stepRepo.update(stepId, { interviewNudgeShownAt: new Date() });
   }
 
   /**

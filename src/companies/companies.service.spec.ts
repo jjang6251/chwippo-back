@@ -63,6 +63,7 @@ describe('CompaniesService', () => {
     signupOtherText: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
+    interviewNudgeDismissedAt: null,
     sessionExpiredNotifiedAt: null,
     tier: 'free',
     ...overrides,

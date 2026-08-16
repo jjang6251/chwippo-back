@@ -189,6 +189,23 @@ export class UsersService {
   }
 
   /**
+   * 면접 유도 모달 「이 안내 다시 보지 않기」 — **전 카드 영구 차단**.
+   *
+   * 🔴 클라이언트가 **실패를 그냥 넘기면 안 되는** 유일한 dismiss 다.
+   * 스텝 단위 노출 기록(`interview_nudge_shown_at`)은 실패해도 "한 번 더 뜨는" 정도라 안전하지만,
+   * 이건 사용자가 **명시적으로 누른 약속**이라 실패 후 또 뜨면 약속 파기가 된다.
+   * 그래서 프론트는 재시도 + localStorage 보조 기록으로 한 겹 더 막는다.
+   */
+  async dismissInterviewNudge(userId: string): Promise<void> {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    if (user.interviewNudgeDismissedAt) return; // 멱등
+    await this.repo.update(userId, {
+      interviewNudgeDismissedAt: new Date(),
+    });
+  }
+
+  /**
    * 데스크탑 웹 사용 스탬프 — 최초 1회만 기록.
    *
    * 프론트는 `useCoverletterReadOnly() === false` 일 때만 이걸 부른다. 즉 **자소서 게이트와
