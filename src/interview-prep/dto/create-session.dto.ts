@@ -26,6 +26,18 @@ export class CreateSessionDto {
   @MaxLength(40)
   round: string;
 
+  /**
+   * 이 세션이 속한 전형 스텝 — 생성 모달 드롭다운에서 스텝을 고르면 함께 온다.
+   *
+   * 🔴 **`round` 를 대체하지 않는다.** 「직접 입력…」(`모의 면접` 등)은 스텝이 없어
+   * `stepId` 없이 `round` 만 온다. 둘은 성격이 달라 병존한다.
+   *
+   * 서버는 소유를 반드시 재확인한다 — 타 사용자 스텝 id 를 붙여 보낼 수 있다.
+   */
+  @IsOptional()
+  @IsUUID()
+  stepId?: string;
+
   @IsOptional()
   @IsIn(INTERVIEW_TYPES)
   interviewType?: InterviewTypeValue;

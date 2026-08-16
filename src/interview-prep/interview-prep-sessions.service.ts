@@ -8,6 +8,7 @@ import { In, Repository } from 'typeorm';
 import { ActivityLog } from '../activity/entities/activity-log.entity';
 import { Application } from '../applications/application.entity';
 import { ApplicationCoverletter } from '../applications/application-coverletter.entity';
+import { ApplicationStep } from '../applications/application-step.entity';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { InterviewPrepSession } from './entities/interview-prep-session.entity';
@@ -64,6 +65,8 @@ export interface SessionRefsExpanded {
 export interface SessionResponse {
   id: string;
   applicationId: string;
+  /** 이 세션이 속한 전형 스텝. 「직접 입력」으로 만든 세션·구 세션은 null (조인 금지 — round 가 이름을 들고 있다) */
+  stepId: string | null;
   round: string;
   interviewType: string | null;
   coverletterIds: string[];
@@ -91,6 +94,8 @@ export class InterviewPrepSessionsService {
     private readonly clRepo: Repository<ApplicationCoverletter>,
     @InjectRepository(ActivityLog)
     private readonly logRepo: Repository<ActivityLog>,
+    @InjectRepository(ApplicationStep)
+    private readonly stepRepo: Repository<ApplicationStep>,
   ) {}
 
   // ── IDOR 가드 ──
@@ -191,9 +196,25 @@ export class InterviewPrepSessionsService {
     );
     await this.assertLogsBelongToUser(userId, extraLogIds);
 
+    /**
+     * 🔴 **스텝 소유를 반드시 재확인한다.** `stepId` 는 클라이언트가 보내는 값이라
+     * 타 사용자·타 카드의 스텝 id 를 붙일 수 있다. 카드 소유는 위에서 확인했으므로
+     * **그 카드에 속한 스텝인지**만 보면 된다 (IDOR 2겹의 두 번째 겹).
+     * 어긋나면 막지 않고 **연결만 끊는다** — 세션 생성 자체는 정상 요청이고,
+     * 스텝 연결은 편의 기능이라 여기서 400 을 내면 사용자가 이유를 알 수 없다.
+     */
+    let stepId: string | null = null;
+    if (dto.stepId) {
+      const owned = await this.stepRepo.count({
+        where: { id: dto.stepId, applicationId: dto.applicationId },
+      });
+      stepId = owned > 0 ? dto.stepId : null;
+    }
+
     const session = this.sessionRepo.create({
       userId,
       applicationId: dto.applicationId,
+      stepId,
       round: dto.round,
       interviewType: dto.interviewType ?? null,
       coverletterIds,
@@ -242,6 +263,17 @@ export class InterviewPrepSessionsService {
     dto: UpdateSessionDto,
   ): Promise<SessionResponse> {
     const session = await this.findOwnedRaw(userId, sessionId);
+    /**
+     * 🔴 **round 를 손으로 고치면 스텝 연결을 끊는다.**
+     *
+     * 편집 모달은 `round` 를 **자유 텍스트**로 받는다(`EditInterviewSessionModal`).
+     * `stepId` 를 그대로 두면 어긋난다 — `stepId` 는 「2차 면접」 스텝을 가리키는데
+     * `round` 만 「임원 면접」이 되는 식이다. 「직접 고쳐 쓰면 연결이 해제된다」가
+     * 정직하고, 그 상태는 「직접 입력」으로 만든 세션과 정확히 같아 새 개념이 안 생긴다.
+     */
+    if (dto.round !== undefined && dto.round !== session.round) {
+      session.stepId = null;
+    }
     if (dto.round !== undefined) session.round = dto.round;
     if (dto.interviewType !== undefined)
       session.interviewType = dto.interviewType;
@@ -338,6 +370,7 @@ export class InterviewPrepSessionsService {
     return {
       id: s.id,
       applicationId: s.applicationId,
+      stepId: s.stepId,
       round: s.round,
       interviewType: s.interviewType,
       coverletterIds: s.coverletterIds,
