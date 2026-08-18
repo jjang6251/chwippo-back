@@ -33,7 +33,7 @@ interface CacheEntry {
  *
  * 통합 streak (CEO Q1=B):
  *   - 사용자가 의식적으로 한 액션 1개라도 있는 KST 일자 = streak +1
- *   - 5 source UNION ALL → KST DATE_TRUNC → 일자 distinct
+ *   - 6 source UNION ALL → KST DATE_TRUNC → 일자 distinct
  *
  * source list (AI 재활성화 시 +2 — `company/07_ops/ai-features-disabled.md` 명시):
  *   - activity_logs.created_at (활동일지 로그)
@@ -41,6 +41,8 @@ interface CacheEntry {
  *   - applications.created_at (지원 카드 추가)
  *   - applications.updated_at (지원 카드 편집)
  *   - daily_notes.created_at (캘린더 할 일·시간 슬롯)
+ *   - study_notes.updated_at (공부 노트 편집 — created 가 아니라 updated 인 이유는
+ *     노트는 한 번 만들고 계속 고치는 물건이라, 만든 날만 세면 매일 공부해도 streak 이 안 는다)
  *   // 🔓 AI 재활성화 시 주석 해제:
  *   // - coverletters.updated_at
  *   // - interview_prep_sessions.created_at
@@ -78,7 +80,7 @@ export class StreakService {
   }
 
   /**
-   * 5 source UNION ALL → KST 일자별 count.
+   * 6 source UNION ALL → KST 일자별 count.
    * Map<'YYYY-MM-DD', count> 반환 (해당 일자에 active 한 event 수, dedup 없는 raw count).
    */
   private async fetchActiveDates(userId: string): Promise<Map<string, number>> {
@@ -99,6 +101,9 @@ export class StreakService {
         UNION ALL
         SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS date
         FROM daily_notes WHERE user_id = $1
+        UNION ALL
+        SELECT (updated_at AT TIME ZONE 'Asia/Seoul')::date AS date
+        FROM study_notes WHERE user_id = $1
         -- 🔓 AI 재활성화 시 추가:
         -- UNION ALL SELECT (updated_at AT TIME ZONE 'Asia/Seoul')::date FROM coverletters WHERE user_id = $1
         -- UNION ALL SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date FROM interview_prep_sessions WHERE user_id = $1

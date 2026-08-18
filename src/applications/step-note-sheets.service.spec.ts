@@ -4,7 +4,10 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { mock } from 'jest-mock-extended';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, FindOperator, Repository } from 'typeorm';
+import { MENTION_NODE_TYPE } from '../study-notes/mention-links';
+import { StudyNoteLink } from '../study-notes/study-note-link.entity';
+import { StudyNote } from '../study-notes/study-note.entity';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepNoteSheet } from './step-note-sheet.entity';
@@ -69,6 +72,18 @@ import {
  *  D4  타 유저 → 404
  *  D5  IDOR: 다른 step 의 sheetId → 404
  *  D6  스텝 행 잠금 (동시 DELETE 가 0장을 못 만든다)
+ *
+ * ## 공부 노트 멘션 링크 (study-notes 연계 · from_type='prep_sheet')
+ *  M1  본문 저장 → 링크 재계산 (delete + insert)
+ *  M2  🔴 이름만 수정(본문 미전달) → 재계산 안 함 · **트랜잭션도 안 연다**
+ *  M3  멘션 제거 → 링크도 사라진다 (delete 만)
+ *  M4  🔴 남의 공부 노트 멘션 → 링크가 안 생긴다 (쓰기 IDOR 차단)
+ *  M5  🔴 재계산 실패 → **본문 저장까지 롤백**
+ *  M6  승격·생성 시 본문에 멘션 → insert
+ *  M7  생성 시 본문 없음 → 링크 repo 를 아예 안 부른다
+ *  M8  🔴 시트 삭제 → 그 시트가 내보낸 링크도 같은 트랜잭션에서 사라진다
+ *      (`from_id` 다형성이라 FK CASCADE 가 안 닿는다 · 다른 시트 링크는 안 건드린다)
+ *  M9  🔴 마지막 1장이라 삭제가 400 이면 **링크도 그대로** (지우지 않는다)
  *
  * ## 🔴 최상위 불변식 — 기존 노트는 절대 안 날아간다
  *  INV1 모든 공개 메서드를 다 돌려도 stepRepo 의 **쓰기 메서드 호출 0**
@@ -146,8 +161,24 @@ describe('StepNoteSheetsService', () => {
     /** appRepo·stepRepo 대신 트랜잭션 안에서 돌려줄 값 */
     app: Application | null;
     step: ApplicationStep | null;
+    /** 공부 노트 멘션 링크 — 트랜잭션 시작 시점 / 커밋된 최종 상태 */
+    links: LinkRow[];
+    committedLinks: LinkRow[];
+    /** 링크 소유권 필터가 "내 노트" 로 인정할 노트 id (study_notes 행 흉내) */
+    ownedNoteIds: string[];
+    linkDeleteCalls: number;
+    linkInsertCalls: number;
+    /** 링크 insert 를 실패시킨다 (본문 저장까지 롤백되는지 검증) */
+    failOnLinkInsert: boolean;
   }
   let tx: TxWorld;
+
+  /** study_note_links 한 줄 */
+  interface LinkRow {
+    fromId: string;
+    fromType: string;
+    toNoteId: string;
+  }
 
   const sortSheets = (list: StepNoteSheet[]): StepNoteSheet[] =>
     [...list].sort(
@@ -161,6 +192,7 @@ describe('StepNoteSheetsService', () => {
       async (cb: (em: EntityManager) => Promise<unknown>) => {
         tx.opened += 1;
         const staged = [...tx.sheets];
+        const stagedLinks = [...tx.links];
 
         const txSheetRepo = {
           find: async ({ where }: { where: { stepId: string } }) =>
@@ -179,6 +211,12 @@ describe('StepNoteSheetsService', () => {
           save: async (e: StepNoteSheet) => {
             tx.saveCalls += 1;
             if (tx.failOnSave) throw new Error('INSERT 실패 (제약 위반 흉내)');
+            // 이미 있는 행이면 갱신 (update 경로도 이 repo 를 통과한다)
+            const i = staged.findIndex((s) => s.id === e.id);
+            if (e.id && i >= 0) {
+              staged[i] = e;
+              return e;
+            }
             const row = {
               ...e,
               id: `new-${staged.length}`,
@@ -194,6 +232,43 @@ describe('StepNoteSheetsService', () => {
             if (i >= 0) staged.splice(i, 1);
             return e;
           },
+        };
+
+        /**
+         * 공부 노트 멘션 링크 재계산이 쓰는 두 repo.
+         * 시트 본문에 멘션이 실려 오면 `study_note_links` 를 이 시트 단위로 다시 만든다.
+         */
+        const txLinkRepo = {
+          delete: async (criteria: { fromId: string; fromType: string }) => {
+            tx.linkDeleteCalls += 1;
+            for (let i = stagedLinks.length - 1; i >= 0; i--) {
+              if (
+                stagedLinks[i].fromId === criteria.fromId &&
+                stagedLinks[i].fromType === criteria.fromType
+              ) {
+                stagedLinks.splice(i, 1);
+              }
+            }
+          },
+          insert: async (rows: LinkRow[]) => {
+            tx.linkInsertCalls += 1;
+            if (tx.failOnLinkInsert) {
+              throw new Error('링크 INSERT 실패 (제약 위반 흉내)');
+            }
+            stagedLinks.push(...rows);
+          },
+        };
+
+        const txStudyNoteRepo = {
+          // 소유권 필터 — where.id 는 `In(ids)` 라 value 가 **배열**이다
+          find: async ({
+            where,
+          }: {
+            where: { id: FindOperator<string[]> };
+          }): Promise<{ id: string }[]> =>
+            where.id.value
+              .filter((id) => tx.ownedNoteIds.includes(id))
+              .map((id) => ({ id })),
         };
 
         const recordWrite = (name: string) =>
@@ -218,6 +293,8 @@ describe('StepNoteSheetsService', () => {
           ),
           getRepository: (entity: unknown) => {
             tx.repoRequests.push(entity);
+            if (entity === StudyNoteLink) return txLinkRepo;
+            if (entity === StudyNote) return txStudyNoteRepo;
             return txSheetRepo;
           },
           // 🔴 불변식 감시 — 서비스가 em 으로 직접 쓰기를 하면 여기 기록된다
@@ -231,6 +308,7 @@ describe('StepNoteSheetsService', () => {
 
         const result = await cb(em); // throw 하면 staged 는 버려진다
         tx.committed = staged;
+        tx.committedLinks = stagedLinks;
         return result;
       },
     );
@@ -254,6 +332,12 @@ describe('StepNoteSheetsService', () => {
       opened: 0,
       app: makeApp(),
       step: makeStep(),
+      links: [],
+      committedLinks: [],
+      ownedNoteIds: [],
+      linkDeleteCalls: 0,
+      linkInsertCalls: 0,
+      failOnLinkInsert: false,
     };
     installTransaction();
 
@@ -717,16 +801,169 @@ describe('StepNoteSheetsService', () => {
     });
   });
 
+  // ── 공부 노트 멘션 링크 재계산 (from_type = 'prep_sheet') ──
+
+  describe('공부 노트 멘션 링크', () => {
+    /** uuid 형식이어야 추출기를 통과한다 (uuid 아닌 noteId 는 버려진다) */
+    const noteId = (n: number) =>
+      `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
+
+    const docWith = (...ids: string[]) =>
+      JSON.stringify({
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: ids.map((id) => ({
+              type: MENTION_NODE_TYPE,
+              attrs: { noteId: id },
+            })),
+          },
+        ],
+      });
+
+    beforeEach(() => {
+      tx.sheets = makeSheets(1);
+      sheetRepo.findOne.mockResolvedValue(makeSheet({ id: 'sheet-0' }));
+      sheetRepo.save.mockImplementation((e) =>
+        Promise.resolve(e as StepNoteSheet),
+      );
+      tx.ownedNoteIds = [noteId(1), noteId(2)];
+    });
+
+    it('M1) 본문 저장 → 링크 재계산 · from_type = prep_sheet', async () => {
+      await service.update(USER_ID, APP_ID, STEP_ID, 'sheet-0', {
+        content: docWith(noteId(1), noteId(2)),
+      });
+
+      expect(tx.committedLinks).toEqual([
+        { fromId: 'sheet-0', fromType: 'prep_sheet', toNoteId: noteId(1) },
+        { fromId: 'sheet-0', fromType: 'prep_sheet', toNoteId: noteId(2) },
+      ]);
+    });
+
+    it('M2) 🔴 이름만 수정(본문 미전달) → 링크 재계산 안 함 · 트랜잭션도 안 연다', async () => {
+      tx.links = [
+        { fromId: 'sheet-0', fromType: 'prep_sheet', toNoteId: noteId(1) },
+      ];
+
+      await service.update(USER_ID, APP_ID, STEP_ID, 'sheet-0', {
+        name: '이름만 변경',
+      });
+
+      expect(tx.opened).toBe(0);
+      expect(tx.linkDeleteCalls).toBe(0);
+      expect(sheetRepo.save).toHaveBeenCalled();
+    });
+
+    it('M3) 멘션 제거 → 링크도 제거 (delete 만, insert 없음)', async () => {
+      tx.links = [
+        { fromId: 'sheet-0', fromType: 'prep_sheet', toNoteId: noteId(1) },
+      ];
+
+      await service.update(USER_ID, APP_ID, STEP_ID, 'sheet-0', {
+        content: '{"type":"doc","content":[]}',
+      });
+
+      expect(tx.linkDeleteCalls).toBe(1);
+      expect(tx.linkInsertCalls).toBe(0);
+      expect(tx.committedLinks).toEqual([]);
+    });
+
+    it('M4) 🔴 남의 공부 노트를 멘션해도 링크가 안 생긴다 (쓰기 IDOR 차단)', async () => {
+      await service.update(USER_ID, APP_ID, STEP_ID, 'sheet-0', {
+        content: docWith(noteId(1), noteId(99)), // 99 는 내 노트가 아니다
+      });
+
+      expect(tx.committedLinks).toEqual([
+        { fromId: 'sheet-0', fromType: 'prep_sheet', toNoteId: noteId(1) },
+      ]);
+    });
+
+    it('M5) 🔴 링크 재계산 실패 → 본문 저장까지 롤백', async () => {
+      tx.failOnLinkInsert = true;
+
+      await expect(
+        service.update(USER_ID, APP_ID, STEP_ID, 'sheet-0', {
+          content: docWith(noteId(1)),
+        }),
+      ).rejects.toThrow('링크 INSERT 실패 (제약 위반 흉내)');
+      expect(tx.committed).toEqual([]); // 커밋 자체가 없었다
+      expect(tx.committedLinks).toEqual([]);
+    });
+
+    it('M6) 승격·생성 시 본문에 멘션 → 링크 insert', async () => {
+      tx.sheets = [];
+
+      await service.create(USER_ID, APP_ID, STEP_ID, {
+        name: '기존 노트',
+        content: docWith(noteId(1)),
+        ifEmpty: true,
+      });
+
+      expect(tx.committedLinks).toEqual([
+        { fromId: 'new-0', fromType: 'prep_sheet', toNoteId: noteId(1) },
+      ]);
+    });
+
+    it('M7) 생성 시 본문 없음 → 링크 repo 를 아예 안 부른다 (왕복 절약)', async () => {
+      tx.sheets = [];
+
+      await service.create(USER_ID, APP_ID, STEP_ID, { name: '빈 시트' });
+
+      expect(tx.repoRequests).not.toContain(StudyNoteLink);
+      expect(tx.linkDeleteCalls).toBe(0);
+    });
+
+    it('M8) 🔴 시트 삭제 → 그 시트가 내보낸 링크도 사라진다 (다른 시트 링크는 보존)', async () => {
+      tx.sheets = makeSheets(2);
+      tx.links = [
+        { fromId: 'sheet-0', fromType: 'prep_sheet', toNoteId: noteId(1) },
+        { fromId: 'sheet-1', fromType: 'prep_sheet', toNoteId: noteId(1) },
+        // 공부 노트가 내보낸 같은 id 의 링크는 from_type 이 달라 안 지워진다
+        { fromId: 'sheet-0', fromType: 'study', toNoteId: noteId(2) },
+      ];
+
+      await service.remove(USER_ID, APP_ID, STEP_ID, 'sheet-0');
+
+      expect(tx.committedLinks).toEqual([
+        { fromId: 'sheet-1', fromType: 'prep_sheet', toNoteId: noteId(1) },
+        { fromId: 'sheet-0', fromType: 'study', toNoteId: noteId(2) },
+      ]);
+      expect(tx.removeCalls).toBe(1);
+    });
+
+    it('M9) 🔴 마지막 1장이라 삭제가 400 이면 링크도 그대로', async () => {
+      tx.sheets = makeSheets(1);
+      tx.links = [
+        { fromId: 'sheet-0', fromType: 'prep_sheet', toNoteId: noteId(1) },
+      ];
+
+      await expect(
+        service.remove(USER_ID, APP_ID, STEP_ID, 'sheet-0'),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.linkDeleteCalls).toBe(0);
+    });
+  });
+
   // ── 🔴 최상위 불변식 ──
 
   describe('🔴 불변식 — 이 서비스는 steps.notes 를 절대 갱신하지 않는다', () => {
-    /** 주석·문자열을 걷어낸 서비스 소스 (식별자만 남긴다) */
+    /**
+     * 주석·import 경로를 걷어낸 서비스 소스 (**식별자만** 남긴다).
+     *
+     * import 경로를 지우는 이유: `'../study-notes/mention-links'` 같은 경로 문자열은
+     * 식별자가 아니라 파일 이름이다. 남겨 두면 INV4 의 `\bnotes\b` 가 `study-notes` 의
+     * `notes` 에 걸려, "컬럼을 만지는가" 와 무관한 이유로 가드가 울린다.
+     * 가드의 목적(= `steps.notes` 를 이름으로 부르지 않는다)은 그대로 남는다.
+     */
     const serviceCode = readFileSync(
       join(__dirname, 'step-note-sheets.service.ts'),
       'utf8',
     )
       .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '');
+      .replace(/\/\/.*$/gm, '')
+      .replace(/from\s+'[^']*'/g, '');
 
     it('INV1) 모든 공개 메서드를 돌려도 stepRepo 쓰기 메서드 호출 0', async () => {
       tx.sheets = makeSheets(2);
