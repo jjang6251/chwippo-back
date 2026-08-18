@@ -207,14 +207,44 @@ describe('StreakService', () => {
       mockActiveDates([]);
       await service.getDashboardStreak(USER_ID);
       const sqlCall = appRepo.query.mock.calls[0][0];
-      // 활성 source 5개 포함
+      // 활성 source 6개 포함
       expect(sqlCall).toMatch(/activity_logs/);
       expect(sqlCall).toMatch(/activity_reflections/);
       expect(sqlCall).toMatch(/applications/);
       expect(sqlCall).toMatch(/daily_notes/);
+      expect(sqlCall).toMatch(/study_notes/);
       // AI source 2개 미포함 (주석으로만)
       expect(sqlCall).not.toMatch(/^[^-]*FROM coverletters/m);
       expect(sqlCall).not.toMatch(/^[^-]*FROM interview_prep_sessions/m);
+    });
+  });
+
+  describe('공부 노트 source', () => {
+    /**
+     * 🔴 **`updated_at`** 이어야 한다. 노트는 한 번 만들고 계속 고치는 물건이라
+     * `created_at` 만 세면 매일 공부해도 streak 이 안 는다 (다른 source 와 다른 이유로
+     * updated 를 고른 유일한 자리라, 누가 "일관성" 을 이유로 바꾸면 여기서 걸린다).
+     */
+    it('16. study_notes 는 updated_at 을 KST 로 캐스팅해 UNION 된다', async () => {
+      mockActiveDates([]);
+      await service.getDashboardStreak(USER_ID);
+
+      const sql: string = appRepo.query.mock.calls[0][0];
+      expect(sql).toMatch(
+        /SELECT \(updated_at AT TIME ZONE 'Asia\/Seoul'\)::date AS date\s+FROM study_notes WHERE user_id = \$1/,
+      );
+      // 단일 hop 만 — timestamptz 에 이중 체인을 쓰면 하루가 어긋난다
+      expect(sql).not.toMatch(/study_notes[\s\S]*AT TIME ZONE 'UTC'/);
+    });
+
+    it('17. 공부 노트만 편집한 날도 streak 에 잡힌다 (오늘 KST)', async () => {
+      const today = todayKst();
+      mockActiveDates([{ date: today, count: 1 }]);
+
+      const result = await service.getDashboardStreak(USER_ID);
+
+      expect(result.streak.current).toBe(1);
+      expect(result.streak.lastActivityDate).toBe(today);
     });
   });
 });
