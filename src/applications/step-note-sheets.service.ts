@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import { syncStudyNoteLinks } from '../study-notes/mention-links';
+import { StudyNoteLink } from '../study-notes/study-note-link.entity';
 import { Application } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepNoteSheet } from './step-note-sheet.entity';
@@ -69,6 +71,15 @@ export interface CreateSheetResult {
  * 그래서 부모(스텝) 행을 `FOR UPDATE` 로 잠가 **한 스텝의 시트 변경을 직렬화**한다.
  * 잠금 구간은 count + insert 한 번이라 짧고, 경합 상대는 같은 스텝을 동시에 만지는
  * 자기 자신뿐이다.
+ *
+ * ## 공부 노트 멘션 (study-notes)
+ *
+ * 시트 본문이 저장될 때 `study_note_links` 를 **이 시트 단위로 통째 재계산**한다
+ * (`from_type='prep_sheet'`). 준비 노트에서 공부 노트를 참조할 수 있어야
+ * 같은 자료를 카드마다 복제할 이유가 사라지기 때문이다.
+ * 시트가 삭제되면 그 시트가 내보낸 링크도 같은 트랜잭션에서 지운다 (`from_id` 는
+ * 다형성이라 FK CASCADE 가 안 닿는다).
+ * 재계산은 순수 함수(`mention-links.ts`)를 부르는 것뿐이라 모듈 의존은 생기지 않는다.
  */
 @Injectable()
 export class StepNoteSheetsService {
@@ -181,6 +192,16 @@ export class StepNoteSheetsService {
           orderIndex: nextOrderIndex,
         }),
       );
+
+      // 승격으로 들어온 본문에도 공부 노트 멘션이 있을 수 있다. 새 행이라 기존 링크가
+      // 없으니 본문이 없을 때는 지울 것도 넣을 것도 없다 (흔한 경우 = 빈 시트 추가).
+      if (sheet.content) {
+        await syncStudyNoteLinks(
+          em,
+          { fromId: sheet.id, fromType: 'prep_sheet', userId },
+          sheet.content,
+        );
+      }
       return { sheet, created: true };
     });
   }
@@ -204,7 +225,24 @@ export class StepNoteSheetsService {
     if (dto.content !== undefined) sheet.content = dto.content || null;
     if (dto.orderIndex !== undefined) sheet.orderIndex = dto.orderIndex;
 
-    return this.sheetRepo.save(sheet);
+    // 본문이 안 실려 온 저장(이름 바꾸기·순서 변경)은 멘션도 그대로다 — 트랜잭션을 열 이유가 없다
+    if (dto.content === undefined) return this.sheetRepo.save(sheet);
+
+    /**
+     * 🔴 본문 저장과 링크 재계산은 **한 트랜잭션**. 저장만 성공하고 재계산이 실패하면
+     * 공부 노트 쪽 백링크가 조용히 어긋나고, 사용자는 알 방법이 없다.
+     * (from 쪽 소유권은 위 `assertOwnsStep` 이 이미 확인했고, to 쪽 노트 소유권은
+     *  `syncStudyNoteLinks` 가 userId 로 다시 거른다.)
+     */
+    return this.dataSource.transaction(async (em) => {
+      const saved = await em.getRepository(StepNoteSheet).save(sheet);
+      await syncStudyNoteLinks(
+        em,
+        { fromId: sheet.id, fromType: 'prep_sheet', userId },
+        saved.content,
+      );
+      return saved;
+    });
   }
 
   async remove(
@@ -224,6 +262,16 @@ export class StepNoteSheetsService {
       if (count <= 1) {
         throw new BadRequestException('시트는 1장 이상 있어야 해요.');
       }
+
+      /**
+       * 이 시트가 **내보낸** 멘션 링크. `from_id` 는 다형성이라 FK 가 없어
+       * CASCADE 가 안 닿는다 — 안 지우면 가리키던 공부 노트 쪽에 출처가 사라진
+       * 행이 남는다. 조회는 INNER JOIN 이라 화면엔 안 보이지만, 공부 노트 삭제
+       * 경로가 자기 링크를 정리하는 것과 정책을 맞춘다 (고아를 남기지 않는다).
+       */
+      await em
+        .getRepository(StudyNoteLink)
+        .delete({ fromId: sheetId, fromType: 'prep_sheet' });
 
       await repo.remove(sheet);
     });

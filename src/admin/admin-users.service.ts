@@ -852,6 +852,8 @@ export class AdminUsersService {
       coverletterQuestionStats,
       interviewPrepCount,
       activityLogCount,
+      studyNoteCount,
+      prepSheetCount,
       inquiries,
       coinBalance,
       auditLogs,
@@ -881,6 +883,24 @@ export class AdminUsersService {
       ),
       this.dataSource.query<Array<{ count: string }>>(
         `SELECT COUNT(*)::text FROM activity_logs WHERE user_id = $1`,
+        [targetUserId],
+      ),
+      /*
+        공부 노트 vs 준비 노트 저장 수 — **카니벌 판정 지표**.
+        "회사 준비를 공부 노트에서 하게 되지 않나" 라는 걱정을 숫자로 확인하는 자리다.
+        출시 2주 후 준비 노트(시트) 수가 급감하면 2차 완화(카드에서 공부 노트 참조 패널)를 착수한다.
+        본문은 안 싣는다 — 개수만 본다 (운영 조회는 사용자가 쓴 글을 열람하지 않는다).
+      */
+      this.dataSource.query<Array<{ count: string }>>(
+        `SELECT COUNT(*)::text FROM study_notes WHERE user_id = $1`,
+        [targetUserId],
+      ),
+      this.dataSource.query<Array<{ count: string }>>(
+        `SELECT COUNT(*)::text
+           FROM step_note_sheets sh
+           INNER JOIN application_steps st ON st.id = sh.step_id
+           INNER JOIN applications a ON a.id = st.application_id
+          WHERE a.user_id = $1 AND a.deleted_at IS NULL`,
         [targetUserId],
       ),
       this.inquiryRepo.find({
@@ -991,6 +1011,9 @@ export class AdminUsersService {
         coverletterAnswered: parseInt(cl.answered, 10),
         interviewPrepCount: parseInt(interviewPrepCount[0]?.count ?? '0', 10),
         activityLogCount: parseInt(activityLogCount[0]?.count ?? '0', 10),
+        /** 카니벌 판정 지표 — 공부 노트 수 ↔ 준비 노트 시트 수 추이 */
+        studyNoteCount: parseInt(studyNoteCount[0]?.count ?? '0', 10),
+        prepSheetCount: parseInt(prepSheetCount[0]?.count ?? '0', 10),
       },
       visitStats: {
         totalDays: parseInt(vs.total, 10),
