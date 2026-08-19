@@ -93,8 +93,13 @@ export class StepNoteSheetsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  /** 소유권 체인 확인 (읽기 전용). 어긋나면 404 — 정보 누출 방지 */
-  private async assertOwnsStep(
+  /**
+   * 소유권 체인 확인 (읽기 전용). 어긋나면 404 — 정보 누출 방지.
+   *
+   * 노트 AI 패널(`StepAiActionController`)도 같은 3-hop 을 봐야 해서 공개했다 —
+   * 같은 판정을 두 곳에 적으면 한쪽만 고쳐지는 날이 온다.
+   */
+  async assertOwnsStep(
     userId: string,
     appId: string,
     stepId: string,

@@ -132,6 +132,15 @@ describe('AdminFeatureQuotasService', () => {
       expect(r.dayLimit).toBe(20);
     });
 
+    it('note_ai_action 도 유효 feature — VALID_FEATURES 누락 회귀 방지 (2026-08-19 신설)', async () => {
+      const row = makeRow({ feature: 'note_ai_action', dayLimit: 10000 });
+      repo.findOne.mockResolvedValue(row);
+      const r = await service.update(ADMIN, 'note_ai_action', 'free', {
+        dayLimit: 30,
+      });
+      expect(r.dayLimit).toBe(30);
+    });
+
     it('정상 — dayLimit 만 변경 + audit 기록', async () => {
       const row = makeRow({ dayLimit: 30 });
       repo.findOne.mockResolvedValue(row);

@@ -6,6 +6,7 @@ import { AlertHistory } from '../admin/entities/alert-history.entity';
 import { DiscordNotifier } from '../common/discord-notifier';
 import { User } from '../users/user.entity';
 import { LlmCallLog } from './entities/llm-call-log.entity';
+import { NoteAiActionCache } from './entities/note-ai-action-cache.entity';
 import { UserAiQuota } from './entities/user-ai-quota.entity';
 import { FeatureQuotaConfig } from './entities/feature-quota-config.entity';
 import { TierConfig } from './entities/tier-config.entity';
@@ -22,6 +23,7 @@ import { ModelPricingExpiryCron } from './model-pricing-expiry.cron';
 import { LlmService } from './llm.service';
 import { ModerationService } from './moderation.service';
 import { NoteSummaryService } from './note-summary.service';
+import { NoteAiActionService } from './note-ai-action.service';
 import { AdminAiUsageService } from './admin-ai-usage.service';
 import { AdminAiUsageController } from './admin-ai-usage.controller';
 import { AdminFeatureQuotasController } from './admin-feature-quotas.controller';
@@ -65,6 +67,8 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
       UserPlanHistory,
       // AI cost guard
       AlertThresholds,
+      // 노트 AI 패널 — 입력 해시 24h 캐시 (새로고침 방어)
+      NoteAiActionCache,
     ]),
     forwardRef(() => ActivityModule),
     // AdminModule: AbuserBanService 가 AdminAuditService.log('auto_ban_ai', ...) 호출
@@ -89,6 +93,7 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
     LlmService,
     ModerationService,
     NoteSummaryService,
+    NoteAiActionService,
     AdminAiUsageService,
     AdminFeatureQuotasService,
     AbuserBanService,
@@ -105,6 +110,8 @@ import { ProviderOutageAlertService } from './provider-outage-alert.service';
     LlmService,
     ModerationService,
     NoteSummaryService,
+    // 노트 AI 패널 — StudyNotesModule·ApplicationsModule 의 thin controller 2개가 공유
+    NoteAiActionService,
     AbuserBanService, // ApplicationsModule(ai-coverletter-draft) 에서 quota override 통합
     QuotaCheckService, // PR 2 — 모든 LLM caller 가 호출하는 단일 quota 진입점
     CostGuardService, // 모든 LLM caller 가 호출 가능 (선택적 — cost cap 강화 시)

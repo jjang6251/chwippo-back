@@ -32,6 +32,7 @@ import { CoverletterChatCleanupCron } from './coverletter-chat-cleanup.cron';
 import { CoverletterGenerationStuckCron } from './coverletter-generation-stuck.cron';
 import { JobPostingController } from './job-posting.controller';
 import { JobPostingService } from './job-posting.service';
+import { StepAiActionController } from './step-ai-action.controller';
 import { StepNoteSheetsController } from './step-note-sheets.controller';
 import { StepNoteSheetsService } from './step-note-sheets.service';
 
@@ -74,6 +75,8 @@ import { StepNoteSheetsService } from './step-note-sheets.service';
     CoverletterDocController,
     JobPostingController,
     StepNoteSheetsController,
+    // 노트 AI 패널 (스텝) — AiModule 은 이미 위에서 forwardRef 로 들어와 있다
+    StepAiActionController,
   ],
   providers: [
     ApplicationsService,
