@@ -7,9 +7,12 @@ const FEATURE_LABEL: Partial<Record<LlmFeature, string>> = {
   coverletter_recommend: 'AI 소재 추천',
   coverletter_chat: 'AI 자소서 대화',
   interview_prep_session: 'AI 면접 준비',
+  // 2026-08-06 신설 때 누락 — 한도 통지가 "AI 기능"으로 뭉개졌다 (위생 ㉕, 2026-08-19 동승)
+  interview_prep_answer: 'AI 모범 답안',
   interview_prep_followup: 'AI 꼬리질문',
   note_summary: 'AI 노트 요약',
   jobposting_parse: 'AI 공고 요건 정리',
+  note_ai_action: '노트 AI',
 };
 
 export function getFeatureLabel(feature: LlmFeature): string {

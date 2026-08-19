@@ -203,6 +203,26 @@ const FEATURE_MATRIX: Record<ActiveLlmFeature, ModelConfig> = {
     maxOutputTokens: 1_000,
     temperature: 0.1,
   },
+  /**
+   * 노트 AI 패널 — 선택 영역 변환(쉽게·간결히·표·문답·자유) + 무선택 생성.
+   *
+   * LIGHT 시작(D4). 입력은 선택 6,000자 + 히스토리 3턴이라 8K 안에 들어가고,
+   * 출력은 표·문답으로 부풀 수 있어 2,000 을 준다 (선택 원문보다 길어지는 액션이 있다).
+   * temperature 0.4 — 추출(0.1)보다는 다시 쓰는 작업이고, 창작(0.5+)까지는 아니다.
+   * 품질 미달 시 admin `feature_model_config` 로 무배포 전환하되, 코인 2 는 LIGHT 단가 전제다.
+   */
+  note_ai_action: {
+    provider: 'openai',
+    // luna 확정 (2026-08-19 벤치 — mini 는 지시 준수가 한 급 아래("표 채워줘"에서 체감),
+    // terra 는 품질 동급인데 8배 비쌈. 회당 실측 ~0.5코인. 면접 기능과 같은 env 축)
+    modelEnvKey: 'OPENAI_MODEL_INTERVIEW',
+    defaultModel: 'gpt-5.6-luna',
+    maxInputTokens: 8_000,
+    // 🔴 luna 는 추론 모델 — reasoning 토큰이 이 예산을 먼저 먹는다 (벤치 최대 124).
+    //   2,000 이면 표·문답 결과와 합쳐 빠듯할 수 있어 여유를 둔다
+    maxOutputTokens: 3_000,
+    temperature: 0.4, // luna 는 temperature 미지원 — provider 가 레지스트리 보고 생략한다
+  },
 };
 
 /**
