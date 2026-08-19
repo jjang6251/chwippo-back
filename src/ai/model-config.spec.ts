@@ -92,6 +92,14 @@ describe('model-config FEATURE_MATRIX', () => {
       maxIn: 8_000,
       maxOut: 1_000,
     },
+    note_ai_action: {
+      // 노트 AI 패널 — luna 확정 (2026-08-19 벤치, D4 개정). 코인은 토큰 환산(D1 개정).
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      maxIn: 8_000,
+      // 표·문답 액션은 원문보다 결과가 길어지고, luna 는 추론 토큰이 예산을 먼저 먹는다.
+      maxOut: 3_000,
+    },
   };
 
   const FEATURES = Object.keys(EXPECTED) as LlmFeature[];
@@ -259,6 +267,7 @@ const EXPECTED_KEYS: Record<ActiveLlmFeature, true> = {
   interview_prep_followup: true,
   interview_prep_answer: true,
   jobposting_parse: true,
+  note_ai_action: true,
 };
 
 /**
@@ -345,7 +354,7 @@ describe('ActiveLlmFeature 경계', () => {
    * 어긋나면 admin 화면에 **설정할 수 없는 행**이나 **화면에 없는 설정**이 생긴다.
    * (마이그레이션 1784600000000 이 DB 쪽 6행을 지웠다)
    */
-  it('매트릭스는 살아있는 9개뿐이다', () => {
+  it('매트릭스는 살아있는 10개뿐이다', () => {
     expect(Object.keys(EXPECTED_KEYS).sort()).toEqual(
       [
         'coverletter_chat',
@@ -356,6 +365,7 @@ describe('ActiveLlmFeature 경계', () => {
         'interview_prep_followup',
         'interview_prep_session',
         'jobposting_parse',
+        'note_ai_action', // 노트 AI 패널 (2026-08-19) 신설
         'note_summary',
       ].sort(),
     );

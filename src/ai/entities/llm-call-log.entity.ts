@@ -31,7 +31,10 @@ export type ActiveLlmFeature =
   // v2 (2026-08-06) — 세션·꼬리질문이 질문만 만들게 되면서 신설. 사용자가 특정 질문에서
   // `AI 도움` 을 누를 때 그 질문 1개의 예상 답변을 만든다.
   | 'interview_prep_answer'
-  | 'jobposting_parse';
+  | 'jobposting_parse'
+  // 노트 AI 패널 (2026-08-19) — 공부 노트·준비 노트 에디터의 선택 영역 변환 / 무선택 생성.
+  // 결과는 마크다운 한 덩어리로만 돌려주고 서버는 대화를 저장하지 않는다 (무상태 멀티턴).
+  | 'note_ai_action';
 
 /**
  * 퇴역 feature — **과거 `llm_call_logs` 행에 문자열로 남아 있어 타입에서 못 지운다.**

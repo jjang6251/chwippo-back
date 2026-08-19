@@ -194,6 +194,26 @@ export function buildMockLlmResponse(
         ...baseTokens,
       };
 
+    // 노트 AI 패널 — 결과는 항상 `markdown` 한 덩어리. 표·리스트를 섞어 두어
+    // 프론트의 md→doc 삽입(표 노드 정합)을 mock 만으로도 눈으로 확인할 수 있게 한다.
+    case 'note_ai_action':
+      return {
+        text: '[MOCK]',
+        json: {
+          markdown: [
+            '[MOCK] 정리 결과',
+            '',
+            '| 개념 | 한 줄 설명 |',
+            '| --- | --- |',
+            '| 프로세스 | 실행 중인 프로그램의 인스턴스 |',
+            '| 스레드 | 프로세스 안에서 자원을 공유하는 실행 흐름 |',
+            '',
+            '- 핵심은 자원 공유 범위의 차이다.',
+          ].join('\n'),
+        },
+        ...baseTokens,
+      };
+
     // legacy 6종 개별 케이스 제거 (2026-07-13 — 호출 경로 0건, generic fallback 이 커버)
     default:
       // generic fallback — text-only mock

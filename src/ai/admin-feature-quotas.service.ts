@@ -29,6 +29,7 @@ const VALID_FEATURES: LlmFeature[] = [
   // admin 이 못 고치는 상태였다. 모든 LLM caller 는 admin 한도 조절이 가능해야 한다.
   'interview_prep_answer',
   'jobposting_parse',
+  'note_ai_action',
 ];
 
 // PR_B2 Phase 0 — CoinTier 통일
