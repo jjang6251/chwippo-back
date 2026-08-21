@@ -8,6 +8,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { FilesService } from './files.service';
+import { ALLOWED_SCOPES, SCOPE_FILE_POLICIES } from './scope.const';
 
 // jest.mock 팩토리에서 외부 변수 참조 금지 (hoisting 이슈)
 jest.mock('@aws-sdk/client-s3');
@@ -180,10 +181,152 @@ describe('FilesService', () => {
       ['myinfo/language-cert'],
       ['myinfo/document'],
       ['myinfo/education'],
+      ['study-note/image'],
     ])('허용된 scope "%s" → 통과', async (scope) => {
       await expect(
         service.createPresignedUrl('user-1', scope, 'image/jpeg', 1024),
       ).resolves.toBeDefined();
+    });
+  });
+
+  /**
+   * ── scope × MIME 매트릭스 (미디어 아크 PR-A) ────────────────────────────
+   *
+   * 아래 시나리오를 **먼저 나열하고** 코드를 확인했다. 노리는 건 하나다 —
+   * "한쪽 scope 를 위해 넓힌 허용이 다른 scope 로 새지 않는가".
+   *
+   *  M1  🔴 myinfo 5종 × jpeg/png/pdf → 통과 (**회귀** — 기존 동작 무변경)
+   *  M2  🔴 myinfo × webp → 400 (노트를 위해 넓힌 형식이 증빙 파일로 새면 안 된다)
+   *  M3  study-note/image × jpeg/png/webp → 통과 + 확장자 .jpg/.png/.webp
+   *  M4  🔴 study-note/image × pdf → 400 (본문에 그릴 수 없다)
+   *  M5  🔴 study-note/image × svg → 400 (스크립트 표면 — public 서빙이라 열면 실행된다)
+   *  M6  study-note/image × gif → 400 (용량)
+   *  M7  🔴 문구가 scope 마다 다르다 — myinfo 는 **기존 문구 그대로**
+   *  M8  study-note/image key 경로 = users/{id}/study-note/image/{uuid}.{ext}
+   *  M9  study-note/drawing 은 **아직 화이트리스트에 없다** (PR-C 보류) → 400
+   *  M10 SCOPE_FILE_POLICIES 가 ALLOWED_SCOPES 를 하나도 빠짐없이 덮는다
+   */
+  describe('createPresignedUrl — scope × MIME 매트릭스', () => {
+    const MYINFO_SCOPES = [
+      'myinfo/cert',
+      'myinfo/award',
+      'myinfo/language-cert',
+      'myinfo/document',
+      'myinfo/education',
+    ];
+
+    // M1 — 회귀: 기존 3종이 5개 scope 모두에서 그대로 통과
+    it.each(
+      MYINFO_SCOPES.flatMap((scope) =>
+        (
+          [
+            ['image/jpeg', 'jpg'],
+            ['image/png', 'png'],
+            ['application/pdf', 'pdf'],
+          ] as const
+        ).map(([mime, ext]) => [scope, mime, ext] as const),
+      ),
+    )('M1 회귀: %s × %s → 통과 (.%s)', async (scope, mime, ext) => {
+      const result = await service.createPresignedUrl(
+        'user-1',
+        scope,
+        mime,
+        1024,
+      );
+      expect(result.fileUrl.endsWith(`.${ext}`)).toBe(true);
+    });
+
+    // M2 — 노트용으로 넓힌 webp 가 myinfo 로 새지 않는다
+    it.each(MYINFO_SCOPES)('M2: %s × image/webp → 400', async (scope) => {
+      await expect(
+        service.createPresignedUrl('user-1', scope, 'image/webp', 1024),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    // M3
+    it.each([
+      ['image/jpeg', 'jpg'],
+      ['image/png', 'png'],
+      ['image/webp', 'webp'],
+    ])('M3: study-note/image × %s → 통과 (.%s)', async (mime, ext) => {
+      const result = await service.createPresignedUrl(
+        'user-1',
+        'study-note/image',
+        mime,
+        1024,
+      );
+      expect(result.fileUrl.endsWith(`.${ext}`)).toBe(true);
+    });
+
+    // M4·M5·M6
+    it.each([
+      ['application/pdf'],
+      ['image/svg+xml'],
+      ['image/gif'],
+      ['text/html'],
+    ])('M4·M5·M6: study-note/image × %s → 400', async (mime) => {
+      await expect(
+        service.createPresignedUrl('user-1', 'study-note/image', mime, 1024),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    // M7 — 문구
+    it('M7: myinfo 거부 문구는 기존 그대로 "PDF, JPG, PNG만 가능합니다."', async () => {
+      await expect(
+        service.createPresignedUrl('u1', 'myinfo/cert', 'image/webp', 1024),
+      ).rejects.toThrow(
+        '허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.',
+      );
+    });
+
+    it('M7: study-note/image 거부 문구는 그 scope 가 허용하는 형식만 읽어 준다', async () => {
+      await expect(
+        service.createPresignedUrl(
+          'u1',
+          'study-note/image',
+          'application/pdf',
+          1024,
+        ),
+      ).rejects.toThrow(
+        '허용되지 않는 파일 형식입니다. JPG, PNG, WEBP만 가능합니다.',
+      );
+    });
+
+    // M8
+    it('M8: study-note/image key = users/{id}/study-note/image/{uuid}.{ext}', async () => {
+      const result = await service.createPresignedUrl(
+        'user-abc',
+        'study-note/image',
+        'image/webp',
+        1024,
+      );
+      expect(result.fileUrl).toMatch(
+        new RegExp(
+          `^${R2_PUBLIC}/users/user-abc/study-note/image/[a-f0-9-]+\\.webp$`,
+        ),
+      );
+    });
+
+    // M9 — PR-C 보류. 지금 열려 있으면 쓰는 사람이 없는 표면이 생긴다
+    it('M9: study-note/drawing 은 아직 화이트리스트에 없다 → 400', async () => {
+      await expect(
+        service.createPresignedUrl(
+          'u1',
+          'study-note/drawing',
+          'image/png',
+          1024,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    // M10 — 화이트리스트와 매트릭스가 어긋날 수 없다
+    it('M10: ALLOWED_SCOPES 전부가 정책을 갖는다 (빈 MIME 목록도 없다)', () => {
+      for (const scope of ALLOWED_SCOPES) {
+        const policy = SCOPE_FILE_POLICIES[scope];
+        expect(policy).toBeDefined();
+        expect(policy.mimeTypes.length).toBeGreaterThan(0);
+        expect(policy.label.length).toBeGreaterThan(0);
+      }
     });
   });
 

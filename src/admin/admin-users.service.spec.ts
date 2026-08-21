@@ -107,6 +107,7 @@ const mockStorageUsage = {
     usedMB: 0,
     limitMB: 100,
     percentage: 0,
+    breakdown: { myinfoBytes: 0, noteImageBytes: 0 },
   }),
 };
 
@@ -367,6 +368,28 @@ describe('AdminUsersService', () => {
       userRepo.findOne.mockResolvedValue(makeUser());
       await service.findOne(USER_ID);
       expect(mockStorageUsage.getUsage).toHaveBeenCalledWith(USER_ID);
+    });
+
+    it('stats.storage 에 출처별 분해가 그대로 실려 나간다 (PU-1)', async () => {
+      userRepo.findOne.mockResolvedValue(makeUser());
+      mockStorageUsage.getUsage.mockResolvedValueOnce({
+        usedBytes: 3500,
+        limitBytes: 100 * 1024 * 1024,
+        usedMB: 0,
+        limitMB: 100,
+        percentage: 0,
+        breakdown: { myinfoBytes: 3000, noteImageBytes: 500 },
+      });
+
+      const result = (await service.findOne(USER_ID)) as {
+        stats: { storage: { usedBytes: number; breakdown: unknown } };
+      };
+
+      expect(result.stats.storage.breakdown).toEqual({
+        myinfoBytes: 3000,
+        noteImageBytes: 500,
+      });
+      expect(result.stats.storage.usedBytes).toBe(3500);
     });
   });
 
