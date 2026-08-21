@@ -9,6 +9,7 @@ import { DataSource, EntityManager, Repository } from 'typeorm';
 import { StreakService } from '../dashboard/streak.service';
 import { CreateStudyNoteDto, UpdateStudyNoteDto } from './dto/study-note.dto';
 import { syncStudyNoteLinks } from './mention-links';
+import { NoteAttachmentsService } from './note-attachments.service';
 import { StudyNoteFolder } from './study-note-folder.entity';
 import { StudyNoteLink } from './study-note-link.entity';
 import { StudyNote } from './study-note.entity';
@@ -132,6 +133,7 @@ export class StudyNotesService {
     private readonly noteRepo: Repository<StudyNote>,
     private readonly dataSource: DataSource,
     private readonly streakService: StreakService,
+    private readonly attachments: NoteAttachmentsService,
   ) {}
 
   /**
@@ -278,6 +280,9 @@ export class StudyNotesService {
     const contentChanged = dto.content !== undefined;
     if (contentChanged) note.content = dto.content ? dto.content : null;
 
+    // 트랜잭션 안에서 지운 첨부의 R2 URL — 커밋 뒤에 흘려보낸다 (closure 로 캡처)
+    let orphanFileUrls: string[] = [];
+
     const saved = await this.dataSource.transaction(async (em) => {
       if (dto.folderId !== undefined) {
         note.folderId = await this.resolveFolderId(em, userId, dto.folderId);
@@ -291,9 +296,15 @@ export class StudyNotesService {
           { fromId: id, fromType: 'study', userId },
           row.content,
         );
+        // 🔴 같은 트랜잭션 — 정리가 실패하면 저장까지 롤백된다. 본문은 이미지를
+        // 가리키는데 첨부 행이 없는 상태(또는 그 반대)가 되면 사용자는 복구할 수 없다
+        orphanFileUrls = await this.attachments.reconcile(em, id, row.content);
       }
       return row;
     });
+
+    // 🔴 커밋 뒤 best-effort — 롤백된 저장으로 R2 객체를 지우면 본문만 남고 그림이 사라진다
+    await this.attachments.cleanupFiles(orphanFileUrls);
 
     // 편집 시각(updated_at)이 곧 streak source 다 — 저장 즉시 반영돼야 한다
     this.invalidateStreak(userId);
@@ -302,10 +313,16 @@ export class StudyNotesService {
 
   /** 영구 삭제 (휴지통 없음 — 프론트가 ConfirmModal 로 명시한다) */
   async remove(userId: string, id: string): Promise<void> {
+    let fileUrls: string[] = [];
+
     await this.dataSource.transaction(async (em) => {
       const repo = em.getRepository(StudyNote);
       const note = await repo.findOne({ where: { id, userId } });
       if (!note) throw new NotFoundException('노트를 찾을 수 없습니다.');
+
+      // 🔴 **지우기 전에** 모은다. 첨부 행은 note_id FK CASCADE 가 지우는데,
+      // 지운 뒤엔 어떤 R2 객체를 지워야 하는지 알 방법이 없다
+      fileUrls = await this.attachments.collectFileUrls(em, id);
 
       // 이 노트가 **내보낸** 링크. from 쪽엔 다형성이라 FK 가 없어 CASCADE 가 안 닿는다
       await em
@@ -315,6 +332,9 @@ export class StudyNotesService {
       // 이 노트를 **가리키던** 링크는 to_note_id FK CASCADE 가 지운다
       await repo.remove(note);
     });
+
+    // 커밋 뒤 best-effort — 롤백됐다면 노트가 살아 있으므로 그림도 살아 있어야 한다
+    await this.attachments.cleanupFiles(fileUrls);
 
     // 삭제도 heatmap 을 바꾼다 (그날의 마지막 노트였으면 칸이 비워진다)
     this.invalidateStreak(userId);
