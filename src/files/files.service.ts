@@ -12,13 +12,12 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
-import { isAllowedScope } from './scope.const';
+import {
+  getScopeFileLabel,
+  isAllowedScope,
+  resolveFileExtension,
+} from './scope.const';
 
-const ALLOWED_TYPES: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'application/pdf': 'pdf',
-};
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 
 @Injectable()
@@ -67,9 +66,12 @@ export class FilesService {
       throw new BadRequestException('허용되지 않는 scope입니다.');
     }
 
-    if (!ALLOWED_TYPES[contentType]) {
+    // 🔴 MIME 은 **scope 마다 다르다** — 노트 본문에 pdf 를, 증빙 파일에 webp 를
+    // 넣을 수 없다. 문구도 scope 가 허용한 형식만 읽어 준다.
+    const ext = resolveFileExtension(scope, contentType);
+    if (!ext) {
       throw new BadRequestException(
-        '허용되지 않는 파일 형식입니다. PDF, JPG, PNG만 가능합니다.',
+        `허용되지 않는 파일 형식입니다. ${getScopeFileLabel(scope)}만 가능합니다.`,
       );
     }
     if (fileSize <= 0 || fileSize > MAX_BYTES) {
@@ -78,7 +80,6 @@ export class FilesService {
       );
     }
 
-    const ext = ALLOWED_TYPES[contentType];
     const key = `users/${userId}/${scope}/${uuidv4()}.${ext}`;
 
     const command = new PutObjectCommand({

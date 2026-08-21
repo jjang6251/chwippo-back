@@ -5,6 +5,7 @@ import { mock } from 'jest-mock-extended';
 import { DataSource, EntityManager, FindOperator, Repository } from 'typeorm';
 import { StreakService } from '../dashboard/streak.service';
 import { MENTION_NODE_TYPE } from './mention-links';
+import { NoteAttachmentsService } from './note-attachments.service';
 import { StudyNoteFolder } from './study-note-folder.entity';
 import { StudyNoteLink } from './study-note-link.entity';
 import { StudyNote } from './study-note.entity';
@@ -66,6 +67,14 @@ import {
  *  D2  없는 노트·남의 노트 → 404 · 링크도 안 지운다
  *  D3  🔴 삭제와 링크 정리가 **한 트랜잭션** (실패 시 둘 다 롤백)
  *
+ * ## 첨부 정리 배선 (미디어 아크 PR-A — 정리 로직 자체는 note-attachments.service.spec)
+ *  A1  🔴 update — content 변경 시 **저장 트랜잭션의 em** 으로 reconcile
+ *  A2  🔴 content 미전달 → reconcile 미호출 (제목만 바꿔도 이미지가 흔들리면 안 된다)
+ *  A3  🔴 reconcile 실패 → **저장 롤백** · R2 삭제 안 함 · streak 캐시도 안 비운다
+ *  A4  🔴 **커밋 뒤** 고아 URL 을 R2 에서 지운다 (롤백된 저장으로 그림을 지우면 안 된다)
+ *  A5  🔴 remove — 삭제 **전**에 URL 수집 (지운 뒤엔 무엇을 지울지 알 수 없다) · 커밋 뒤 정리
+ *  A6  remove 404 → R2 무접촉
+ *
  * ## backlinks
  *  B1  🔴 남의 노트 → 404 · **쿼리를 던지지도 않는다**
  *  B2  study 소스 → label = 제목 · 딥링크 id 는 null
@@ -94,6 +103,11 @@ describe('StudyNotesService', () => {
   let noteRepo: jest.Mocked<Repository<StudyNote>>;
   let dataSource: { transaction: jest.Mock; query: jest.Mock };
   let streakService: { invalidateCache: jest.Mock };
+  let attachments: {
+    reconcile: jest.Mock;
+    collectFileUrls: jest.Mock;
+    cleanupFiles: jest.Mock;
+  };
 
   const USER_ID = 'user-1';
   const NOTE_ID = 'note-1';
@@ -117,6 +131,12 @@ describe('StudyNotesService', () => {
     Array.from({ length: n }, (_, i) =>
       makeNote({ id: `note-${i}`, title: `노트${i}` }),
     );
+
+  /** 멘션이 없는 평범한 본문 — 첨부 정리 배선 검증용 */
+  const PLAIN_DOC = JSON.stringify({
+    type: 'doc',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text: '정리' }] }],
+  });
 
   /** 멘션 노드 하나를 담은 tiptap doc 문자열 */
   const docWithMentions = (...noteIds: string[]) =>
@@ -272,6 +292,11 @@ describe('StudyNotesService', () => {
     noteRepo = mock<Repository<StudyNote>>();
     dataSource = { transaction: jest.fn(), query: jest.fn() };
     streakService = { invalidateCache: jest.fn() };
+    attachments = {
+      reconcile: jest.fn().mockResolvedValue([]),
+      collectFileUrls: jest.fn().mockResolvedValue([]),
+      cleanupFiles: jest.fn().mockResolvedValue(undefined),
+    };
 
     tx = {
       notes: [],
@@ -296,6 +321,7 @@ describe('StudyNotesService', () => {
         { provide: getRepositoryToken(StudyNote), useValue: noteRepo },
         { provide: DataSource, useValue: dataSource },
         { provide: StreakService, useValue: streakService },
+        { provide: NoteAttachmentsService, useValue: attachments },
       ],
     }).compile();
 
@@ -705,6 +731,103 @@ describe('StudyNotesService', () => {
       expect(tx.opened).toBe(1);
       expect(tx.repoRequests).toContain(StudyNote);
       expect(tx.repoRequests).toContain(StudyNoteLink);
+    });
+  });
+
+  // ── 첨부 정리 배선 (미디어 아크 PR-A) ──
+
+  /**
+   * 정리 로직 자체는 `note-attachments.service.spec.ts` 가 본다. 여기서 보는 건
+   * **배선** 하나다 — DB 정리는 트랜잭션 **안**, R2 삭제는 커밋 **뒤**.
+   * 순서가 뒤집히면 롤백된 저장 때문에 본문은 그대로인데 그림만 사라진다.
+   */
+  describe('첨부 정리 배선', () => {
+    it('A1) 🔴 update — content 변경 시 저장 트랜잭션의 em 으로 reconcile', async () => {
+      tx.notes = [makeNote()];
+      noteRepo.findOne.mockResolvedValue(tx.notes[0]);
+
+      await service.update(USER_ID, NOTE_ID, { content: PLAIN_DOC });
+
+      expect(attachments.reconcile).toHaveBeenCalledTimes(1);
+      const [em, noteId, content] = attachments.reconcile.mock.calls[0] as [
+        EntityManager,
+        string,
+        string | null,
+      ];
+      expect(em).toBeDefined();
+      expect(noteId).toBe(NOTE_ID);
+      expect(content).toBe(PLAIN_DOC);
+    });
+
+    it('A2) 🔴 update — content 미전달 → reconcile 미호출 (제목만 바꿔도 이미지가 흔들리면 안 된다)', async () => {
+      tx.notes = [makeNote({ content: PLAIN_DOC })];
+      noteRepo.findOne.mockResolvedValue(tx.notes[0]);
+
+      await service.update(USER_ID, NOTE_ID, { title: '새 제목' });
+
+      expect(attachments.reconcile).not.toHaveBeenCalled();
+      expect(attachments.cleanupFiles).toHaveBeenCalledWith([]);
+    });
+
+    it('A3) 🔴 reconcile 실패 → 저장 롤백 · R2 삭제 안 함 · streak 도 안 비운다', async () => {
+      tx.notes = [makeNote({ title: '원래 제목' })];
+      noteRepo.findOne.mockResolvedValue(tx.notes[0]);
+      attachments.reconcile.mockRejectedValue(new Error('첨부 정리 실패'));
+
+      await expect(
+        service.update(USER_ID, NOTE_ID, {
+          title: '새 제목',
+          content: PLAIN_DOC,
+        }),
+      ).rejects.toThrow('첨부 정리 실패');
+
+      expect(tx.committedNotes).toEqual([]); // 롤백 — 커밋된 상태가 없다
+      expect(attachments.cleanupFiles).not.toHaveBeenCalled();
+      expect(streakService.invalidateCache).not.toHaveBeenCalled();
+    });
+
+    it('A4) 🔴 update — 커밋 뒤에 고아 URL 을 R2 에서 지운다', async () => {
+      tx.notes = [makeNote()];
+      noteRepo.findOne.mockResolvedValue(tx.notes[0]);
+      attachments.reconcile.mockResolvedValue([
+        'r2://old-a.jpg',
+        'r2://old-b.jpg',
+      ]);
+
+      await service.update(USER_ID, NOTE_ID, { content: PLAIN_DOC });
+
+      expect(attachments.cleanupFiles).toHaveBeenCalledWith([
+        'r2://old-a.jpg',
+        'r2://old-b.jpg',
+      ]);
+    });
+
+    it('A5) 🔴 remove — 삭제 **전**에 URL 을 모으고, 커밋 뒤에 지운다', async () => {
+      tx.notes = [makeNote()];
+      attachments.collectFileUrls.mockImplementation(() => {
+        // 이 시점엔 노트가 아직 살아 있어야 한다 (지운 뒤엔 무엇을 지울지 알 수 없다)
+        expect(tx.removeCalls).toBe(0);
+        return Promise.resolve(['r2://a.jpg', 'r2://a.json']);
+      });
+
+      await service.remove(USER_ID, NOTE_ID);
+
+      expect(attachments.collectFileUrls).toHaveBeenCalledTimes(1);
+      expect(attachments.cleanupFiles).toHaveBeenCalledWith([
+        'r2://a.jpg',
+        'r2://a.json',
+      ]);
+      expect(tx.committedNotes).toEqual([]);
+    });
+
+    it('A6) remove — 404 면 R2 를 건드리지 않는다', async () => {
+      tx.notes = [makeNote({ userId: 'someone-else' })];
+
+      await expect(service.remove(USER_ID, NOTE_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(attachments.collectFileUrls).not.toHaveBeenCalled();
+      expect(attachments.cleanupFiles).not.toHaveBeenCalled();
     });
   });
 
