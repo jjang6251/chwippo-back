@@ -276,10 +276,17 @@ export class CompanyResearchService {
 
   /**
    * 자소서 풀페이지 — 캐시만 조회 (없으면 null, LLM 호출 X)
+   *
+   * `countHit=false` = **조회수 미집계 경로** (feature-research-moment, 2026-08-22).
+   * hit_count 는 "실제로 조사를 읽은 횟수" 이고 다음 pre-seed 배치 우선순위를 정한다
+   * (ADR-040). 카드 추가 직후 자동 노출처럼 **사용자가 요청하지 않은 조회**가 섞이면
+   * 숫자의 의미가 바뀌고 과거 수치와 비교가 안 된다. 기본값은 집계 — 호출부가 명시적으로
+   * 빼야만 빠진다 (신호가 조용히 사라지는 쪽이 더 나쁘다).
    */
   async getCachedForApplication(
     userId: string,
     applicationId: string,
+    options: { countHit?: boolean } = {},
   ): Promise<CompanyResearchResult | null> {
     const { companyName, jobCategory } =
       await this.resolveCompanyFromApplication(userId, applicationId);
@@ -292,7 +299,8 @@ export class CompanyResearchService {
       };
     }
     if (row.expiresAt < new Date()) return null;
-    this.bumpHitCount(row.id); // 2차 pre-seed 우선순위 데이터 (fire-and-forget)
+    // 2차 pre-seed 우선순위 데이터 (fire-and-forget)
+    if (options.countHit !== false) this.bumpHitCount(row.id);
     return this.buildResultFromCache(row);
   }
 

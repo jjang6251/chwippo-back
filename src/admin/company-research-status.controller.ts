@@ -24,4 +24,14 @@ export class CompanyResearchStatusController {
   getUnified(@Query() query: UnifiedCompanyResearchDto) {
     return this.service.getUnified(query);
   }
+
+  /**
+   * 전체 내보내기 — 같은 필터·정렬의 **전 범위** (page/limit 무시).
+   * DTO 는 unified 와 공유한다 — 두 응답의 필터·정렬 화이트리스트가 갈라지면
+   * "화면과 내보낸 파일이 다른" 상태가 생긴다.
+   */
+  @Get('export')
+  getExport(@Query() query: UnifiedCompanyResearchDto) {
+    return this.service.getExport(query);
+  }
 }

@@ -335,6 +335,114 @@ describe('CompanyResearchService', () => {
     });
   });
 
+  // ── 조회수 미집계 경로 (feature-research-moment, 2026-08-22) ──
+  /**
+   * hit_count 는 "실제로 조사를 읽은 횟수" 이고 **다음 pre-seed 배치 우선순위**를 정한다
+   * (ADR-040). 카드 추가 직후 자동 노출처럼 사용자가 요청하지 않은 조회가 섞이면 숫자의
+   * 의미가 바뀌고 과거 수치와 비교가 안 된다.
+   *
+   * 시나리오: 미집계 / 기본값 집계(회귀) / 명시적 집계 / 소유권 가드 / 면접 경로 무변경 / 멱등.
+   */
+  describe('조회수 집계 (countHit)', () => {
+    const validRow = {
+      id: 'cache-1',
+      aiResearch: { businessSummary: 'cached' },
+      sources: [],
+      expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(),
+      optOut: false,
+      hitCount: 3,
+    };
+
+    beforeEach(() => {
+      appRepo.findOne.mockResolvedValue({
+        id: APP_ID,
+        userId: USER_ID,
+        companyName: '네이버',
+        jobCategory: '백엔드',
+      } as never);
+    });
+
+    it('🔴 countHit:false → hit_count 를 올리지 않는다 (카드 추가 노출 경로)', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(validRow as never);
+      const r = await service.getCachedForApplication(USER_ID, APP_ID, {
+        countHit: false,
+      });
+      expect(r?.status).toBe('ok'); // 조사 자체는 그대로 온다
+      expect(cacheRepo.increment).not.toHaveBeenCalled();
+    });
+
+    it('🔴 옵션 없음 → 기존대로 올린다 (자소서·면접 경로 회귀)', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(validRow as never);
+      await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(cacheRepo.increment).toHaveBeenCalledWith(
+        { id: 'cache-1' },
+        'hitCount',
+        1,
+      );
+    });
+
+    it('countHit:true → 올린다', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(validRow as never);
+      await service.getCachedForApplication(USER_ID, APP_ID, {
+        countHit: true,
+      });
+      expect(cacheRepo.increment).toHaveBeenCalledTimes(1);
+    });
+
+    it('빈 옵션 객체 → 기본 집계 (기본 안전 — 신호가 조용히 사라지면 안 된다)', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(validRow as never);
+      await service.getCachedForApplication(USER_ID, APP_ID, {});
+      expect(cacheRepo.increment).toHaveBeenCalledTimes(1);
+    });
+
+    it('🔴 소유권 가드 회귀 — countHit:false 여도 남의 카드는 NotFound · 집계도 없음', async () => {
+      appRepo.findOne.mockResolvedValueOnce(null);
+      await expect(
+        service.getCachedForApplication(USER_ID, APP_ID, { countHit: false }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(cacheRepo.increment).not.toHaveBeenCalled();
+    });
+
+    it('opt_out · 만료 는 countHit 과 무관하게 집계 없음 (반환 자체가 조사 아님)', async () => {
+      cacheQb.getOne.mockResolvedValueOnce({ optOut: true } as never);
+      await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(cacheRepo.increment).not.toHaveBeenCalled();
+
+      cacheQb.getOne.mockResolvedValueOnce({
+        optOut: false,
+        expiresAt: new Date(Date.now() - 1000),
+        aiResearch: {},
+        sources: [],
+      } as never);
+      await service.getCachedForApplication(USER_ID, APP_ID);
+      expect(cacheRepo.increment).not.toHaveBeenCalled();
+    });
+
+    it('멱등 — countHit:false 로 두 번 읽어도 여전히 0회', async () => {
+      cacheQb.getOne
+        .mockResolvedValueOnce(validRow as never)
+        .mockResolvedValueOnce(validRow as never);
+      await service.getCachedForApplication(USER_ID, APP_ID, {
+        countHit: false,
+      });
+      await service.getCachedForApplication(USER_ID, APP_ID, {
+        countHit: false,
+      });
+      expect(cacheRepo.increment).not.toHaveBeenCalled();
+    });
+
+    it('🔴 면접(session) 경로는 손대지 않았다 — 여전히 올린다', async () => {
+      cacheQb.getOne.mockResolvedValueOnce(validRow as never);
+      await service.getCachedForSession(USER_ID, SESSION_ID);
+      expect(cacheRepo.increment).toHaveBeenCalledWith(
+        { id: 'cache-1' },
+        'hitCount',
+        1,
+      );
+    });
+  });
+
   // ── getCachedForSession (LLM 호출 X) ──
   describe('getCachedForSession', () => {
     it('cache 없음 → null', async () => {

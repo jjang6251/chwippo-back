@@ -2,7 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { mock, MockProxy } from 'jest-mock-extended';
-import { CompanyResearchStatusService } from './company-research-status.service';
+import {
+  CompanyResearchStatusService,
+  RESEARCH_EXPORT_MAX,
+} from './company-research-status.service';
 import { CompanyResearchCache } from '../interview-prep/entities/company-research-cache.entity';
 import { Application } from '../applications/application.entity';
 import { CompaniesService } from '../companies/companies.service';
@@ -52,6 +55,8 @@ describe('CompanyResearchStatusService', () => {
     cacheRepo = mock<Repository<CompanyResearchCache>>();
     appRepo = mock<Repository<Application>>();
     companies = mock<CompaniesService>();
+    // 실존 판정 소스 — 개별 테스트에서 필요하면 덮어쓴다
+    companies.getAllNames.mockReturnValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -292,6 +297,8 @@ describe('CompanyResearchStatusService', () => {
         expiresAt: null,
         inferredCount: null,
         optOut: false,
+        knownCompany: false,
+        similarTo: null,
       });
       // 조사만 — 지원 카드 0
       expect(byName['네이버']).toMatchObject({
@@ -588,9 +595,11 @@ describe('CompanyResearchStatusService', () => {
         'expiresAt',
         'hitCount',
         'inferredCount',
+        'knownCompany',
         'optOut',
         'researched',
         'seedVersion',
+        'similarTo',
         'updatedAt',
       ]);
     });
@@ -600,6 +609,234 @@ describe('CompanyResearchStatusService', () => {
       const r = await service.getUnified({ search: '없는회사' });
       expect(r.items).toEqual([]);
       expect(r.total).toBe(0);
+    });
+
+    // ── 실존 여부 배지 + 유사명 제안 ──
+    describe('실존 판정 (knownCompany · similarTo)', () => {
+      const DART = ['카카오', '네이버', '삼성전자', '한국가스공사'];
+      const card = (name: string): CardRaw => ({
+        norm: name.toLowerCase(),
+        companyName: name,
+        applicants: '1',
+        cards: '1',
+      });
+
+      it('companies.json 에 있는 이름 → knownCompany true · 유사명 계산 안 함', async () => {
+        companies.getAllNames.mockReturnValue(DART);
+        wire([card('카카오')], []);
+        const r = await service.getUnified({});
+        expect(r.items[0]).toMatchObject({
+          knownCompany: true,
+          similarTo: null,
+        });
+      });
+
+      it('대소문자·공백만 다른 표기도 실존으로 본다 (병합 키와 같은 정규화)', async () => {
+        companies.getAllNames.mockReturnValue(['LG에너지솔루션']);
+        wire([card('  lg에너지솔루션 ')], []);
+        const r = await service.getUnified({});
+        expect(r.items[0].knownCompany).toBe(true);
+      });
+
+      it('🔴 목록 밖 + 오타 → knownCompany false · 가까운 이름 제안', async () => {
+        companies.getAllNames.mockReturnValue(DART);
+        wire([card('까까오')], []);
+        const r = await service.getUnified({});
+        expect(r.items[0]).toMatchObject({
+          knownCompany: false,
+          similarTo: '카카오',
+        });
+      });
+
+      it('🔴 목록 밖 + 먼 이름 → 제안 없음 (비상장 실존 회사를 오타로 몰지 않는다)', async () => {
+        companies.getAllNames.mockReturnValue(DART);
+        wire([card('한솔로지스틱스')], []);
+        const r = await service.getUnified({});
+        expect(r.items[0]).toMatchObject({
+          knownCompany: false,
+          similarTo: null,
+        });
+      });
+
+      it('companies.json 미로딩(빈 목록) → 전부 목록 밖 · 제안 없음 (크래시 X)', async () => {
+        companies.getAllNames.mockReturnValue([]);
+        wire([card('카카오')], []);
+        const r = await service.getUnified({});
+        expect(r.items[0]).toMatchObject({
+          knownCompany: false,
+          similarTo: null,
+        });
+      });
+
+      // 🔴 성능 — 인덱스를 행마다 만들면 한 페이지에 3,798개 × 20행을 훑는다
+      it('인덱스는 요청당 1회만 만든다 (getAllNames 1회)', async () => {
+        companies.getAllNames.mockReturnValue(DART);
+        wire(
+          Array.from({ length: 25 }, (_, i) => card(`회사${i}`)),
+          [],
+        );
+        await service.getUnified({ page: 1, limit: 20 });
+        expect(companies.getAllNames).toHaveBeenCalledTimes(1);
+      });
+
+      // 🔴 판정 대상은 **현재 페이지 행만**. 전 범위(25행)에 돌리면 안 된다
+      it('판정은 현재 페이지 행에만 붙는다 (25행 중 2페이지 5행)', async () => {
+        companies.getAllNames.mockReturnValue(DART);
+        wire(
+          Array.from({ length: 25 }, (_, i) =>
+            card(`회사${String(i).padStart(2, '0')}`),
+          ),
+          [],
+        );
+        const r = await service.getUnified({
+          page: 3,
+          limit: 10,
+          sort: 'name',
+          order: 'asc',
+        });
+        expect(r.total).toBe(25);
+        expect(r.items).toHaveLength(5);
+        expect(r.items.every((i) => 'knownCompany' in i)).toBe(true);
+      });
+
+      it('빈 페이지면 인덱스를 아예 만들지 않는다 (getAllNames 0회)', async () => {
+        companies.getAllNames.mockReturnValue(DART);
+        wire([card('카카오')], []);
+        const r = await service.getUnified({ page: 50, limit: 20 });
+        expect(r.items).toEqual([]);
+        expect(companies.getAllNames).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  // ── 전체 내보내기 ──
+  describe('getExport', () => {
+    function wire(appRows: CardRaw[], cacheRows: CacheRaw[]) {
+      const appQb = makeQb<Application>();
+      appQb.getRawMany.mockResolvedValue(appRows);
+      appRepo.createQueryBuilder.mockReturnValue(appQb);
+      const cacheQb = makeQb();
+      cacheQb.getRawMany.mockResolvedValue(cacheRows);
+      cacheRepo.createQueryBuilder.mockReturnValue(cacheQb);
+    }
+
+    const cards = (
+      n: number,
+      over: (i: number) => Partial<CardRaw> = () => ({}),
+    ) =>
+      Array.from({ length: n }, (_, i) => ({
+        norm: `c${String(i).padStart(3, '0')}`,
+        companyName: `회사${String(i).padStart(3, '0')}`,
+        applicants: '1',
+        cards: '1',
+        ...over(i),
+      }));
+
+    // 🔴 이 기능의 존재 이유 — 지금까지는 현재 페이지 행만 담겼다
+    it('🔴 현재 페이지가 아니라 전 범위를 담는다 (25행 · limit 20 무시)', async () => {
+      wire(cards(25), []);
+      const r = await service.getExport({ page: 1, limit: 20 });
+      expect(r.items).toHaveLength(25);
+      expect(r.total).toBe(25);
+      expect(r.truncated).toBe(false);
+    });
+
+    it('필터가 반영된다 — unresearched 는 조사 없는 행만', async () => {
+      wire(
+        [
+          { norm: 'toss', companyName: 'Toss', applicants: '1', cards: '1' },
+          { norm: 'kakao', companyName: 'Kakao', applicants: '1', cards: '1' },
+        ],
+        [
+          {
+            norm: 'kakao',
+            companyName: 'Kakao',
+            seedVersion: '2026-07.4',
+            updatedAt: new Date(),
+            expiresAt: new Date(Date.now() + 86400000),
+            hitCount: '1',
+            optOut: false,
+            researched: true,
+            inferredCount: '0',
+          },
+        ],
+      );
+      const r = await service.getExport({ filter: 'unresearched' });
+      expect(r.items.map((i) => i.companyName)).toEqual(['Toss']);
+      expect(r.total).toBe(1);
+    });
+
+    it('정렬이 반영된다 — 지원자 내림차순', async () => {
+      wire(
+        [
+          { norm: 'a', companyName: 'A', applicants: '1', cards: '1' },
+          { norm: 'b', companyName: 'B', applicants: '9', cards: '1' },
+          { norm: 'c', companyName: 'C', applicants: '5', cards: '1' },
+        ],
+        [],
+      );
+      const r = await service.getExport({ sort: 'applicants', order: 'desc' });
+      expect(r.items.map((i) => i.companyName)).toEqual(['B', 'C', 'A']);
+    });
+
+    it('검색이 반영된다', async () => {
+      wire(
+        [
+          { norm: 'kakao', companyName: 'Kakao', applicants: '1', cards: '1' },
+          { norm: 'naver', companyName: 'Naver', applicants: '1', cards: '1' },
+        ],
+        [],
+      );
+      const r = await service.getExport({ search: 'KAK' });
+      expect(r.items.map((i) => i.companyName)).toEqual(['Kakao']);
+    });
+
+    // 🔴 조용한 절단이 최악 — 조사 대상을 놓치고도 모른다
+    it('🔴 상한 초과 → 정렬 순 상위만 담고 total·truncated 로 알린다', async () => {
+      wire(
+        cards(600, (i) => ({ applicants: String(600 - i) })),
+        [],
+      );
+      const r = await service.getExport({ sort: 'applicants', order: 'desc' });
+      expect(r.items).toHaveLength(RESEARCH_EXPORT_MAX);
+      expect(r.total).toBe(600);
+      expect(r.truncated).toBe(true);
+      expect(r.limit).toBe(RESEARCH_EXPORT_MAX);
+      // 잘린 건 하위 100개 — 상위(지원자 많은 쪽)는 남아 있어야 한다
+      expect(r.items[0].applicants).toBe(600);
+    });
+
+    it('상한 경계 — 정확히 상한이면 truncated false', async () => {
+      wire(cards(RESEARCH_EXPORT_MAX), []);
+      const r = await service.getExport({});
+      expect(r.items).toHaveLength(RESEARCH_EXPORT_MAX);
+      expect(r.truncated).toBe(false);
+    });
+
+    it('빈 목록 → items [] · total 0 · truncated false', async () => {
+      wire([], []);
+      const r = await service.getExport({ filter: 'unresearched' });
+      expect(r.items).toEqual([]);
+      expect(r.total).toBe(0);
+      expect(r.truncated).toBe(false);
+    });
+
+    // 응답 안전 — 내보내기는 파일로 나가므로 노출 범위를 더 좁게 잡는다
+    it('회사명·지원자·카드 3열만 — 조사 원문·user_id·조사 메타 미노출', async () => {
+      wire([{ norm: 'a', companyName: 'A', applicants: '2', cards: '3' }], []);
+      const r = await service.getExport({});
+      expect(Object.keys(r.items[0]).sort()).toEqual([
+        'applicants',
+        'cards',
+        'companyName',
+      ]);
+    });
+
+    it('내보내기에는 유사명 계산을 하지 않는다 (전 범위 500행에 돌리면 비싸다)', async () => {
+      companies.getAllNames.mockReturnValue(['카카오']);
+      wire(cards(30), []);
+      await service.getExport({});
+      expect(companies.getAllNames).not.toHaveBeenCalled();
     });
   });
 });
