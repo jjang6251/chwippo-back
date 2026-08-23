@@ -162,6 +162,15 @@ export class CompaniesService {
     return this.companies.length;
   }
 
+  /**
+   * companies.json 원본 이름 목록 (admin 실존 판정·유사명 제안용).
+   * 호출부가 요청당 1회만 인덱싱하도록 raw 배열만 넘긴다 — 여기서 캐시하면
+   * spec 이 `companies` 를 직접 주입할 때 인덱스가 낡는다.
+   */
+  getAllNames(): string[] {
+    return this.companies.map((c) => c.name);
+  }
+
   /** 회사명으로 domain 조회 (응답 inject 용). 없으면 undefined */
   getDomainByName(name: string | null | undefined): string | undefined {
     if (!name) return undefined;

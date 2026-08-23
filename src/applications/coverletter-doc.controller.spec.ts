@@ -53,9 +53,11 @@ describe('CoverletterDocController', () => {
         { id: 'u-1', role: 'user' },
         'app-1',
       );
+      // 파라미터 없는 기본 호출 = 조회수 집계 (feature-research-moment)
       expect(research.getCachedForApplication).toHaveBeenCalledWith(
         'u-1',
         'app-1',
+        { countHit: true },
       );
       if (!result || result.status !== 'ok') throw new Error('expected ok');
       expect(result.isCached).toBe(true);
@@ -91,6 +93,56 @@ describe('CoverletterDocController', () => {
       await expect(
         controller.getResearch({ id: 'u-2', role: 'user' }, 'app-1'),
       ).rejects.toThrow();
+    });
+
+    /**
+     * 조회수 미집계 경로 (feature-research-moment, 2026-08-22).
+     *
+     * 🔴 이 파싱이 뒤집혀도 **화면은 멀쩡하다** — hit_count 의 의미만 조용히 바뀌고
+     * 다음 조사 배치 우선순위가 틀어진다(ADR-040). 그래서 문자열 해석을 계약으로 고정한다:
+     * `countHit=false` 만 미집계, 나머지는 전부 기존대로 집계 (기본 안전).
+     */
+    describe('countHit 파라미터', () => {
+      const countHitArg = () =>
+        research.getCachedForApplication.mock.calls[0][2]?.countHit;
+
+      beforeEach(() => {
+        research.getCachedForApplication.mockResolvedValue(null);
+      });
+
+      it('🔴 countHit=false → 미집계 (카드 추가 직후 자동 노출)', async () => {
+        await controller.getResearch(
+          { id: 'u-1', role: 'user' },
+          'app-1',
+          'false',
+        );
+        expect(countHitArg()).toBe(false);
+      });
+
+      it.each(['true', '0', 'False', 'FALSE', '', 'nope'])(
+        '값 %p → 집계 (오타 하나로 수요 신호가 사라지면 안 된다)',
+        async (value) => {
+          await controller.getResearch(
+            { id: 'u-1', role: 'user' },
+            'app-1',
+            value,
+          );
+          expect(countHitArg()).toBe(true);
+        },
+      );
+
+      it('소유권 검증은 서비스 몫 — 로그인 사용자 id 를 그대로 넘긴다', async () => {
+        await controller.getResearch(
+          { id: 'u-9', role: 'user' },
+          'app-1',
+          'false',
+        );
+        expect(research.getCachedForApplication).toHaveBeenCalledWith(
+          'u-9',
+          'app-1',
+          { countHit: false },
+        );
+      });
     });
   });
 
