@@ -10,8 +10,24 @@ import type {
   UnifiedResearchSort,
   SortOrder,
 } from './dto/unified-company-research.dto';
+import {
+  buildCompanyNameIndex,
+  findSimilarCompanyName,
+  hasCompanyName,
+} from './utils/company-name-match';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * 전체 내보내기 상한 (feature-research-moment, 2026-08-22).
+ *
+ * 근거: 내보내기의 용도는 ① 조사 프롬프트에 회사명 붙여넣기 ② 우선순위 보며 배치 분할.
+ * 500개면 회사명 연결 문자열이 ~4KB 로 프롬프트에 그대로 들어가고, CSV 도 한 화면에서
+ * 훑을 수 있는 규모다. 현재 병합 행 규모는 수백(조사 351 ∪ 카드) 이라 대부분 미만이며,
+ * 상한에 걸리는 경우 **화면과 파일 양쪽에 「전체 N개 중 상위 M개」를 적는다** —
+ * 조용히 잘리면 조사 대상을 놓치고도 모른다.
+ */
+export const RESEARCH_EXPORT_MAX = 500;
 
 /** 병합 후 통합 행 — 조사 캐시(조사 메타) ∪ 지원 카드(수요 신호). */
 export interface UnifiedResearchRow {
@@ -25,6 +41,24 @@ export interface UnifiedResearchRow {
   expiresAt: Date | null;
   inferredCount: number | null;
   optOut: boolean;
+}
+
+/**
+ * 표 표시용 행 — 병합 행 + 실존 판정.
+ * `knownCompany`·`similarTo` 는 **현재 페이지 행에만** 계산한다 (§getUnified 참조).
+ */
+export interface UnifiedResearchItem extends UnifiedResearchRow {
+  /** companies.json(DART) 목록에 이 이름이 있는가 — 오타·가상 회사 판별 */
+  knownCompany: boolean;
+  /** 실존 목록에 없을 때만 계산한 가장 가까운 이름 1개. 멀면 null */
+  similarTo: string | null;
+}
+
+/** 내보내기 행 — 회사명 + 우선순위 판단에 필요한 수요 수치만. */
+export interface ResearchExportRow {
+  companyName: string;
+  applicants: number;
+  cards: number;
 }
 
 /**
@@ -160,7 +194,79 @@ export class CompanyResearchStatusService {
   }
 
   /**
-   * 통합 목록 — 조사 캐시 ∪ 지원 카드 집계의 **합집합**.
+   * 통합 목록 한 페이지 — 병합 행(collectRows) 슬라이스 + 실존 판정.
+   *
+   * ⚠️ 응답 안전: ai_research 원문·user_id 미노출. 파생 필드만.
+   */
+  async getUnified(dto: UnifiedCompanyResearchDto): Promise<{
+    items: UnifiedResearchItem[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const page = dto.page && dto.page > 0 ? dto.page : 1;
+    const limit = dto.limit && dto.limit > 0 ? dto.limit : 20;
+
+    const merged = await this.collectRows(dto);
+    const total = merged.length;
+    const start = (page - 1) * limit;
+    const pageRows = merged.slice(start, start + limit);
+
+    // 🔴 실존 판정·유사명은 **현재 페이지 행에만**. 인덱스는 요청당 1회 만들고
+    //    행마다 재사용한다 (행마다 3,798개 전수 비교 금지).
+    if (pageRows.length === 0) return { items: [], total, page, limit };
+    const index = buildCompanyNameIndex(this.companies.getAllNames());
+    const items = pageRows.map((row) => {
+      const known = hasCompanyName(row.companyName, index);
+      return {
+        ...row,
+        knownCompany: known,
+        // 실존이면 제안이 필요 없다 — 계산 자체를 하지 않는다.
+        similarTo: known
+          ? null
+          : findSimilarCompanyName(row.companyName, index),
+      };
+    });
+
+    return { items, total, page, limit };
+  }
+
+  /**
+   * 전체 내보내기 — 필터·정렬이 적용된 **전 범위** (page/limit 무시).
+   *
+   * 목록 페이지네이션이 이미 전량 로드 후 메모리 슬라이스라, 전 범위 확보에
+   * 추가 쿼리가 없다. 상한(RESEARCH_EXPORT_MAX)을 넘으면 정렬 순 상위만 담고
+   * `truncated`·`total` 로 **잘렸다는 사실을 호출부에 넘긴다** (조용한 절단 금지).
+   *
+   * 실존 판정·유사명은 계산하지 않는다 — 내보내기 용도(조사 프롬프트·배치 분할)에
+   * 필요 없고, 전 범위 500행에 대해 돌리면 비싸다.
+   */
+  async getExport(dto: UnifiedCompanyResearchDto): Promise<{
+    items: ResearchExportRow[];
+    total: number;
+    limit: number;
+    truncated: boolean;
+  }> {
+    const merged = await this.collectRows(dto);
+    const total = merged.length;
+    const items = merged.slice(0, RESEARCH_EXPORT_MAX).map((r) => ({
+      companyName: r.companyName,
+      applicants: r.applicants,
+      cards: r.cards,
+    }));
+    return {
+      items,
+      total,
+      limit: RESEARCH_EXPORT_MAX,
+      truncated: total > items.length,
+    };
+  }
+
+  /**
+   * 검색·필터·정렬까지 끝낸 병합 행 전체 (페이지네이션 이전) — 조사 캐시 ∪ 지원 카드.
+   *
+   * 목록(getUnified)과 내보내기(getExport)가 **같은 결과를 보도록** 공유한다 —
+   * 갈라지면 "화면에 보이는 것과 내보낸 것이 다른" 최악의 상태가 된다.
    *
    * 병합 근거:
    * - 지원 카드 집계 = 수요 신호 (applicants 主·cards). getDemand 와 동일 쿼리:
@@ -171,18 +277,12 @@ export class CompanyResearchStatusService {
    *   optOut·inferredCount·researched).
    * - 양쪽 Map 을 정규화 키로 병합 (합집합) → 조사만/카드만/둘다 3유형 모두 노출.
    *
-   * ⚠️ 정렬·필터·페이지네이션은 **병합 후 JS** 에서 수행. 베타 규모(수백 행) 전제 —
+   * ⚠️ 검색·정렬·필터는 **병합 후 JS** 에서 수행. 베타 규모(수백 행) 전제 —
    *    전량 로드 후 메모리 처리. 규모 확대 시 SQL 페이지네이션 재설계 필요.
-   * ⚠️ 응답 안전: ai_research 원문·user_id 미노출. 파생 필드만.
    */
-  async getUnified(dto: UnifiedCompanyResearchDto): Promise<{
-    items: UnifiedResearchRow[];
-    total: number;
-    page: number;
-    limit: number;
-  }> {
-    const page = dto.page && dto.page > 0 ? dto.page : 1;
-    const limit = dto.limit && dto.limit > 0 ? dto.limit : 20;
+  private async collectRows(
+    dto: UnifiedCompanyResearchDto,
+  ): Promise<UnifiedResearchRow[]> {
     const filter: UnifiedResearchFilter = dto.filter ?? 'all';
     const sort: UnifiedResearchSort = dto.sort ?? 'applicants';
     const order: SortOrder = dto.order ?? 'desc';
@@ -270,12 +370,7 @@ export class CompanyResearchStatusService {
     }
     merged = this.applyFilter(merged, filter);
     this.sortRows(merged, sort, order);
-
-    const total = merged.length;
-    const start = (page - 1) * limit;
-    const items = merged.slice(start, start + limit);
-
-    return { items, total, page, limit };
+    return merged;
   }
 
   /** 병합 행 필터 — all|unresearched|expiring|expired|optout. */

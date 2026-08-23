@@ -6,6 +6,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -39,12 +40,23 @@ export class CoverletterDocController {
   ) {}
 
   // ── Phase B: research ──
+  /**
+   * `?countHit=false` → 조회수(hit_count) 미집계.
+   * 카드 추가 직후 자동 노출처럼 **사용자가 요청하지 않은 조회**를 다음 조사 배치
+   * 우선순위 신호에서 빼기 위한 경로 (ADR-040 / feature-research-moment).
+   *
+   * 정확히 문자열 `'false'` 일 때만 제외한다 — 값이 없거나 다른 값이면 기존대로 증가
+   * (기본 안전: 오타 하나로 수요 신호가 조용히 사라지는 쪽이 더 나쁘다).
+   */
   @Get('research')
   getResearch(
     @CurrentUser() user: AuthUser,
     @Param('appId', ParseUUIDPipe) appId: string,
+    @Query('countHit') countHit?: string,
   ) {
-    return this.research.getCachedForApplication(user.id, appId);
+    return this.research.getCachedForApplication(user.id, appId, {
+      countHit: countHit !== 'false',
+    });
   }
 
   // ── Phase D: chat ──
