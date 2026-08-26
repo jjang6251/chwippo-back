@@ -15,6 +15,31 @@ import { ApplicationStep } from './application-step.entity';
 export type ApplicationStatus = 'PLANNED' | 'IN_PROGRESS' | 'PASSED' | 'FAILED';
 
 /**
+ * 카드가 **어느 화면에서** 만들어졌는가. 관측 전용이며 동작에 쓰지 않는다.
+ *
+ * 🔴 **소급이 불가능해서 미리 심는 값이다.** 치뽀엔 사용자 행동 이벤트 테이블이 없어
+ * (`admin_audit_log` 는 운영자 액션 전용) 도메인 테이블의 최종 상태만 남는다. 지금 기록을
+ * 시작하지 않으면 카드 추가 UX 를 바꾼 뒤 **신·구 경로를 나눠 볼 방법이 영영 없다.**
+ *
+ * 날짜로 가르면 되지 않느냐 — 개편 시점 전후로 자르는 것은 「개편 효과」와 「그 사이 유입된
+ * 사용자층 변화」를 **구분하지 못한다.** 두 경로가 동시에 존재할 때만 진짜 비교가 된다.
+ *
+ * 도입 시점(2026-08-25) 기준 실제 생성 경로는 **두 개뿐**이다. 값이 늘어나는 것은
+ * 카드 추가 재설계가 진입점을 나눌 때이고, 그때 이 유니온에 추가한다.
+ * 기존 카드는 `null`(=미기록)로 남는다 — 백필하지 않는다. 추측한 값은 관측을 오염시킨다.
+ */
+export type ApplicationCreatedVia =
+  /** 보드의 「카드 추가」 모달 (`AddCardModal`) — 현재 유일한 사용자 생성 경로 */
+  | 'add_modal'
+  /** 가입 온보딩이 직군 답변으로 자동 생성한 샘플 카드 (`is_sample = true`) */
+  | 'onboarding_sample';
+
+export const APPLICATION_CREATED_VIA: ApplicationCreatedVia[] = [
+  'add_modal',
+  'onboarding_sample',
+];
+
+/**
  * 공고 요건 파싱 결과 (jobposting-parse). `applications.job_posting` JSONB 에 박제.
  *
  * ⚠️ **원문(rawText) 저장 금지** — 파싱 입력으로만 쓰고 폐기. 이 구조화 결과만 저장.
@@ -99,6 +124,26 @@ export class Application {
    */
   @Column({ name: 'is_sample', default: false })
   isSample: boolean;
+
+  /**
+   * 카드를 만들 때 고른 전형 템플릿 id (`APPLICATION_TEMPLATES` 의 키).
+   *
+   * 🔴 **여태 버려지던 값이다.** `templateId` 는 `CreateApplicationDto` 로 이미 들어와서
+   * 초기 스텝을 만드는 데만 쓰이고 저장되지 않았다. 그래서 「추천 템플릿을 그대로 썼나,
+   * 고쳤나」를 **스텝 이름을 8종 템플릿과 문자열 비교**해서 추정할 수밖에 없었고,
+   * 사용자가 스텝 이름을 한 글자만 고쳐도 그 추정이 무너진다.
+   *
+   * 이 값은 **시작 시점의 기록**이라 이후 스텝을 어떻게 편집해도 바뀌지 않는다.
+   * 그래서 「무엇으로 시작해」 「무엇으로 끝났나」를 비로소 가를 수 있다.
+   *
+   * `null` = 컬럼 도입(2026-08-25) 이전 카드 · 또는 미지정. 백필하지 않는다.
+   */
+  @Column({ name: 'template_id', type: 'varchar', length: 32, nullable: true })
+  templateId: string | null;
+
+  /** 어느 화면에서 만들어졌나 — 관측 전용. 자세한 이유는 `ApplicationCreatedVia` 주석 */
+  @Column({ name: 'created_via', type: 'varchar', length: 32, nullable: true })
+  createdVia: ApplicationCreatedVia | null;
 
   /**
    * PR_B1c — 자소서 생성 (회사조사 trigger) 상태.

@@ -129,6 +129,11 @@ export class ApplicationsService {
           jobUrl: dto.jobUrl ?? null,
           needsDetail:
             dto.needsDetail ?? (status === 'IN_PROGRESS' && !dto.jobTitle),
+          // 관측 전용 2종 — 동작에 쓰지 않는다 (엔티티 주석 참조).
+          // 🔴 templateId 는 여태 스텝 생성에만 쓰이고 버려졌다. 아래 createDefaultSteps 에
+          //    넘기는 값과 **같은 값**을 박제해야 「무엇으로 시작했나」가 사후에 성립한다.
+          templateId: dto.templateId ?? null,
+          createdVia: dto.createdVia ?? null,
         });
         const saved = await em.save(Application, app);
 

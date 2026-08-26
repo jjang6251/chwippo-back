@@ -32,6 +32,9 @@ interface CardRaw {
   companyName: string;
   applicants: string | number;
   cards: string | number;
+  /** 지원 예정(PLANNED) 분 — 안 주면 0 (= 전부 진행 중) */
+  plannedApplicants?: string | number;
+  plannedCards?: string | number;
 }
 interface CacheRaw {
   norm: string;
@@ -292,6 +295,9 @@ describe('CompanyResearchStatusService', () => {
         seedVersion: null,
         applicants: 3,
         cards: 5,
+        plannedApplicants: 0,
+        plannedCards: 0,
+        demandStage: 'applied',
         hitCount: 0,
         updatedAt: null,
         expiresAt: null,
@@ -305,6 +311,9 @@ describe('CompanyResearchStatusService', () => {
         researched: true,
         applicants: 0,
         cards: 0,
+        // 🔴 카드 0장은 「예정」이 아니라 **판정 대상 아님**이다.
+        //    `plannedCards === cards` 를 그대로 쓰면 0 === 0 이라 전부 예정이 된다.
+        demandStage: null,
         hitCount: 30,
         inferredCount: 0,
       });
@@ -321,14 +330,112 @@ describe('CompanyResearchStatusService', () => {
     it('is_sample 제외 유지 + status 화이트리스트 (수요 쿼리 조건)', async () => {
       const { appQb } = wire([], []);
       await service.getUnified({});
+      // 🔴 `PLANNED` 는 2026-08-26 에 **의도적으로 추가**됐다. 그전에는 지원 예정만 있는
+      //    회사가 조사 목록에 아예 안 떠서, 아직 지원 안 한 회사를 조사 대상으로 올릴
+      //    방법이 없었다. 이 단언은 화이트리스트를 **정확히** 못 박아, 상태가 조용히
+      //    늘거나 줄면 실패하게 만든다 (예전엔 `not.toContain('PLANNED')` 로 막고 있었다).
       expect(appQb.where).toHaveBeenCalledWith('a.status IN (:...statuses)', {
-        statuses: ['IN_PROGRESS', 'PASSED', 'FAILED'],
+        statuses: ['PLANNED', 'IN_PROGRESS', 'PASSED', 'FAILED'],
       });
       expect(appQb.andWhere).toHaveBeenCalledWith('a.is_sample = FALSE');
       const statusesArg = appQb.where.mock.calls[0][1] as {
         statuses: string[];
       };
-      expect(statusesArg.statuses).not.toContain('PLANNED');
+      // 온보딩 샘플과 함께 **정의된 4개 외의 값이 새는지**를 계속 지킨다
+      expect(statusesArg.statuses).toHaveLength(4);
+    });
+
+    // ── 지원 예정(PLANNED) 포함 · demandStage 판정 (2026-08-26) ──
+    describe('demandStage — 「지원 예정만 있는 회사」를 가른다', () => {
+      it('🔴 예정만 있으면 planned — 진행 중 카드가 0장인 경우', async () => {
+        wire(
+          [
+            {
+              norm: '한빛',
+              companyName: '한빛',
+              applicants: '2',
+              cards: '3',
+              plannedApplicants: '2',
+              plannedCards: '3',
+            },
+          ],
+          [],
+        );
+        const r = await service.getUnified({});
+        expect(r.items[0]).toMatchObject({
+          applicants: 2,
+          cards: 3,
+          plannedApplicants: 2,
+          plannedCards: 3,
+          demandStage: 'planned',
+        });
+      });
+
+      it('🔴 진행 중이 섞여 있으면 applied — 예정이 있어도 등급을 내리지 않는다', async () => {
+        // 이미 실제 지원이 시작된 회사다. 「예정 카드가 하나라도 있으면 예정」으로
+        // 만들면 조사 우선순위가 거꾸로 뒤집힌다.
+        wire(
+          [
+            {
+              norm: '토스',
+              companyName: '토스',
+              applicants: '5',
+              cards: '7',
+              plannedApplicants: '2',
+              plannedCards: '2',
+            },
+          ],
+          [],
+        );
+        const r = await service.getUnified({});
+        expect(r.items[0]).toMatchObject({
+          cards: 7,
+          plannedCards: 2,
+          demandStage: 'applied',
+        });
+      });
+
+      it('예정이 0장이면 applied', async () => {
+        wire(
+          [
+            {
+              norm: '네이버',
+              companyName: '네이버',
+              applicants: '3',
+              cards: '4',
+              plannedApplicants: '0',
+              plannedCards: '0',
+            },
+          ],
+          [],
+        );
+        expect((await service.getUnified({})).items[0]).toMatchObject({
+          demandStage: 'applied',
+        });
+      });
+
+      it('🔴 카드 0장(조사 캐시 전용 행) → null · 「예정」이 아니다', async () => {
+        wire([], [base({ norm: '카카오' })]);
+        expect((await service.getUnified({})).items[0]).toMatchObject({
+          cards: 0,
+          plannedCards: 0,
+          demandStage: null,
+        });
+      });
+
+      it('🔴 예정 컬럼이 안 오면 NaN 이 아니라 0 — 오분류로 이어지는 조용한 결함', async () => {
+        // raw 쿼리 결과는 신뢰 경계 밖이다. `Number(undefined)` = NaN 이고
+        // `NaN === NaN` 은 false 라, 방어가 없으면 예정만 있는 회사가 「지원 중」이 된다.
+        wire(
+          [{ norm: '대성', companyName: '대성', applicants: '1', cards: '1' }],
+          [],
+        );
+        expect((await service.getUnified({})).items[0]).toMatchObject({
+          plannedApplicants: 0,
+          plannedCards: 0,
+          demandStage: 'applied',
+        });
+      });
     });
 
     it('삭제 카드 제외 — withDeleted 미호출 (TypeORM 자동 deleted_at IS NULL)', async () => {
@@ -592,11 +699,14 @@ describe('CompanyResearchStatusService', () => {
         'applicants',
         'cards',
         'companyName',
+        'demandStage',
         'expiresAt',
         'hitCount',
         'inferredCount',
         'knownCompany',
         'optOut',
+        'plannedApplicants',
+        'plannedCards',
         'researched',
         'seedVersion',
         'similarTo',

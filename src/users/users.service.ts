@@ -133,6 +133,11 @@ export class UsersService {
           isSample: true,
           currentStepIndex: i, // 0, 1, 2
           needsDetail: false,
+          // 관측 전용 — 아래 stepsForTemplate('general') 과 **같은 값**이어야 한다.
+          // 샘플 카드를 빼고 세는 집계가 대부분이지만, 기록을 비워두면 나중에
+          // "NULL 이 도입 이전 카드인가 샘플인가" 를 못 가른다.
+          templateId: 'general',
+          createdVia: 'onboarding_sample',
         });
         const saved = await em.save(Application, app);
 
