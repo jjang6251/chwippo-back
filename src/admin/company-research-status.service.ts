@@ -30,12 +30,43 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 export const RESEARCH_EXPORT_MAX = 500;
 
 /** 병합 후 통합 행 — 조사 캐시(조사 메타) ∪ 지원 카드(수요 신호). */
+/**
+ * 수요 단계 — 이 회사에 **실제로 지원이 시작됐는가**.
+ *
+ * 🔴 `'planned'` 는 「지원 예정 카드가 **하나라도** 있다」가 아니라 **「지원 예정만 있다」**다.
+ * 진행 중 카드가 섞여 있으면 이미 실제 지원이 시작된 회사이므로 등급을 내리면 안 된다.
+ *
+ * `null` = 카드가 0장인 행 (조사 캐시에만 존재). 「예정」이 아니라 **판정 대상이 아니다** —
+ * `plannedCards === cards` 를 그대로 쓰면 `0 === 0` 이라 전부 「예정」으로 둔갑한다.
+ */
+export type DemandStage = 'applied' | 'planned';
+
+/**
+ * raw 쿼리의 개수 값 → 안전한 정수.
+ *
+ * 🔴 `Number(undefined)` 가 **NaN** 이라는 게 요점이다. `getRawMany` 결과는 우리가 선언한
+ * 타입이 지켜준다는 보장이 없어(별칭 오타·select 누락) 신뢰 경계 밖 데이터로 다뤄야 한다.
+ * NaN 은 던지지 않고 **조용히 퍼지며**, 비교(`===`)는 전부 false 가 되어 분류를 뒤집는다.
+ */
+function toCount(v: string | number | null | undefined): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export interface UnifiedResearchRow {
   companyName: string;
   researched: boolean;
   seedVersion: string | null;
+  /** 지원자 수 — **지원 예정 포함 합산** (아래 `plannedApplicants` 가 그중 예정분) */
   applicants: number;
+  /** 카드 수 — **지원 예정 포함 합산** */
   cards: number;
+  /** 위 `applicants` 중 지원 예정(PLANNED)만인 사람 */
+  plannedApplicants: number;
+  /** 위 `cards` 중 지원 예정(PLANNED) 카드 */
+  plannedCards: number;
+  /** 카드가 있을 때만 판정. 카드 0장(조사 캐시 전용 행)이면 `null` */
+  demandStage: DemandStage | null;
   hitCount: number;
   updatedAt: Date | null;
   expiresAt: Date | null;
@@ -295,8 +326,22 @@ export class CompanyResearchStatusService {
       .addSelect('MODE() WITHIN GROUP (ORDER BY a.company_name)', 'companyName')
       .addSelect('COUNT(DISTINCT a.user_id)', 'applicants')
       .addSelect('COUNT(*)', 'cards')
+      // 🔴 예정분을 **따로도** 센다. 합산만 주면 숫자가 왜 늘었는지 화면에서 알 수 없다 —
+      //    「진행 3 · 예정 2」로 내역을 보여줘야 조용히 부푼 값으로 안 읽힌다.
+      .addSelect(
+        "COUNT(DISTINCT a.user_id) FILTER (WHERE a.status = 'PLANNED')",
+        'plannedApplicants',
+      )
+      .addSelect("COUNT(*) FILTER (WHERE a.status = 'PLANNED')", 'plannedCards')
       .where('a.status IN (:...statuses)', {
-        statuses: ['IN_PROGRESS', 'PASSED', 'FAILED'],
+        // 🔴 `PLANNED`(지원 예정) 포함 — 2026-08-26 추가.
+        // 그전에는 지원 예정만 있는 회사가 **조사 목록에 아예 안 떴다.** 미조사 필터를
+        // 걸어도 안 보여서, 아직 지원 안 한 회사는 조사 대상으로 올릴 방법이 없었다.
+        //
+        // 예정을 `applicants` 에 **합산**하는 이유 — 따로 세면 예정만 있는 회사가 `0명` 이
+        // 되어 정렬 하단으로 밀리고, 페이지를 넘어가 결국 안 보인다. 그러면 목록에
+        // 넣은 의미가 없다. 대신 위 `planned*` 로 내역을 함께 준다.
+        statuses: ['PLANNED', 'IN_PROGRESS', 'PASSED', 'FAILED'],
       })
       // W1 온보딩 샘플 카드(가상 회사명) 제외 — 수요 목록 오염 방지
       .andWhere('a.is_sample = FALSE')
@@ -306,6 +351,8 @@ export class CompanyResearchStatusService {
         companyName: string;
         applicants: string | number;
         cards: string | number;
+        plannedApplicants: string | number;
+        plannedCards: string | number;
       }>();
     const cardByNorm = new Map(appRows.map((r) => [r.norm, r]));
 
@@ -348,13 +395,25 @@ export class CompanyResearchStatusService {
     for (const key of keys) {
       const card = cardByNorm.get(key);
       const cache = cacheByNorm.get(key);
+      const cards = card ? Number(card.cards) : 0;
+      // 🔴 `Number(undefined)` 는 **NaN** 이다. raw 쿼리 결과는 타입이 보장된 값이 아니라
+      //    신뢰 경계 밖 데이터라, 별칭이 바뀌거나 select 가 빠지면 조용히 NaN 이 흘러든다.
+      //    그러면 `plannedCards === cards` 가 `NaN === NaN` → false 라 **예정만 있는 회사가
+      //    「지원 중」으로 오분류**된다. 화면은 멀쩡해 보이고 숫자만 틀리는 종류다.
+      const plannedCards = toCount(card?.plannedCards);
       merged.push({
         // 대표 표기는 카드 쪽(원 사용자 표기) 우선, 없으면 캐시(정규화 저장값).
         companyName: card?.companyName ?? cache?.companyName ?? key,
         researched: cache?.researched ?? false,
         seedVersion: cache?.seedVersion ?? null,
         applicants: card ? Number(card.applicants) : 0,
-        cards: card ? Number(card.cards) : 0,
+        cards,
+        plannedApplicants: toCount(card?.plannedApplicants),
+        plannedCards,
+        // 🔴 `cards === 0` 을 먼저 걸러낸다. 안 그러면 조사 캐시에만 있는 행이
+        //    `0 === 0` 으로 전부 「지원 예정」이 된다 (카드가 없는 것과 예정인 것은 다르다).
+        demandStage:
+          cards === 0 ? null : plannedCards === cards ? 'planned' : 'applied',
         hitCount: cache ? Number(cache.hitCount) : 0,
         updatedAt: cache?.updatedAt ?? null,
         expiresAt: cache?.expiresAt ?? null,
