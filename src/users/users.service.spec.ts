@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { User } from './user.entity';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
@@ -11,6 +11,7 @@ import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
 import { IdentityProviderService } from '../auth/identity-provider.service';
 import type { SignupAnswerDto } from './dto/signup-answer.dto';
+import { UpdateJobProfileDto } from './dto/update-job-profile.dto';
 import type { JobCategory } from './signup-job-categories.const';
 import { DiscordNotifier } from '../common/discord-notifier';
 import { UserDeletionLog } from './user-deletion-log.entity';
@@ -32,6 +33,12 @@ describe('UsersService', () => {
   let identityProvider: jest.Mocked<IdentityProviderService>;
   let dataSource: jest.Mocked<DataSource>;
   let manager: jest.Mocked<EntityManager>;
+
+  /**
+   * 온보딩 답변 UPDATE 의 **criteria 가 곧 가드**다 — 「아직 답변하지 않은 행」만 잡는다.
+   * id 만으로 잡으면 중복 제출이 두 번 다 통과해 카드가 두 벌 생긴다.
+   */
+  const unclaimed = { id: 'user-uuid-1', signupJobCategories: IsNull() };
 
   const makeUser = (overrides: Partial<User> = {}): User =>
     ({
@@ -179,6 +186,210 @@ describe('UsersService', () => {
         service.updateNickname('nonexistent', '닉네임'),
       ).rejects.toThrow(new NotFoundException('사용자를 찾을 수 없습니다.'));
       expect(userRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── updateJobProfile ───────────────────────────────────
+  /**
+   * 시나리오 (`plans/job-role-first.md` 묶음 3):
+   *  1. 직무만 → 그 컬럼만 UPDATE 에 실린다 (계열 키는 아예 안 들어간다)
+   *  2. 계열만 → 반대
+   *  3. 🔴 **hostile 객체** — 안 보낸 필드가 own `undefined` 프로퍼티로 실재하는
+   *     ValidationPipe 인스턴스를 그대로 재현한다. `{...dto}` merge 였다면 여기서 죽는다
+   *  4. 빈 문자열·공백만 → null
+   *  5. 명시적 null → null
+   *  6. 둘 다 미전송 → 400 (읽기조차 안 한다)
+   *  7. 사용자 없음 → 404 (UPDATE 안 함)
+   */
+  describe('updateJobProfile', () => {
+    /** ValidationPipe(transform) 산출물 흉내 — 안 보낸 필드도 own 프로퍼티로 존재한다 */
+    const asPipeOutput = (dto: Partial<UpdateJobProfileDto>) =>
+      Object.assign(
+        Object.create(UpdateJobProfileDto.prototype) as UpdateJobProfileDto,
+        { jobTitle: undefined, seriesId: undefined },
+        dto,
+      );
+
+    beforeEach(() => {
+      userRepo.findOneBy.mockResolvedValue(makeUser());
+      userRepo.update.mockResolvedValue({ affected: 1 } as never);
+    });
+
+    it('jobTitle 만 보내면 그 컬럼만 UPDATE 에 실린다', async () => {
+      await service.updateJobProfile('user-uuid-1', {
+        jobTitle: '백엔드 개발자',
+      });
+
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        signupJobTitle: '백엔드 개발자',
+      });
+    });
+
+    it('seriesId 만 보내면 그 컬럼만 UPDATE 에 실린다', async () => {
+      await service.updateJobProfile('user-uuid-1', { seriesId: 'it' });
+
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        signupSeriesId: 'it',
+      });
+    });
+
+    it('🔴 안 보낸 필드가 own undefined 프로퍼티여도 그 컬럼은 안 건드린다', async () => {
+      // `'seriesId' in dto` 는 true 지만 보낸 적은 없다 — 값으로만 판정해야 한다
+      const dto = asPipeOutput({ jobTitle: '간호사' });
+      expect('seriesId' in dto).toBe(true);
+
+      await service.updateJobProfile('user-uuid-1', dto);
+
+      const patch = userRepo.update.mock.calls[0][1];
+      expect(patch).toEqual({ signupJobTitle: '간호사' });
+      expect('signupSeriesId' in patch).toBe(false);
+    });
+
+    it.each([
+      ['빈 문자열', ''],
+      ['공백만', '   '],
+      ['명시적 null', null],
+    ])('jobTitle %s → null 저장', async (_label, value) => {
+      await service.updateJobProfile('user-uuid-1', { jobTitle: value });
+
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        signupJobTitle: null,
+      });
+    });
+
+    it('seriesId null → 계열 풀기', async () => {
+      await service.updateJobProfile('user-uuid-1', { seriesId: null });
+
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        signupSeriesId: null,
+      });
+    });
+
+    it('둘 다 미전송 → BadRequest (조회조차 안 한다)', async () => {
+      await expect(
+        service.updateJobProfile('user-uuid-1', asPipeOutput({})),
+      ).rejects.toThrow(new BadRequestException('바꿀 값이 없어요.'));
+
+      expect(userRepo.findOneBy).not.toHaveBeenCalled();
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 userId → NotFoundException (UPDATE 안 함)', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.updateJobProfile('nonexistent', { jobTitle: '간호사' }),
+      ).rejects.toThrow(new NotFoundException('사용자를 찾을 수 없습니다.'));
+
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('온보딩 미완료(onboardedAt null) 사용자도 허용한다', async () => {
+      userRepo.findOneBy.mockResolvedValue(makeUser({ onboardedAt: null }));
+
+      await service.updateJobProfile('user-uuid-1', {
+        jobTitle: '지상직',
+        seriesId: 'sales',
+      });
+
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        signupJobTitle: '지상직',
+        signupSeriesId: 'sales',
+      });
+    });
+  });
+
+  /**
+   * 앱 소개 투어 진행 기록 (`plans/app-tour.md`).
+   *
+   * ## 시나리오 (먼저 나열하고 코드를 짰다)
+   *  1. 첫 기록 → `tourSeenAt` = now · `tourLastStep` = 보낸 값
+   *  2. 🔴 **`tourSeenAt` 은 이미 있으면 유지** — 덮어쓰면 「언제 처음 만났나」가 사라진다
+   *  3. `completed:false` → `tourCompletedAt` 을 아예 안 쓴다 (건너뛰기)
+   *  4. `completed:true` 첫 완료 → `tourCompletedAt` = now
+   *  5. 🔴 **두 번째 완료가 첫 완료를 덮지 않는다** — 깔때기가 뒤로 가면 안 된다
+   *  6. `tourLastStep` 은 **최신값**이다 (seenAt 과 반대 규칙)
+   *  7. 사용자 없음 → 404 (UPDATE 안 함)
+   */
+  describe('recordTour', () => {
+    beforeEach(() => {
+      userRepo.update.mockResolvedValue({ affected: 1 } as never);
+    });
+
+    it('첫 기록 → seenAt·lastStep 이 실린다 (completedAt 은 없다)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ tourSeenAt: null, tourCompletedAt: null }),
+      );
+
+      await service.recordTour('user-uuid-1', {
+        lastStep: 3,
+        completed: false,
+      });
+
+      expect(userRepo.update).toHaveBeenCalledWith('user-uuid-1', {
+        tourSeenAt: expect.any(Date) as Date,
+        tourLastStep: 3,
+      });
+      const patch = userRepo.update.mock.calls[0][1] as Partial<User>;
+      expect('tourCompletedAt' in patch).toBe(false);
+    });
+
+    it('🔴 seenAt 은 첫 기록만 유지한다 (재호출이 덮지 않는다)', async () => {
+      const first = new Date('2026-08-01T00:00:00Z');
+      userRepo.findOneBy.mockResolvedValue(makeUser({ tourSeenAt: first }));
+
+      await service.recordTour('user-uuid-1', { lastStep: 7, completed: true });
+
+      const patch = userRepo.update.mock.calls[0][1] as Partial<User>;
+      expect(patch.tourSeenAt).toBe(first);
+    });
+
+    it('completed:true → completedAt 이 처음으로 찍힌다', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ tourSeenAt: null, tourCompletedAt: null }),
+      );
+
+      await service.recordTour('user-uuid-1', { lastStep: 7, completed: true });
+
+      const patch = userRepo.update.mock.calls[0][1] as Partial<User>;
+      expect(patch.tourCompletedAt).toBeInstanceOf(Date);
+      expect(patch.tourLastStep).toBe(7);
+    });
+
+    it('🔴 completedAt 은 한 번만 — 두 번째 완료가 첫 완료를 덮지 않는다', async () => {
+      const done = new Date('2026-08-02T00:00:00Z');
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ tourSeenAt: done, tourCompletedAt: done }),
+      );
+
+      await service.recordTour('user-uuid-1', { lastStep: 7, completed: true });
+
+      const patch = userRepo.update.mock.calls[0][1] as Partial<User>;
+      expect(patch.tourCompletedAt).toBe(done);
+    });
+
+    it('lastStep 은 최신값으로 갱신된다 (seenAt 과 반대 규칙)', async () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ tourSeenAt: new Date('2026-08-01'), tourLastStep: 2 }),
+      );
+
+      await service.recordTour('user-uuid-1', {
+        lastStep: 5,
+        completed: false,
+      });
+
+      const patch = userRepo.update.mock.calls[0][1] as Partial<User>;
+      expect(patch.tourLastStep).toBe(5);
+    });
+
+    it('존재하지 않는 userId → NotFoundException (UPDATE 안 함)', async () => {
+      userRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.recordTour('nonexistent', { lastStep: 1, completed: false }),
+      ).rejects.toThrow(new NotFoundException('사용자를 찾을 수 없습니다.'));
+
+      expect(userRepo.update).not.toHaveBeenCalled();
     });
   });
 
@@ -673,7 +884,7 @@ describe('UsersService', () => {
       // User update — signupJobCategories + onboardedAt set
       expect(manager.update).toHaveBeenCalledWith(
         User,
-        'user-uuid-1',
+        unclaimed,
         expect.objectContaining({
           signupJobCategories: ['백엔드 개발'],
           signupOtherText: null,
@@ -809,7 +1020,7 @@ describe('UsersService', () => {
 
       expect(manager.update).toHaveBeenCalledWith(
         User,
-        'user-uuid-1',
+        unclaimed,
         expect.objectContaining({
           signupJobCategories: [],
           signupOtherText: null,
@@ -836,7 +1047,7 @@ describe('UsersService', () => {
 
       expect(manager.update).toHaveBeenCalledWith(
         User,
-        'user-uuid-1',
+        unclaimed,
         expect.objectContaining({ signupOtherText: '게임 기획' }),
       );
       const appSaves = manager.save.mock.calls.filter(
@@ -861,7 +1072,7 @@ describe('UsersService', () => {
 
       expect(manager.update).toHaveBeenCalledWith(
         User,
-        'user-uuid-1',
+        unclaimed,
         expect.objectContaining({ signupOtherText: null }),
       );
       const appSaves = manager.save.mock.calls.filter(
@@ -886,7 +1097,7 @@ describe('UsersService', () => {
 
       expect(manager.update).toHaveBeenCalledWith(
         User,
-        'user-uuid-1',
+        unclaimed,
         expect.objectContaining({ signupOtherText: null }),
       );
       const appSaves = manager.save.mock.calls.filter(
@@ -911,25 +1122,32 @@ describe('UsersService', () => {
       expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 
-    it('이미 답변한 user (signupJobCategories not null) → 400', async () => {
+    /**
+     * 🔴 판정 주체가 바뀌었다 — 「미리 읽어 본 값」이 아니라 **UPDATE 가 잡은 행 수**다.
+     * 그래서 이 두 테스트는 `findOneBy` 가 아니라 `affected` 로 상황을 만든다
+     * (읽기 시점의 값은 판정에 쓰이지 않으므로, 그걸로 세우면 테스트가 거짓 통과한다).
+     */
+    it('이미 답변한 user (UPDATE 0행) → 400', async () => {
       userRepo.findOneBy.mockResolvedValue(
         makeUser({ signupJobCategories: ['백엔드 개발'] }),
       );
+      manager.update.mockResolvedValue({ affected: 0 } as never);
 
       await expect(
         service.signupAnswer('user-uuid-1', makeDto()),
       ).rejects.toThrow(new BadRequestException('이미 답변하셨어요.'));
-      expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 
-    it('이미 답변한 user (빈 array, 건너뛰기) → 400 (빈 array 도 답변 완료)', async () => {
+    it('🔴 이미 답변한 user → 샘플 카드를 만들지 않는다 (400 이 저장보다 먼저)', async () => {
       userRepo.findOneBy.mockResolvedValue(
         makeUser({ signupJobCategories: [] }),
       );
+      manager.update.mockResolvedValue({ affected: 0 } as never);
 
       await expect(
         service.signupAnswer('user-uuid-1', makeDto()),
       ).rejects.toThrow(BadRequestException);
+      expect(manager.save).not.toHaveBeenCalled();
     });
 
     it('존재하지 않는 user → 404 NotFound', async () => {
@@ -954,7 +1172,7 @@ describe('UsersService', () => {
 
       expect(manager.update).toHaveBeenCalledWith(
         User,
-        'user-uuid-1',
+        unclaimed,
         expect.objectContaining({ signupOtherText: null }),
       );
       const appSaves = manager.save.mock.calls.filter(
@@ -1026,6 +1244,415 @@ describe('UsersService', () => {
         );
         expect(actualDays).toBe(expectedDays);
       }
+    });
+  });
+
+  /**
+   * 계열 1탭 온보딩 — `seriesId` 가 오면 **가상 샘플이 아니라 진짜 회사 PLANNED 카드**.
+   *
+   * ## 시나리오 (먼저 나열하고 코드를 짰다)
+   *  1. 정상 — 계열+직무+회사 3개 → PLANNED 카드 3장 · 스텝 = 계열 템플릿 ·
+   *     `jobTitleSource='prefill'` · `createdVia='onboarding_pick'` · `isSample=false`
+   *  2. 🔴 가상 샘플을 만들지 않는다 (`Sample Corp`·`is_sample` 이 하나도 없다)
+   *  3. 직무 없음 → `jobTitle`·`jobTitleSource` 둘 다 null (계열 라벨을 승격하지 않는다)
+   *  4. 회사 목록 정리 — 중복·공백·빈 문자열
+   *  5. 회사 7개 → 서비스는 6개까지만 (DTO 400 은 E2E 영역)
+   *  6. 🔴 `seriesId` 없이 회사만 → 400
+   *  7. 계열만 (회사 0) → 카드 0 · 컬럼은 저장
+   *  8. 🔴 새 경로도 `signupJobCategories` 를 기록한다 (「이미 답변했나」 판정의 유일한 근거)
+   *  9. 이미 답변 → 400 · 트랜잭션 미진입
+   * 10. 트랜잭션 중간 실패 → 롤백 (카드도 컬럼도 안 남는다)
+   * 11. 마감일을 지어내지 않는다 — 스텝 `scheduledDate` 전부 null
+   * 12. 멱등 — 두 번째 호출은 400
+   */
+  describe('signupAnswer — 계열 1탭 (A안)', () => {
+    function mockSavedAppId() {
+      let counter = 0;
+      manager.save.mockImplementation(async (_t: unknown, input: unknown) => ({
+        ...(input as object),
+        id: `app-${++counter}`,
+      }));
+    }
+
+    const unanswered = () =>
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: null }),
+      );
+
+    /**
+     * 이미 답변이 기록된 상태 — **UPDATE 가 0행**을 잡는다.
+     * 「읽어 보니 값이 있더라」가 아니라 이게 실제 판정 경로다.
+     */
+    const alreadyAnswered = () => {
+      userRepo.findOneBy.mockResolvedValue(
+        makeUser({ signupJobCategories: [] }),
+      );
+      manager.update.mockResolvedValue({ affected: 0 } as never);
+    };
+
+    const appSaves = () =>
+      manager.save.mock.calls.filter((c) => c[0] === Application);
+    const stepSaves = () =>
+      manager.save.mock.calls.filter((c) => c[0] === ApplicationStep);
+
+    it('1) 계열+직무+회사 3개 → PLANNED 카드 3장 · 계열 템플릿 스텝 · prefill 출처', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'health',
+        jobTitle: '간호사',
+        pickedCompanies: ['삼성바이오로직스', '유한양행', '대전성모병원'],
+      });
+
+      expect(appSaves()).toHaveLength(3);
+      expect(appSaves()[0][1]).toMatchObject({
+        userId: 'user-uuid-1',
+        companyName: '삼성바이오로직스',
+        jobTitle: '간호사',
+        jobTitleSource: 'prefill',
+        // 🔴 계열 라벨을 직군 칸에 박지 않는다 — 표시 계층 fallback 이 그 자리다
+        jobCategory: null,
+        status: 'PLANNED',
+        isSample: false,
+        needsDetail: false,
+        templateId: 'health',
+        createdVia: 'onboarding_pick',
+      });
+
+      // health 템플릿 = 서류 제출 · 면접 · 신체검사 · 최종 합격 (4단계 × 카드 3장)
+      expect(stepSaves()).toHaveLength(12);
+      const first = stepSaves()
+        .slice(0, 4)
+        .map((c) => (c[1] as { name: string }).name);
+      expect(first).toEqual(['서류 제출', '면접', '신체검사', '최종 합격']);
+    });
+
+    it('2) 🔴 가상 샘플 카드를 만들지 않는다 — 2단 보상이 그걸 대체한다', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'it',
+        pickedCompanies: ['네이버'],
+      });
+
+      for (const call of appSaves()) {
+        const app = call[1] as { companyName: string; isSample: boolean };
+        expect(app.isSample).toBe(false);
+        expect(app.companyName).not.toContain('Sample Corp');
+      }
+      expect(appSaves()).toHaveLength(1);
+    });
+
+    it('3) 직무 미전송 → jobTitle·jobTitleSource 둘 다 null (계열 라벨 승격 금지)', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'public',
+        pickedCompanies: ['한국전력공사'],
+      });
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        unclaimed,
+        expect.objectContaining({
+          signupSeriesId: 'public',
+          signupJobTitle: null,
+        }),
+      );
+      expect(appSaves()[0][1]).toMatchObject({
+        jobTitle: null,
+        jobTitleSource: null,
+        templateId: 'public',
+      });
+    });
+
+    it('4) 회사 목록 정리 — 중복·공백·빈 문자열을 걷어낸다', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'it',
+        pickedCompanies: ['카카오', '  카카오  ', '', '   ', '토스'],
+      });
+
+      expect(
+        appSaves().map((c) => (c[1] as { companyName: string }).companyName),
+      ).toEqual(['카카오', '토스']);
+    });
+
+    it('5) 회사 7개 → 서비스는 6장까지만 만든다 (DTO 400 은 E2E 영역)', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'it',
+        pickedCompanies: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+      });
+
+      expect(appSaves()).toHaveLength(6);
+    });
+
+    it('6) 🔴 seriesId 없이 회사만 → 400 · 트랜잭션 미진입', async () => {
+      unanswered();
+
+      await expect(
+        service.signupAnswer('user-uuid-1', {
+          jobCategories: [],
+          pickedCompanies: ['카카오'],
+        }),
+      ).rejects.toThrow(
+        new BadRequestException('계열 없이 회사만 담을 수 없어요.'),
+      );
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('7) 계열만 (회사 0) → 카드 0장 · 컬럼은 저장 · onboardedAt 세팅', async () => {
+      unanswered();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'marketing',
+        jobTitle: '퍼포먼스 마케터',
+      });
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        unclaimed,
+        expect.objectContaining({
+          signupSeriesId: 'marketing',
+          signupJobTitle: '퍼포먼스 마케터',
+          onboardedAt: expect.any(Date),
+        }),
+      );
+      expect(appSaves()).toHaveLength(0);
+    });
+
+    it('8) 🔴 새 경로도 signupJobCategories 를 기록한다 — 안 쓰면 온보딩이 매번 다시 뜬다', async () => {
+      unanswered();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'it',
+      });
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        unclaimed,
+        expect.objectContaining({ signupJobCategories: [] }),
+      );
+    });
+
+    it('8-b) jobCategories 미전송(undefined)도 [] 로 기록된다', async () => {
+      unanswered();
+
+      await service.signupAnswer('user-uuid-1', { seriesId: 'it' });
+
+      expect(manager.update).toHaveBeenCalledWith(
+        User,
+        unclaimed,
+        expect.objectContaining({ signupJobCategories: [] }),
+      );
+    });
+
+    /**
+     * 🔴 **원자적 선점** (2026-08-29). 예전엔 「먼저 읽어 보고 null 이면 진행」이라, 같은
+     * 사용자의 요청 둘이 **둘 다 null 을 보고** 통과할 수 있었다 — 답변은 한 번인데 온보딩
+     * 카드가 두 벌 생겼다. 이제 조건이 UPDATE 의 WHERE 안에 있어 두 번째는 0행을 받는다.
+     *
+     *  9.   0행 → 400 · 카드 미생성 (400 이 저장보다 먼저 던져진다)
+     *  9-b. 0행 → 트랜잭션 밖으로 예외가 나간다 = 컬럼 갱신도 함께 되감긴다
+     */
+    it('9) 이미 답변한 user (UPDATE 0행) → 400 · 카드 미생성', async () => {
+      alreadyAnswered();
+
+      await expect(
+        service.signupAnswer('user-uuid-1', {
+          jobCategories: [],
+          seriesId: 'it',
+          pickedCompanies: ['네이버'],
+        }),
+      ).rejects.toThrow(new BadRequestException('이미 답변하셨어요.'));
+      // 트랜잭션에는 들어간다 (판정이 그 안에 있으므로) — 대신 아무것도 저장되지 않는다
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      expect(appSaves()).toHaveLength(0);
+      expect(stepSaves()).toHaveLength(0);
+    });
+
+    it('9-b) 🔴 0행 판정은 트랜잭션 안에서 던진다 (같은 TX 가 통째로 롤백)', async () => {
+      alreadyAnswered();
+      let threwInsideTx = false;
+      dataSource.transaction.mockImplementation(async (cb: any) => {
+        try {
+          return await cb(manager);
+        } catch (e) {
+          // 진짜 TypeORM 은 여기서 ROLLBACK 후 다시 던진다
+          threwInsideTx = true;
+          throw e;
+        }
+      });
+
+      await expect(
+        service.signupAnswer('user-uuid-1', {
+          jobCategories: [],
+          seriesId: 'it',
+          pickedCompanies: ['네이버'],
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(threwInsideTx).toBe(true);
+    });
+
+    it('10) 트랜잭션 중간 실패 → 롤백 (카드도 컬럼도 안 남는다)', async () => {
+      unanswered();
+      // 두 번째 카드 저장에서 터뜨린다 — 앞의 update·save 가 같은 TX 안이라 함께 되감긴다
+      let saves = 0;
+      manager.save.mockImplementation(async (t: unknown, input: unknown) => {
+        if (t === Application && ++saves === 2) throw new Error('db down');
+        return { ...(input as object), id: `app-${saves}` };
+      });
+      dataSource.transaction.mockImplementation(async (cb: any) => {
+        // 진짜 TX 처럼 — 콜백이 던지면 그대로 전파되고 커밋되지 않는다
+        return cb(manager);
+      });
+
+      await expect(
+        service.signupAnswer('user-uuid-1', {
+          jobCategories: [],
+          seriesId: 'it',
+          pickedCompanies: ['네이버', '카카오', '토스'],
+        }),
+      ).rejects.toThrow('db down');
+
+      // 세 번째 카드는 시도조차 안 됐다 (루프가 끊긴다)
+      expect(appSaves()).toHaveLength(2);
+      // 롤백 자체는 TypeORM 이 한다 — 여기선 "예외가 TX 밖으로 나간다" 를 못 박는다
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('11) 마감일을 지어내지 않는다 — 스텝 scheduledDate 전부 null', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'finance',
+        pickedCompanies: ['KB국민은행'],
+      });
+
+      expect(stepSaves().length).toBeGreaterThan(0);
+      for (const call of stepSaves()) {
+        expect(
+          (call[1] as { scheduledDate: Date | null }).scheduledDate,
+        ).toBeNull();
+      }
+    });
+
+    it('12) 멱등 — 두 번째 호출은 400 (부작용 1번)', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'it',
+        pickedCompanies: ['네이버'],
+      });
+      expect(appSaves()).toHaveLength(1);
+
+      // 두 번째 호출 시점엔 이미 답변이 기록돼 있다 → UPDATE 가 0행
+      alreadyAnswered();
+      await expect(
+        service.signupAnswer('user-uuid-1', {
+          jobCategories: [],
+          seriesId: 'it',
+          pickedCompanies: ['네이버'],
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(appSaves()).toHaveLength(1);
+    });
+
+    /**
+     * 🔴 **서버는 직무 사전이 없다.** 「승무원」의 항공 서비스 전형은 프론트가 판정해
+     * 보내 줘야 재현된다 — 안 그러면 사용자가 방금 본 미리보기와 담긴 카드가 어긋난다.
+     */
+    it('13) 프론트가 보낸 templateId 를 쓴다 (승무원 → air_service)', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'sales',
+        jobTitle: '승무원',
+        templateId: 'air_service',
+        pickedCompanies: ['대한항공'],
+      });
+
+      expect(appSaves()[0][1]).toMatchObject({ templateId: 'air_service' });
+      expect(stepSaves().map((c) => (c[1] as { name: string }).name)).toEqual([
+        '서류 제출',
+        '1차 실무면접',
+        '2차 임원·영어면접',
+        '체력·신체검사',
+        '최종 합격',
+      ]);
+    });
+
+    it('13-b) templateId 미전송 → 계열 템플릿으로 폴백', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'sales',
+        jobTitle: '승무원',
+        pickedCompanies: ['대한항공'],
+      });
+
+      // 서버 혼자면 계열까지밖에 모른다 — 그게 폴백이고, 그래서 프론트가 보내 주는 것이다
+      expect(appSaves()[0][1]).toMatchObject({ templateId: 'sales' });
+      expect(stepSaves()[1][1]).toMatchObject({ name: '인적성·AI역량검사' });
+    });
+
+    it('13-c) 🔴 모르는 templateId → 조용히 계열 폴백 (general 로 새지 않는다)', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: [],
+        seriesId: 'health',
+        templateId: 'no_such_template',
+        pickedCompanies: ['유한양행'],
+      });
+
+      expect(appSaves()[0][1]).toMatchObject({ templateId: 'health' });
+      expect(stepSaves().map((c) => (c[1] as { name: string }).name)).toEqual([
+        '서류 제출',
+        '면접',
+        '신체검사',
+        '최종 합격',
+      ]);
+    });
+
+    it('회귀 — seriesId 가 없으면 기존 샘플 경로가 그대로 돈다', async () => {
+      unanswered();
+      mockSavedAppId();
+
+      await service.signupAnswer('user-uuid-1', {
+        jobCategories: ['백엔드 개발'],
+      });
+
+      expect(appSaves()).toHaveLength(1);
+      expect(appSaves()[0][1]).toMatchObject({
+        companyName: 'Cloud Tech 백엔드',
+        isSample: true,
+        createdVia: 'onboarding_sample',
+      });
     });
   });
 

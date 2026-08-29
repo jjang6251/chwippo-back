@@ -66,6 +66,9 @@ export class JwtRefreshStrategy extends PassportStrategy(
       // W1 — signup answer + sample dismiss 추적 (signup-question redirect 분기 + 보드 dismiss bar)
       signupJobCategories: user.signupJobCategories ?? null,
       signupOtherText: user.signupOtherText ?? null,
+      // 온보딩 계열 1탭 — 계열 id + 사람이 친 직무 원문 (카드 프리필 재료)
+      signupSeriesId: user.signupSeriesId ?? null,
+      signupJobTitle: user.signupJobTitle ?? null,
       sampleCardsDismissedAt: user.sampleCardsDismissedAt ?? null,
       // 캘린더 UX 재구성 — 첫 방문 안내 배너 표시 여부 (NULL → 표시)
       calendarHomeIntroDismissedAt: user.calendarHomeIntroDismissedAt ?? null,
@@ -73,6 +76,10 @@ export class JwtRefreshStrategy extends PassportStrategy(
       interviewNudgeDismissedAt: user.interviewNudgeDismissedAt ?? null,
       // 알림 — soft-ask 모달 표시 여부 (NULL → native 에서 최초 1회 모달)
       alarmPromptedAt: user.alarmPromptedAt ?? null,
+      // 앱 소개 투어 — 관측 전용. 🔴 NULL 이라고 투어를 띄우지 않는다 (진입은 온보딩 직후 경로뿐)
+      tourSeenAt: user.tourSeenAt ?? null,
+      tourCompletedAt: user.tourCompletedAt ?? null,
+      tourLastStep: user.tourLastStep ?? null,
     };
   }
 }

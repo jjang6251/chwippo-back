@@ -10,9 +10,11 @@ import {
 import { UsersService } from './users.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateNicknameDto } from './dto/update-nickname.dto';
+import { UpdateJobProfileDto } from './dto/update-job-profile.dto';
 import { UpdateDashboardConfigDto } from './dto/update-dashboard-config.dto';
 import { AgreeAiConsentDto } from './dto/agree-ai-consent.dto';
 import { SignupAnswerDto } from './dto/signup-answer.dto';
+import { TourProgressDto } from './dto/tour-progress.dto';
 
 interface AuthUser {
   id: string;
@@ -68,6 +70,21 @@ export class UsersController {
     await this.usersService.dismissCalendarHomeIntro(user.id);
   }
 
+  /**
+   * 앱 소개 투어 진행 기록 — 투어가 **끝나는 순간 한 번**만 온다 (마지막 장 · 건너뛰기).
+   *
+   * 204 — 돌려줄 게 없다. 프론트는 응답을 기다리지 않고(fire-and-forget) 다음 화면으로 간다.
+   * 실패해도 투어는 그대로 끝난다 — 진입 경로가 온보딩 직후뿐이라 다시 뜨지 않는다.
+   */
+  @Post('me/tour')
+  @HttpCode(204)
+  async recordTour(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: TourProgressDto,
+  ): Promise<void> {
+    await this.usersService.recordTour(user.id, dto);
+  }
+
   /** 면접 유도 모달 「다시 보지 않기」 — 전 카드 영구 차단 (멱등) */
   @Post('me/dismiss-interview-nudge')
   @HttpCode(204)
@@ -100,6 +117,21 @@ export class UsersController {
       dto.nickname,
     );
     return { nickname: updated.nickname };
+  }
+
+  /**
+   * 희망 직무·계열 변경 (온보딩 이후 재작성 전용).
+   *
+   * 204 — `/auth/me` 가 이미 `signupJobTitle`·`signupSeriesId` 를 내보내므로 돌려줄 게 없다.
+   * 프론트는 보낸 값으로 authStore 를 낙관 갱신한다 (`useSignupAnswer` 와 같은 방식).
+   */
+  @Patch('me/job-profile')
+  @HttpCode(204)
+  async updateJobProfile(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UpdateJobProfileDto,
+  ): Promise<void> {
+    await this.usersService.updateJobProfile(user.id, dto);
   }
 
   @Delete('me')

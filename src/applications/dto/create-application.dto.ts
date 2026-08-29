@@ -10,7 +10,9 @@ import {
 import { APPLICATION_TEMPLATE_IDS } from '../application-templates';
 import {
   APPLICATION_CREATED_VIA,
+  JOB_TITLE_SOURCES,
   type ApplicationCreatedVia,
+  type JobTitleSource,
 } from '../application.entity';
 
 export class CreateApplicationDto {
@@ -59,4 +61,14 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsIn(APPLICATION_CREATED_VIA)
   createdVia?: ApplicationCreatedVia;
+
+  /**
+   * 직무를 어떻게 입력했는가 — **관측 전용**이라 동작에 영향을 주지 않는다.
+   *
+   * `createdVia` 와 같은 이유로 `IsIn` 을 건다: 관측값이라도 아무 문자열을 통과시키면
+   * 오탐이 데이터에 섞여 「확정」과 「프리필 수용」을 가르려던 목적 자체가 무너진다.
+   */
+  @IsOptional()
+  @IsIn(JOB_TITLE_SOURCES)
+  jobTitleSource?: JobTitleSource;
 }

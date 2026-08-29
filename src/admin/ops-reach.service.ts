@@ -31,6 +31,7 @@ import { classifyLoginStamps, type PlatformUsage } from './user-platform';
 /** 도달 단계 — 최상단 도달점 하나로 접는다 */
 export type ReachStage =
   | 'signup' // 가입만
+  | 'tour_completed' // 앱 소개 투어 마지막 장 도달
   | 'card' // 실제 카드 1개+
   | 'activity' // 활동일지 1개+
   | 'coverletter_question' // 자소서 문항 1개+
@@ -39,12 +40,28 @@ export type ReachStage =
 
 export const REACH_STAGES: ReachStage[] = [
   'signup',
+  // 🔴 카드 **앞**이다 — 가입 직후 순서가 「온보딩 → 투어 → 첫 카드」라서다.
+  //    투어가 없던 시절 가입자는 `tour_completed_at` 이 NULL 이라 이 단계에서 빠진다.
+  //    소급 불가한 값이라 백필하지 않는다 (추측한 값은 관측을 오염시킨다).
+  'tour_completed',
   'card',
   'activity',
   'coverletter_question',
   'coverletter_answer',
   'coverletter_ai',
 ];
+
+/**
+ * 이탈 장면 분포 — **투어를 만났지만 끝내지 않은 사람**이 어느 장면에서 나갔나.
+ *
+ * 완료율 한 숫자로는 「6장 중 어디가 지루한가」를 못 본다. `tour_last_step` 이 있는 이유고,
+ * 이 배열이 그 값의 유일한 소비처다. 장면 번호 오름차순.
+ */
+export interface TourDropOff {
+  /** 장면 번호 1~6 */
+  step: number;
+  count: number;
+}
 
 export interface ReachRow {
   userId: string;
@@ -55,6 +72,13 @@ export interface ReachRow {
   platform: PlatformUsage;
   /** `null` = **미확인** (스탬프 도입 전 가입 · 백필 근거 없음). "모바일" 이 아니다 */
   desktopSeenAt: string | null;
+  /** 앱 소개 투어 마지막 장까지 갔는가 (`tour_completed_at` NOT NULL) */
+  tourCompleted: boolean;
+  /**
+   * 투어를 만났지만 **안 끝낸** 사람의 마지막 장면. 끝냈거나 만난 적 없으면 `null`.
+   * 🔴 완료자의 `tour_last_step`(=6)을 여기 남기면 이탈 분포에 섞인다.
+   */
+  tourDropOffStep: number | null;
   cards: number;
   /** 온보딩이 자동 생성한 카드 — 사용자가 만든 게 아니라 별도로 보여준다 */
   sampleCards: number;
@@ -78,6 +102,11 @@ export interface OpsReachResponse {
   excludedAdmins: number;
   /** 단계별 도달 인원 (누적 기준). **% 는 만들지 않는다** — 표기 규칙은 프론트 공용 포매터 */
   stageCounts: Record<ReachStage, number>;
+  /**
+   * 투어 이탈 장면 분포 — 만났지만 안 끝낸 사람만. 장면 번호 오름차순.
+   * 아무도 이탈하지 않았으면 빈 배열이다 (0 을 6칸 채우지 않는다 — 없는 건 없는 것이다).
+   */
+  tourDropOff: TourDropOff[];
   /** 데스크탑 웹이 확인된 사용자만의 분모·분자 (자소서 단계 해석용) */
   desktopAxis: {
     confirmed: number;
@@ -113,6 +142,9 @@ interface RawRow {
   first_app_login_at: Date | null;
   first_web_login_at: Date | null;
   first_desktop_web_seen_at: Date | null;
+  tour_seen_at: Date | null;
+  tour_completed_at: Date | null;
+  tour_last_step: number | string | null;
   cards: string;
   sample_cards: string;
   activity_logs: string;
@@ -158,6 +190,7 @@ export class OpsReachService {
         WITH base AS (
           SELECT u.id, u.nickname, u.created_at, u.last_active_at,
                  u.first_app_login_at, u.first_web_login_at, u.first_desktop_web_seen_at,
+                 u.tour_seen_at, u.tour_completed_at, u.tour_last_step,
                  (u.created_at AT TIME ZONE $1)::date AS signup_date
             FROM users u
            WHERE u.role <> 'admin'
@@ -201,6 +234,7 @@ export class OpsReachService {
         )
         SELECT b.id, b.nickname, b.signup_date, b.last_active_at,
                b.first_app_login_at, b.first_web_login_at, b.first_desktop_web_seen_at,
+               b.tour_seen_at, b.tour_completed_at, b.tour_last_step,
                COALESCE(c.cards, 0)        AS cards,
                COALESCE(c.sample_cards, 0) AS sample_cards,
                COALESCE(ac.n, 0)           AS activity_logs,
@@ -232,6 +266,7 @@ export class OpsReachService {
       totalUsers: rows.length,
       excludedAdmins: Number(adminRow[0]?.count ?? 0),
       stageCounts,
+      tourDropOff: countTourDropOff(rows),
       desktopAxis: {
         confirmed: desktop.length,
         coverletterAnswer: desktop.filter((r) => r.coverletterAnswers > 0)
@@ -255,6 +290,14 @@ function toRow(r: RawRow): ReachRow {
   const coverletterQuestions = Number(r.cl_questions);
   const coverletterAnswers = Number(r.cl_answers);
   const aiSuccesses = Number(r.ai_successes);
+  const tourCompleted = r.tour_completed_at !== null;
+  /* 🔴 「만났지만 안 끝냄」일 때만 장면 번호를 남긴다. 완료자의 6 이 섞이면 이탈 분포가
+     완료자로 가득 차서 정작 보려던 「어디서 나갔나」가 지워진다. */
+  const rawStep = r.tour_last_step === null ? null : Number(r.tour_last_step);
+  const tourDropOffStep =
+    r.tour_seen_at !== null && !tourCompleted && rawStep !== null && rawStep > 0
+      ? rawStep
+      : null;
 
   return {
     userId: r.id,
@@ -265,6 +308,8 @@ function toRow(r: RawRow): ReachRow {
     desktopSeenAt: r.first_desktop_web_seen_at
       ? r.first_desktop_web_seen_at.toISOString()
       : null,
+    tourCompleted,
+    tourDropOffStep,
     cards,
     sampleCards: Number(r.sample_cards),
     activityLogs,
@@ -273,6 +318,7 @@ function toRow(r: RawRow): ReachRow {
     aiAttempts: Number(r.ai_attempts),
     aiSuccesses,
     stage: resolveStage({
+      tourCompleted,
       cards,
       activityLogs,
       coverletterQuestions,
@@ -292,6 +338,8 @@ function toRow(r: RawRow): ReachRow {
  * 그래서 "아래 단계를 충족했는가" 가 아니라 **위에서부터 처음 걸리는 것**으로 판정한다.
  */
 export function resolveStage(v: {
+  /** 투어가 없던 시절 가입자는 언제나 `false` — 백필하지 않는다 */
+  tourCompleted?: boolean;
   cards: number;
   activityLogs: number;
   coverletterQuestions: number;
@@ -303,6 +351,7 @@ export function resolveStage(v: {
   if (v.coverletterQuestions > 0) return 'coverletter_question';
   if (v.activityLogs > 0) return 'activity';
   if (v.cards > 0) return 'card';
+  if (v.tourCompleted) return 'tour_completed';
   return 'signup';
 }
 
@@ -317,6 +366,9 @@ export function resolveStage(v: {
 function countStages(rows: ReachRow[]): Record<ReachStage, number> {
   const reached: Record<ReachStage, (r: ReachRow) => boolean> = {
     signup: () => true,
+    // 🔴 카드가 있다고 투어를 끝낸 것으로 세지 않는다 — 투어 없이 가입한 기존 사용자가
+    //    전부 「투어 완료」로 잡혀 이 단계가 통째로 거짓이 된다
+    tour_completed: (r) => r.tourCompleted,
     card: (r) => r.cards > 0,
     activity: (r) => r.activityLogs > 0,
     coverletter_question: (r) => r.coverletterQuestions > 0,
@@ -326,4 +378,21 @@ function countStages(rows: ReachRow[]): Record<ReachStage, number> {
   return Object.fromEntries(
     REACH_STAGES.map((s) => [s, rows.filter(reached[s]).length]),
   ) as Record<ReachStage, number>;
+}
+
+/**
+ * 투어 이탈 장면 분포 — **만났지만 안 끝낸 사람만**(`tourDropOffStep` 이 그 판정을 이미 했다).
+ *
+ * 🔴 이탈이 없는 장면은 **행 자체를 만들지 않는다.** 6칸을 0으로 채우면 화면이 「모든 장면에서
+ * 이탈이 있다」는 인상을 준다 — 없는 건 없는 것이다.
+ */
+function countTourDropOff(rows: ReachRow[]): TourDropOff[] {
+  const byStep = new Map<number, number>();
+  for (const r of rows) {
+    if (r.tourDropOffStep === null) continue;
+    byStep.set(r.tourDropOffStep, (byStep.get(r.tourDropOffStep) ?? 0) + 1);
+  }
+  return [...byStep.entries()]
+    .map(([step, count]) => ({ step, count }))
+    .sort((a, b) => a.step - b.step);
 }

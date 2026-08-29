@@ -201,6 +201,32 @@ export class User {
   signupOtherText: string | null;
 
   /**
+   * 온보딩 계열 1탭 답변 — 프론트 `JOB_SERIES` 의 id (`it`·`health`…).
+   * NULL = 미답변 · 건너뛰기 · 구(21칩) 경로로 답한 사용자.
+   * 라벨이 아니라 ASCII 안정키라 화면 문구가 바뀌어도 값이 안 흔들린다.
+   */
+  @Column({
+    name: 'signup_series_id',
+    type: 'varchar',
+    length: 24,
+    nullable: true,
+  })
+  signupSeriesId: string | null;
+
+  /**
+   * 온보딩에서 **사람이 타이핑한** 직무 원문 ("간호사"). max 100자.
+   * 🔴 카드 추가 모달 프리필의 재료다 — 계열 라벨은 절대 여기 오지 않는다
+   * (시스템 말을 직무로 승격하면 예전 직군 칩 자동 선택 오염의 재판).
+   */
+  @Column({
+    name: 'signup_job_title',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
+  signupJobTitle: string | null;
+
+  /**
    * W1 — 사용자가 "전체 숨기기" 누른 시각 (한 번 dismiss 시 영구).
    * NULL = 샘플 카드 살아있음 (보드 표시).
    * NOT NULL = 모든 is_sample 카드 soft delete + 다음 로그인에도 안 나타남.
@@ -257,4 +283,26 @@ export class User {
     nullable: true,
   })
   sessionExpiredNotifiedAt: Date | null;
+
+  /**
+   * 앱 소개 투어 — **어떤 식으로든 끝낸 시각** (마지막 장 도달 · 건너뛰기 둘 다).
+   *
+   * 🔴 **첫 기록만 유지한다** (`recordTour`). 다시 보기·재진입으로 덮어쓰면 「언제 처음
+   * 만났나」가 사라져 코호트 분석이 불가능해진다.
+   *
+   * 🔴 NULL 이라고 투어를 띄우지 않는다 — 진입은 온보딩 직후 경로와 도움말 링크뿐이다.
+   */
+  @Column({ name: 'tour_seen_at', type: 'timestamptz', nullable: true })
+  tourSeenAt: Date | null;
+
+  /** 앱 소개 투어 마지막 장(6) 도달 시각. `/ops/reach` 깔때기의 「투어 완료」 단계 */
+  @Column({ name: 'tour_completed_at', type: 'timestamptz', nullable: true })
+  tourCompletedAt: Date | null;
+
+  /**
+   * 앱 소개 투어에서 **마지막으로 본 장면**(1~6) — 이탈 장면 분포용.
+   * `tour_seen_at` 과 달리 **최신값으로 갱신**한다 (어디까지 갔는지가 알고 싶은 값이다).
+   */
+  @Column({ name: 'tour_last_step', type: 'smallint', nullable: true })
+  tourLastStep: number | null;
 }
