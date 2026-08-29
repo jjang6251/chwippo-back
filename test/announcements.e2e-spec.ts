@@ -43,15 +43,15 @@ describe('Announcements (e2e, PR Y)', () => {
         .expect(200);
     });
 
-    it('active 공지 없음 → 200 + data null', async () => {
+    it('active 공지 없음 → 200 + data 빈 배열', async () => {
       const res = await request(app.getHttpServer())
         .get('/announcements/active')
         .expect(200);
-      // ResponseTransformInterceptor wrap. null 또는 announcement 객체
-      expect(res.body).toHaveProperty('data');
+      // ResponseTransformInterceptor wrap. data 는 항상 배열
+      expect(res.body.data).toEqual([]);
     });
 
-    it('active=true·기간 내 공지 → 200 + 해당 공지', async () => {
+    it('active=true·기간 내 공지 → 200 + 해당 공지 1개', async () => {
       const { accessToken } = await signInAsAdmin(app);
       const created = await request(app.getHttpServer())
         .post('/admin/announcements')
@@ -67,7 +67,8 @@ describe('Announcements (e2e, PR Y)', () => {
       const active = await request(app.getHttpServer())
         .get('/announcements/active')
         .expect(200);
-      expect(active.body.data?.id).toBe(created.body.data.id);
+      expect(active.body.data).toHaveLength(1);
+      expect(active.body.data[0].id).toBe(created.body.data.id);
     });
 
     it('active=false 공지 → 미노출', async () => {
@@ -86,7 +87,245 @@ describe('Announcements (e2e, PR Y)', () => {
       const active = await request(app.getHttpServer())
         .get('/announcements/active')
         .expect(200);
-      expect(active.body.data).toBeNull();
+      expect(active.body.data).toEqual([]);
+    });
+
+    it('모달·배너 동시 활성 → 2개, 모달이 먼저', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      const banner = await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({
+          title: '점검 배너',
+          body: '본문',
+          type: 'banner',
+          active: true,
+        })
+        .expect(201);
+      const modal = await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({
+          title: '새 기능 모달',
+          body: '본문',
+          type: 'modal',
+          kind: 'feature',
+          active: true,
+        })
+        .expect(201);
+
+      const active = await request(app.getHttpServer())
+        .get('/announcements/active')
+        .expect(200);
+      expect(active.body.data.map((a: { id: string }) => a.id)).toEqual([
+        modal.body.data.id,
+        banner.body.data.id,
+      ]);
+    });
+
+    it('같은 type 이 여러 개면 최신 1개만 (type 당 1개 상한)', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({ title: '옛 배너', body: '본문', type: 'banner', active: true })
+        .expect(201);
+      const newer = await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({ title: '새 배너', body: '본문', type: 'banner', active: true })
+        .expect(201);
+
+      const active = await request(app.getHttpServer())
+        .get('/announcements/active')
+        .expect(200);
+      expect(active.body.data).toHaveLength(1);
+      expect(active.body.data[0].id).toBe(newer.body.data.id);
+    });
+  });
+
+  describe('kind · CTA', () => {
+    const base = {
+      title: '새 기능 안내',
+      body: '본문',
+      type: 'modal' as const,
+      active: true,
+    };
+
+    /** 공지 1건 생성 — 기대 status 를 넘겨 실패 케이스도 같은 헬퍼로 쓴다 */
+    const post = async (body: Record<string, unknown>, status = 201) => {
+      const { accessToken } = await signInAsAdmin(app);
+      return request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send(body)
+        .expect(status);
+    };
+
+    it("kind 생략 → 201 + 'notice' 기본값", async () => {
+      const created = await post(base);
+      expect(created.body.data.kind).toBe('notice');
+      expect(created.body.data.cta_label).toBeNull();
+      expect(created.body.data.cta_path).toBeNull();
+    });
+
+    it.each(['feature', 'improvement', 'fix', 'notice'])(
+      'kind=%s → 201 + 그대로 저장',
+      async (kind) => {
+        const created = await post({ ...base, kind });
+        expect(created.body.data.kind).toBe(kind);
+      },
+    );
+
+    it('kind 정의 밖 값 → 400', async () => {
+      await post({ ...base, kind: 'urgent' }, 400);
+    });
+
+    it('CTA 라벨+내부 경로 → 201, active 응답에도 실려 나온다', async () => {
+      const created = await post({
+        ...base,
+        kind: 'feature',
+        cta_label: '지금 해보기',
+        cta_path: '/board?add=posting',
+      });
+      expect(created.body.data.cta_label).toBe('지금 해보기');
+      expect(created.body.data.cta_path).toBe('/board?add=posting');
+
+      const active = await request(app.getHttpServer())
+        .get('/announcements/active')
+        .expect(200);
+      expect(active.body.data[0]).toMatchObject({
+        id: created.body.data.id,
+        kind: 'feature',
+        cta_label: '지금 해보기',
+        cta_path: '/board?add=posting',
+      });
+    });
+
+    it.each([
+      ['https://evil.com', '외부 URL'],
+      ['//evil.com', '프로토콜 상대 URL'],
+      ['board?add=posting', '슬래시 없이 시작'],
+      ['/board 추가', '공백 포함'],
+    ])('cta_path=%s → 400 (%s)', async (cta_path) => {
+      const res = await post(
+        {
+          ...base,
+          cta_label: '지금 해보기',
+          cta_path,
+        },
+        400,
+      );
+      expect(res.body.message).toContain('앱 내부 경로');
+    });
+
+    it('CTA 라벨만 → 400', async () => {
+      const res = await post({ ...base, cta_label: '지금 해보기' }, 400);
+      expect(res.body.message).toContain('함께');
+    });
+
+    it('CTA 경로만 → 400', async () => {
+      const res = await post({ ...base, cta_path: '/board' }, 400);
+      expect(res.body.message).toContain('함께');
+    });
+
+    it('cta_label 31자 → 400 / 30자 → 201 (경계값)', async () => {
+      await post(
+        {
+          ...base,
+          cta_label: 'ㄱ'.repeat(31),
+          cta_path: '/board',
+        },
+        400,
+      );
+
+      await post({
+        ...base,
+        cta_label: 'ㄱ'.repeat(30),
+        cta_path: '/board',
+      });
+    });
+
+    it('cta_label 앞뒤 공백은 trim 후 검증·저장한다', async () => {
+      const created = await post({
+        ...base,
+        cta_label: '  지금 해보기  ',
+        cta_path: '  /board  ',
+      });
+      expect(created.body.data.cta_label).toBe('지금 해보기');
+      expect(created.body.data.cta_path).toBe('/board');
+    });
+
+    it('PATCH 로 CTA 둘 다 null → 200 + 비워짐', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      const created = await post({
+        ...base,
+        cta_label: '지금 해보기',
+        cta_path: '/board',
+      });
+
+      const patched = await request(app.getHttpServer())
+        .patch(`/admin/announcements/${created.body.data.id}`)
+        .set(bearer(accessToken))
+        .send({ cta_label: null, cta_path: null })
+        .expect(200);
+      expect(patched.body.data.cta_label).toBeNull();
+      expect(patched.body.data.cta_path).toBeNull();
+    });
+
+    it('PATCH 로 한쪽만 null → 400 (경로 고아 방지)', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      const created = await post({
+        ...base,
+        cta_label: '지금 해보기',
+        cta_path: '/board',
+      });
+
+      await request(app.getHttpServer())
+        .patch(`/admin/announcements/${created.body.data.id}`)
+        .set(bearer(accessToken))
+        .send({ cta_label: null })
+        .expect(400);
+    });
+
+    it('PATCH 로 kind·CTA 를 함께 교체 → 200', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      const created = await post(base);
+
+      const patched = await request(app.getHttpServer())
+        .patch(`/admin/announcements/${created.body.data.id}`)
+        .set(bearer(accessToken))
+        .send({
+          kind: 'improvement',
+          cta_label: '확인하러 가기',
+          cta_path: '/calendar',
+        })
+        .expect(200);
+      expect(patched.body.data).toMatchObject({
+        kind: 'improvement',
+        cta_label: '확인하러 가기',
+        cta_path: '/calendar',
+      });
+    });
+
+    it('admin 목록에도 새 필드가 나온다', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      await post({
+        ...base,
+        kind: 'fix',
+        cta_label: '지금 해보기',
+        cta_path: '/board',
+      });
+
+      const list = await request(app.getHttpServer())
+        .get('/admin/announcements')
+        .set(bearer(accessToken))
+        .expect(200);
+      expect(list.body.data[0]).toMatchObject({
+        kind: 'fix',
+        cta_label: '지금 해보기',
+        cta_path: '/board',
+      });
     });
   });
 
