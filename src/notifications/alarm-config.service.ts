@@ -2,11 +2,33 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
+import { UserDevice } from '../devices/user-device.entity';
 import {
   AlarmConfig,
   AlarmConfigUpdate,
   resolveAlarmConfig,
 } from './notification.types';
+
+/**
+ * 「이 사람에게 폰 알림이 실제로 갈 수 있나」 — 화면이 그 자리에서 말해 주기 위한 판정.
+ *
+ * 🔴 **새 컬럼을 만들지 않는다.** 셋 다 이미 있는 값에서 파생된다:
+ * - `hasDevice` — `user_devices` 행 존재 (푸시 토큰을 등록한 기기가 있나)
+ * - `enabled` — `users.alarm_permission_granted` (OS 권한을 허용했나)
+ * - `imminentOn` — `users.alarm_config.imminentEnabled` (앱 안에서 임박 알림을 켰나)
+ *
+ * 셋을 한 응답으로 묶는 이유 — 「캘린더에 일정을 넣었어요」라고 말해 놓고 **알림이 안 가는
+ * 상태**면 그건 거짓말이 된다. 화면이 셋을 각각 물어보려면 왕복이 3번이고, 그 중 하나만
+ * 늦게 도착해도 잘못된 안내가 한 번 깜빡인다.
+ */
+export interface AlarmStatus {
+  /** 푸시를 받을 기기가 등록돼 있나 (웹 전용 사용자는 false) */
+  hasDevice: boolean;
+  /** OS 알림 권한을 허용했나 */
+  enabled: boolean;
+  /** 앱 안 「2시간 전 임박」 채널이 켜져 있나 */
+  imminentOn: boolean;
+}
 
 /**
  * 알림 설정 — users.alarm_config + 권한 상태 컬럼 관리.
@@ -17,7 +39,28 @@ export class AlarmConfigService {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(UserDevice)
+    private readonly deviceRepo: Repository<UserDevice>,
   ) {}
+
+  /**
+   * `GET /me/alarm-status` — 「폰 알림이 갈 수 있는 상태인가」 한 번에.
+   * 새 컬럼 없음 (기기 등록 + 권한 + 임박 토글에서 파생 — `AlarmStatus` 주석).
+   */
+  async getStatus(userId: string): Promise<AlarmStatus> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, alarmConfig: true, alarmPermissionGranted: true },
+    });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    const config = resolveAlarmConfig(user.alarmConfig);
+    const devices = await this.deviceRepo.count({ where: { userId } });
+    return {
+      hasDevice: devices > 0,
+      enabled: user.alarmPermissionGranted === true,
+      imminentOn: config.imminentEnabled,
+    };
+  }
 
   /** 사용자 alarm 설정 조회 (NULL → 기본값 merge) */
   async get(userId: string): Promise<AlarmConfig> {

@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { DailyNote } from '../calendar/daily-note.entity';
+import { hourSlotToTime } from '../calendar/hour-slot.util';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { Notification } from './notification.entity';
 import { User } from '../users/user.entity';
@@ -16,16 +18,20 @@ import {
   hasKstTime,
   loadSentImminentRefIdsToday,
 } from './imminent.util';
-import { formatKstDateTime } from '../common/datetime';
+import {
+  formatKstDateTime,
+  kstWallClockToDate,
+  toKstDateString,
+} from '../common/datetime';
 
 /** cron 주기 = 판정 윈도우 (15분) */
 const WINDOW_MS = 15 * 60 * 1000;
 
 interface ImminentCandidate {
   userId: string;
-  /** dedup 키 조각 — stepId | examId */
+  /** dedup 키 조각 — stepId | examId | `note:{noteId}` */
   refId: string;
-  kind: 'deadline' | 'interview' | 'resultDate' | 'exam';
+  kind: 'deadline' | 'interview' | 'resultDate' | 'exam' | 'note';
   eventTime: Date;
   /** 예: "카카오 1차 면접" · "TOEIC" */
   label: string;
@@ -69,6 +75,13 @@ export class ImminentReminderService {
     private readonly notificationRepo: Repository<Notification>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    /**
+     * 시각이 적힌 캘린더 메모 — 지금까지 **어떤 임박 알림도 못 받던 갈래**다.
+     * 공고 카드가 발표·검진일을 여기에 넣기 시작하면서 필요해졌지만(정정 12),
+     * 손으로 「14:00 스터디」를 적어 둔 메모도 같이 혜택을 본다.
+     */
+    @InjectRepository(DailyNote)
+    private readonly noteRepo: Repository<DailyNote>,
     private readonly dispatch: NotificationDispatchService,
   ) {}
 
@@ -132,6 +145,9 @@ export class ImminentReminderService {
         location: exam.location,
         deepLink: '/calendar',
       });
+    }
+    for (const note of await this.findNotesInWindow(from, to)) {
+      candidates.push(note);
     }
 
     if (candidates.length === 0) {
@@ -202,6 +218,52 @@ export class ImminentReminderService {
     return { processedUsers: users.length, sentImminent: sent };
   }
 
+  /**
+   * 시각이 적힌 미완료 캘린더 메모 → 임박 후보.
+   *
+   * 🔴 **날짜 계산을 SQL 에 넣지 않는다.** `daily_notes` 는 `date`(달력 날짜) + `hour_slot`
+   * (30분 슬롯 정수)로 **KST 벽시각을 조각내어** 저장한다. 이걸 SQL 안에서 timestamptz 로
+   * 합치려면 오프셋 산술이 들어가고, 그건 2026-07-19 이중 체인 사고와 정확히 같은 자리다.
+   * 창에 걸릴 수 있는 KST 날짜는 **최대 2개**(자정을 가로지를 때)이므로, 그 날짜의 메모만
+   * 끌어와 `kstWallClockToDate` 로 합친 뒤 JS 에서 창을 판정한다.
+   *
+   * 🔴 `hasKstTime()` 을 쓰지 않는다. 스텝·시험은 「자정 정각 = 날짜만 지정」이라는 저장
+   * 관례가 있어서 그 판정이 필요하지만, 메모는 `hour_slot IS NOT NULL` 자체가 **사용자가
+   * 시각을 골랐다**는 명시 신호다. 자정(슬롯 −12)을 고른 메모를 그 관례로 지우면
+   * 사용자가 켠 알림을 서버가 임의로 끄는 셈이 된다.
+   */
+  private async findNotesInWindow(
+    from: Date,
+    to: Date,
+  ): Promise<ImminentCandidate[]> {
+    // 창(15분)이 걸치는 KST 날짜 — 보통 1개, 자정 근처에서만 2개
+    const days = Array.from(
+      new Set([toKstDateString(from), toKstDateString(to)]),
+    );
+    const notes = await this.noteRepo.find({
+      where: { date: In(days), isDone: false, hourSlot: Not(IsNull()) },
+    });
+
+    const out: ImminentCandidate[] = [];
+    for (const n of notes) {
+      const time = hourSlotToTime(n.hourSlot);
+      if (!time) continue;
+      const eventTime = kstWallClockToDate(`${n.date}T${time}`);
+      if (eventTime < from || eventTime >= to) continue;
+      out.push({
+        userId: n.userId,
+        // 스텝·시험 id 와 섞이지 않게 접두어를 붙인다 (dedup 키가 payload.refId 하나뿐이다)
+        refId: `note:${n.id}`,
+        kind: 'note',
+        eventTime,
+        label: n.content,
+        location: null,
+        deepLink: '/calendar',
+      });
+    }
+    return out;
+  }
+
   /** 이벤트시각 − 2h ∈ [now, now+15m) — 과거 윈도우는 false (지연 폭주 방지) */
   private isInWindow(eventTime: Date, now: Date): boolean {
     const lead = eventTime.getTime() - IMMINENT_LEAD_MS;
@@ -222,6 +284,15 @@ export class ImminentReminderService {
         return toggles.exam;
       case 'resultDate':
         return toggles.resultDate;
+      case 'note':
+        /**
+         * 🔴 캘린더 메모에는 **유형 토글이 없다.** `eventToggles.todo` 는 아침 브리핑의
+         * 「오늘 할 일」 목록(시각 없는 메모)을 켜고 끄는 값인데, 여기 오는 것은 시각이
+         * 박힌 **일정**이다. 그 토글에 묶으면 「할 일 목록은 그만 보고 싶다」가
+         * 「발표 2시간 전 알림도 끈다」로 번역된다 — 사용자가 하지 않은 말이다.
+         * 채널 토글(`imminentEnabled`) 하나로 켜고 끈다 (정정 12 ①).
+         */
+        return true;
     }
   }
 }

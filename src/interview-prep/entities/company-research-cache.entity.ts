@@ -79,6 +79,19 @@ export class CompanyResearchCache {
   @Column({ name: 'is_alias', type: 'boolean', default: false })
   isAlias: boolean;
 
+  /**
+   * 시드 본명의 **표시용 표기** (예: 'sk hynix' 별칭 행 → 'SK하이닉스'). `company_name` 은 소문자 키라
+   * 화면에 못 쓴다. 시드가 만든 행(본명·별칭)에만 있고, 사용자가 직접 조사한 행은 null.
+   * 공고 붙여넣기가 파싱한 회사명을 「우리가 조사해 둔 회사」 표기로 되돌릴 때 쓴다 (2026-08-30).
+   */
+  @Column({
+    name: 'canonical_name',
+    type: 'varchar',
+    length: 120,
+    nullable: true,
+  })
+  canonicalName: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

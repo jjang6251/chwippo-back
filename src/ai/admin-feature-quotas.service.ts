@@ -29,6 +29,9 @@ const VALID_FEATURES: LlmFeature[] = [
   // admin 이 못 고치는 상태였다. 모든 LLM caller 는 admin 한도 조절이 가능해야 한다.
   'interview_prep_answer',
   'jobposting_parse',
+  // 2026-08-29 신설 — 신설과 **같은 커밋**에서 등록한다. `interview_prep_answer` 가
+  // 3주간 admin 통제 밖에 있었던 것(행은 있는데 못 고침)이 정확히 이 목록 누락이었다.
+  'jobposting_card',
   'note_ai_action',
 ];
 

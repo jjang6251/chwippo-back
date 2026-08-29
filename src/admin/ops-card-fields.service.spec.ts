@@ -29,6 +29,8 @@ interface DetailOver {
   status?: string;
   template_id?: string | null;
   created_via?: string | null;
+  /** 공고 붙여넣기 관측 메타 (2026-08-29). 공고 경로가 아닌 카드는 null */
+  posting_meta?: unknown;
   /** ARRAY_AGG 결과 — 스텝이 없으면 드라이버가 null 을 준다 (빈 배열이 아니다) */
   step_names?: string[] | null;
 }
@@ -42,6 +44,7 @@ function detail(over: DetailOver = {}) {
     status: 'IN_PROGRESS',
     template_id: null,
     created_via: null,
+    posting_meta: null,
     step_names: null,
     ...over,
   };
@@ -67,11 +70,15 @@ describe('OpsCardFieldsService', () => {
   let service: OpsCardFieldsService;
   let query: jest.Mock;
 
-  /** 세 쿼리(집계·상세·제외)를 순서대로 돌려준다 — `Promise.all` 순서에 맞춘다 */
+  /**
+   * 네 쿼리(집계·상세·제외·공고 호출수)를 순서대로 돌려준다 — `Promise.all` 순서에 맞춘다.
+   * 순서가 어긋나면 전부 undefined 로 떨어지므로 여기가 곧 계약이다.
+   */
   function mockDb(
     detailRows: ReturnType<typeof detail>[],
     aggOver: Record<string, unknown> = {},
     excluded = { admin_cards: '0', sample_cards: '0' },
+    postingCallsOk = '0',
   ) {
     query.mockReset();
     query
@@ -79,7 +86,8 @@ describe('OpsCardFieldsService', () => {
         agg({ cards: String(detailRows.length), ...aggOver }),
       ])
       .mockResolvedValueOnce(detailRows)
-      .mockResolvedValueOnce([excluded]);
+      .mockResolvedValueOnce([excluded])
+      .mockResolvedValueOnce([{ n: postingCallsOk }]);
   }
 
   beforeEach(async () => {
@@ -469,6 +477,8 @@ describe('OpsCardFieldsService', () => {
       const r = await service.getCardFields();
 
       expect(Object.keys(r).sort()).toEqual([
+        // 공고 붙여넣기 3행 (2026-08-29 · 대장 21) — 최상위 분자·분모 쌍
+        'aiEditRate',
         'cards',
         'categoryVocab',
         'companyMatch',
@@ -478,6 +488,8 @@ describe('OpsCardFieldsService', () => {
         'generatedAt',
         'jobTitleTexts',
         'jobTitleVariance',
+        'needsRate',
+        'pasteConversion',
         'status',
         'stepProgress',
         'templateId',
@@ -679,6 +691,132 @@ describe('OpsCardFieldsService', () => {
       await service.getCardFields();
       expect(query.mock.calls.length).toBeGreaterThan(0);
       expect(afterFirst).toBeGreaterThan(0);
+    });
+  });
+  /**
+   * ── 공고 붙여넣기 3행 (2026-08-29 · 대장 21) ────────────────────────
+   *
+   * 답해야 하는 질문 셋:
+   * ① 파싱은 됐는데 **카드까지 갔나** (전환율) ② AI 값을 **얼마나 고치나** (품질)
+   * ③ **보완 질문**을 얼마나 하게 되나 (회사·직무를 못 찾는 비율)
+   *
+   * 🔴 % 를 만들지 않는다 — 분자·분모(`{count, total}`)만 준다. 분모가 0 이면 `null` —
+   * 「아무도 안 썼다」와 「썼는데 아무도 안 고쳤다」가 같아 보이면 안 된다.
+   */
+  describe('공고 붙여넣기 3행', () => {
+    const meta = (over: Record<string, unknown> = {}) => ({
+      filled: ['companyName', 'jobTitle'],
+      deadlineKind: 'fixed',
+      jobPicked: 'single',
+      companySource: 'parsed',
+      editedFields: [],
+      reviewedAt: null,
+      callCount: 1,
+      textHash: 'h',
+      noteIds: [],
+      extraDates: [],
+      orderConflict: false,
+      ...over,
+    });
+
+    const postingCard = (over: Record<string, unknown> = {}) =>
+      detail({ created_via: 'paste_posting', posting_meta: meta(over) });
+
+    it('① 전환율 — 분자는 공고 카드, 분모는 성공한 파싱 호출', async () => {
+      mockDb(
+        [postingCard(), detail({ created_via: 'add_modal' }), detail()],
+        {},
+        { admin_cards: '0', sample_cards: '0' },
+        '5',
+      );
+      const r = await service.getCardFields();
+      expect(r.pasteConversion).toEqual({ count: 1, total: 5 });
+    });
+
+    it('② 수정률 — 한 칸이라도 고쳤으면 분자에 든다', async () => {
+      mockDb(
+        [postingCard({ editedFields: ['steps'] }), postingCard()],
+        {},
+        undefined,
+        '2',
+      );
+      const r = await service.getCardFields();
+      expect(r.aiEditRate).toEqual({ count: 1, total: 2 });
+    });
+
+    it('③ 보완 질문 — 회사명을 적었거나 직무를 고른 카드만 (자동 확정은 물어본 적 없다)', async () => {
+      mockDb(
+        [
+          postingCard({ companySource: 'typed' }),
+          postingCard({ jobPicked: 'chosen' }),
+          postingCard({ jobPicked: 'typed' }),
+          postingCard({ jobPicked: 'profile' }),
+          postingCard(),
+        ],
+        {},
+        undefined,
+        '5',
+      );
+      expect((await service.getCardFields()).needsRate).toEqual({
+        count: 3,
+        total: 5,
+      });
+    });
+
+    it('🔴 분모 0 → null (「0%」로 접으면 표본이 없다는 사실이 사라진다)', async () => {
+      mockDb([detail(), detail({ created_via: 'add_modal' })]);
+      const r = await service.getCardFields();
+      expect(r.pasteConversion).toBeNull();
+      expect(r.aiEditRate).toBeNull();
+      expect(r.needsRate).toBeNull();
+    });
+
+    it('🔴 % 를 만들어 보내지 않는다 — 분자·분모 두 키뿐', async () => {
+      mockDb([postingCard()], {}, undefined, '1');
+      const r = await service.getCardFields();
+      expect(Object.keys(r.pasteConversion ?? {}).sort()).toEqual([
+        'count',
+        'total',
+      ]);
+    });
+
+    it('🔴 posting_meta 가 **문자열로 와도** 읽는다 (JSONB 드라이버 편차)', async () => {
+      mockDb(
+        [
+          detail({
+            created_via: 'paste_posting',
+            posting_meta: JSON.stringify(meta({ editedFields: ['steps'] })),
+          }),
+        ],
+        {},
+        undefined,
+        '1',
+      );
+      expect((await service.getCardFields()).aiEditRate).toEqual({
+        count: 1,
+        total: 1,
+      });
+    });
+
+    it('🔴 posting_meta 가 깨져 있어도 화면이 죽지 않는다 (행 하나로 500 금지)', async () => {
+      mockDb(
+        [
+          detail({ created_via: 'paste_posting', posting_meta: '{깨진 JSON' }),
+          detail({ created_via: 'paste_posting', posting_meta: 42 }),
+          detail({ created_via: 'paste_posting', posting_meta: null }),
+        ],
+        {},
+        undefined,
+        '3',
+      );
+      const r = await service.getCardFields();
+      expect(r.aiEditRate).toEqual({ count: 0, total: 3 }); // 카드로는 세되 세부는 「모른다」
+    });
+
+    it('created_via 분포에도 자동 편입된다 (별도 배선 없이)', async () => {
+      mockDb([postingCard(), postingCard()], {}, undefined, '2');
+      const r = await service.getCardFields();
+      expect(r.createdVia.distribution.paste_posting).toBe(2);
     });
   });
 });

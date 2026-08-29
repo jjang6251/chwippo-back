@@ -64,8 +64,20 @@ describe('AdminAiUsageService', () => {
     expect(result.totalCalls).toBe(100);
     expect(result.totalCostUsd).toBe(0.5);
     expect(result.byFeature).toEqual([
-      { feature: 'note_summary', calls: 80, costUsd: 0.4 },
-      { feature: 'coverletter', calls: 20, costUsd: 0.1 },
+      // 호출당 평균 — 총액만으로는 「많이 쓰여서 비싼 기능」과 「한 번이 비싼 기능」이
+      // 구분되지 않는다 (2026-08-29 · 공고 카드처럼 한도를 연 기능의 판정 근거)
+      {
+        feature: 'note_summary',
+        calls: 80,
+        costUsd: 0.4,
+        avgCostPerCall: 0.005,
+      },
+      {
+        feature: 'coverletter',
+        calls: 20,
+        costUsd: 0.1,
+        avgCostPerCall: 0.005,
+      },
     ]);
     expect(result.byStatus).toHaveLength(2);
   });
@@ -299,6 +311,67 @@ describe('AdminAiUsageService', () => {
       expect(result.daysInMonth).toBe(31); // 7월
       expect(result.daysElapsed).toBe(1);
 
+      jest.useRealTimers();
+    });
+  });
+  /**
+   * 기능별 월 비용 — 「이 기능을 한도 없이 열어도 되나」의 유일한 근거 (2026-08-29 · 대장 21).
+   *
+   * 🔴 전체 월 추정(`monthEstimate`)으로는 못 답한다. 공고 카드를 일 200(사실상 무제한)으로
+   * 연 뒤 「그래서 얼마 나가는데」를 물으면, 전체 합계는 자소서·면접에 묻혀 안 보인다.
+   */
+  describe('featureMonthCosts (기능별 월 누적·추정)', () => {
+    it('기능별 누적·추정·호출당 평균을 함께 준다', async () => {
+      jest.useFakeTimers();
+      // KST 2026-08-11 → 8월(31일) 중 11일 경과
+      jest.setSystemTime(new Date('2026-08-11T03:00:00Z'));
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([
+          { feature: 'jobposting_card', calls: '100', cost: '0.5' },
+          { feature: 'note_summary', calls: '10', cost: '0.1' },
+        ]),
+      );
+
+      const r = await service.featureMonthCosts();
+
+      expect(r.daysInMonth).toBe(31);
+      expect(r.daysElapsed).toBe(11);
+      expect(r.rows[0]).toMatchObject({
+        feature: 'jobposting_card',
+        calls: 100,
+        monthToDateCost: 0.5,
+        avgCostPerCall: 0.005,
+      });
+      // 누적 / 경과일 × 그달 총일수 — 전체 추정과 **같은 산식**이어야 합이 맞는다
+      expect(r.rows[0].monthProjectedCost).toBeCloseTo((0.5 / 11) * 31, 10);
+      jest.useRealTimers();
+    });
+
+    it('호출 0 인 기능의 평균은 null (0 으로 채우면 「공짜」로 보인다)', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(
+        makeQb([{ feature: 'note_ai_action', calls: '0', cost: '0' }]),
+      );
+      const r = await service.featureMonthCosts();
+      expect(r.rows[0].avgCostPerCall).toBeNull();
+      expect(r.rows[0].monthProjectedCost).toBe(0);
+    });
+
+    it('한 건도 없으면 빈 목록 (크래시 없음)', async () => {
+      repo.createQueryBuilder.mockReturnValueOnce(makeQb([]));
+      expect((await service.featureMonthCosts()).rows).toEqual([]);
+    });
+
+    it('🔴 월 경계는 KST — UTC 서버에서 매월 1일 0~9시에 전월로 새지 않는다', async () => {
+      jest.useFakeTimers();
+      // UTC 2026-07-31 16:00 = KST 2026-08-01 01:00
+      jest.setSystemTime(new Date('2026-07-31T16:00:00Z'));
+      repo.createQueryBuilder.mockReturnValueOnce(makeQb([]));
+
+      const r = await service.featureMonthCosts();
+
+      expect(r.monthStart).toBe('2026-07-31T15:00:00.000Z'); // KST 08-01 00:00
+      expect(r.daysInMonth).toBe(31); // 8월
+      expect(r.daysElapsed).toBe(1);
       jest.useRealTimers();
     });
   });

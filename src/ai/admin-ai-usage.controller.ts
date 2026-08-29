@@ -80,4 +80,10 @@ export class AdminAiUsageController {
   monthEstimate() {
     return this.service.monthEstimate();
   }
+
+  /** 기능별 이번 달(KST) 누적·월말 추정·호출당 평균 — 「무료로 풀어도 되나」의 근거 */
+  @Get('v2/feature-month')
+  featureMonth() {
+    return this.service.featureMonthCosts();
+  }
 }

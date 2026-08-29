@@ -6,11 +6,15 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, EntityManager } from 'typeorm';
+import { Repository, DataSource, EntityManager, In } from 'typeorm';
 import { LlmService } from '../ai/llm.service';
 import { CompaniesService } from '../companies/companies.service';
-import { Application } from './application.entity';
+import { kstWallClockToDate } from '../common/datetime';
+import { DailyNote } from '../calendar/daily-note.entity';
+import { Application, type PostingMeta } from './application.entity';
 import { ApplicationStep } from './application-step.entity';
+import { timeToHourSlot } from '../calendar/hour-slot.util';
+import type { CardDraft } from './job-posting-card.rules';
 import { StepChecklistItem } from './step-checklist-item.entity';
 import { ApplicationCoverletter } from './application-coverletter.entity';
 import { User } from '../users/user.entity';
@@ -435,9 +439,198 @@ export class ApplicationsService {
     });
   }
 
+  /**
+   * 공고 초안 → 카드 한 장 (**한 트랜잭션**).
+   *
+   * 기존 `create()` 를 확장하지 않고 별도 메서드로 둔 이유 — `create()` 는 템플릿 스텝만
+   * 만들 수 있고(`stepsForTemplate`), 커스텀 초기 스텝 경로가 아예 없다. 여기에 옵션을
+   * 얹으면 두 경로가 한 함수에서 서로를 밟는다 (`templateId` 와 `steps` 가 동시에 오면?).
+   *
+   * ## 🔴 왜 한 TX 인가 — 반쪽 카드는 되돌릴 방법이 없다
+   *
+   * 카드 + 전형 스텝 + **캘린더 메모**가 함께 생긴다. 메모 INSERT 가 실패했는데 카드가
+   * 남으면, 사용자에게는 「만들어졌다」로 보이면서 발표일만 조용히 빠진 카드가 된다.
+   * 그 사실을 알아챌 방법이 없으므로 전부 함께 롤백한다.
+   *
+   * ## 스텝과 캘린더 일정을 가르는 기준 (정정 11)
+   *
+   * **「내가 하는 것은 스텝, 기다리거나 가는 날은 일정」** — 발표·검진·입사는 스텝 바를
+   * 채우지 않고 `daily_notes` 로 간다. 예전 안은 스텝 상한 8 에서 넘치는 것을 **버렸는데**,
+   * 합격 발표일·신체검사일은 사용자에게 가장 중요한 날짜다. 이제 날짜는 하나도 안 버린다.
+   *
+   * `jobCategory` 는 **null 로 둔다** — 계열 판정 규칙(`classifyJob`)이 프론트에만 있고,
+   * 서버에 사본을 만들면 둘이 조용히 어긋난다. 프론트가 카드를 받아 쓰면서 채운다.
+   */
+  async createFromDraft(
+    userId: string,
+    draft: CardDraft,
+    opts: { textHash: string; callCount: 1 | 2 },
+  ): Promise<Application> {
+    if (!draft.companyName) {
+      // 여기 오면 호출부(needs 판정)가 깨진 것 — company_name 은 NOT NULL 이다
+      throw new BadRequestException('회사명이 필요해요.');
+    }
+    const companyName = draft.companyName;
+
+    const created = await this.dataSource.transaction(async (em) => {
+      const app = em.create(Application, {
+        userId,
+        companyName,
+        jobTitle: draft.jobTitle,
+        // 계열은 프론트 판정 — 서버가 추측해 넣지 않는다 (「사람 말만 볼펜」)
+        jobCategory: null,
+        status: 'IN_PROGRESS' as const,
+        jobUrl: draft.jobUrl,
+        needsDetail: !draft.jobTitle,
+        // 공고 경로는 템플릿을 쓰지 않는다 — 스텝이 공고에서 나온다
+        templateId: null,
+        createdVia: 'paste_posting' as const,
+        jobTitleSource: draft.jobTitle ? ('posting' as const) : null,
+        jobPosting: draft.jobPosting
+          ? { ...draft.jobPosting, parsedAt: new Date().toISOString() }
+          : null,
+      });
+      const saved = await em.save(Application, app);
+
+      // ① 전형 스텝
+      const steps = draft.steps.map((s, i) =>
+        em.create(ApplicationStep, {
+          applicationId: saved.id,
+          orderIndex: i,
+          name: s.name,
+          // 'YYYY-MM-DD' / 'YYYY-MM-DDTHH:mm' 는 **KST 벽시각**이다. 오프셋을 명시하지
+          // 않으면 서버 OS TZ 로 해석돼 UTC 서버에서 9시간 어긋난다 (KST-fixed 앱 규칙)
+          scheduledDate: s.date ? kstWallClockToDate(s.date) : null,
+          dateHint: s.dateHint,
+        }),
+      );
+      if (steps.length > 0) await em.save(ApplicationStep, steps);
+
+      // ② 캘린더 일정 (발표·검진·입사) — 카드와 FK 로 안 이어지므로 id 를 적어 둔다
+      const notes = draft.extraDates.map((e) =>
+        em.create(DailyNote, {
+          userId,
+          date: e.date,
+          hourSlot: timeToHourSlot(e.time),
+          content: `${companyName} · ${e.label}`.slice(0, 200),
+        }),
+      );
+      const savedNotes =
+        notes.length > 0 ? await em.save(DailyNote, notes) : [];
+
+      const postingMeta: PostingMeta = {
+        filled: draft.filled,
+        deadlineKind: draft.deadlineKind,
+        jobPicked: draft.jobPicked,
+        companySource: draft.companySource,
+        editedFields: [],
+        reviewedAt: null,
+        callCount: opts.callCount,
+        textHash: opts.textHash,
+        noteIds: savedNotes.map((n) => n.id),
+        extraDates: draft.extraDates.map((e, i) => ({
+          label: e.label,
+          date: e.date,
+          noteId: savedNotes[i]?.id ?? '',
+        })),
+        orderConflict: draft.orderConflict,
+      };
+      await em.update(Application, { id: saved.id, userId }, { postingMeta });
+
+      const full = await em.findOne(Application, {
+        where: { id: saved.id },
+        relations: ['steps'],
+      });
+      if (!full) throw new NotFoundException('카드를 찾을 수 없습니다.');
+      full.steps.sort((a, b) => a.orderIndex - b.orderIndex);
+      return full;
+    });
+
+    // aha moment 알림 — `create()` 와 같은 판정(실 카드 첫 장). best-effort
+    await this.notifyFirstRealCard(userId, companyName);
+    return this.withDomain(created);
+  }
+
+  /**
+   * `PATCH /applications/:id/posting-meta` — 확인·수정 기록 (멱등).
+   *
+   * 🔴 `editedFields` 는 **합집합으로 누적**한다. 마지막 요청으로 덮으면 마감을 고치고
+   * 직무를 고친 사용자가 「한 칸만 고쳤다」로 집계돼 수정률이 실제보다 낮게 나온다.
+   */
+  async updatePostingMeta(
+    userId: string,
+    id: string,
+    dto: { reviewed?: boolean; editedFields?: string[] },
+  ): Promise<Application> {
+    const app = await this.findEntity(userId, id);
+    if (!app.postingMeta) {
+      throw new BadRequestException('공고로 만든 카드가 아니에요.');
+    }
+    const merged: PostingMeta = {
+      ...app.postingMeta,
+      reviewedAt:
+        dto.reviewed === true
+          ? (app.postingMeta.reviewedAt ?? new Date().toISOString())
+          : app.postingMeta.reviewedAt,
+      editedFields: Array.from(
+        new Set([
+          ...app.postingMeta.editedFields,
+          ...(dto.editedFields ?? []).map((f) => f.trim()).filter(Boolean),
+        ]),
+      ),
+    };
+    await this.appRepo.update({ id, userId }, { postingMeta: merged });
+    return this.findOne(userId, id);
+  }
+
+  /**
+   * 되돌리기 포함 카드 삭제 (soft delete).
+   *
+   * 🔴 공고로 만든 카드는 **캘린더 메모까지 지운다.** 메모는 카드와 FK 로 이어져 있지
+   * 않아서(daily_notes 는 카드를 모른다) 여기서 지우지 않으면 카드를 되돌린 뒤에도
+   * 「무신사 · 서류 합격 발표」가 캘린더에 영영 남는다.
+   *
+   * 🔴 `userId` 를 WHERE 에 다시 건다 — `noteIds` 는 JSONB 안의 값이라 **DB 가 소유를
+   *    보장하지 않는다.** 조작된 메타에 타인의 note id 가 섞여 있어도 본인 것만 지워진다.
+   */
   async remove(userId: string, id: string) {
     const app = await this.findEntity(userId, id);
-    await this.appRepo.softRemove(app);
+    const noteIds = app.postingMeta?.noteIds ?? [];
+    await this.dataSource.transaction(async (em) => {
+      if (noteIds.length > 0) {
+        await em.delete(DailyNote, { id: In(noteIds), userId });
+      }
+      await em.softRemove(app);
+    });
+  }
+
+  /** 실 카드 첫 장이면 growth 알림 (집계 실패는 무시 — 카드 생성은 이미 끝났다) */
+  private async notifyFirstRealCard(
+    userId: string,
+    companyName: string,
+  ): Promise<void> {
+    try {
+      const realCount = await this.appRepo.count({
+        where: { userId, isSample: false },
+        withDeleted: true,
+      });
+      if (realCount !== 1) return;
+      await this.discord
+        .notify(
+          {
+            title: '🎯 첫 지원 카드 생성 (aha moment)',
+            color: DISCORD_COLORS.gold,
+            fields: [
+              { name: 'company', value: companyName, inline: true },
+              { name: 'userId', value: userId, inline: true },
+            ],
+          },
+          'growth',
+        )
+        .catch(() => undefined);
+    } catch {
+      // 집계 실패해도 카드 생성은 이미 완료 · 무시
+    }
   }
 
   /**
@@ -488,6 +681,10 @@ export class ApplicationsService {
       step.scheduledDate = dto.scheduledDate
         ? new Date(dto.scheduledDate)
         : null;
+      // 🔴 진짜 날짜가 들어오면 힌트는 사라진다. 「9월 초」와 「9/3」이 나란히 남으면
+      //    화면이 어느 쪽이 맞는지 답할 수 없고, 사용자가 방금 고친 값이 덜 확실해 보인다.
+      //    날짜를 비우는 편집(null)은 힌트를 건드리지 않는다 — 원래 정보가 되살아난다.
+      if (step.scheduledDate) step.dateHint = null;
     }
     if (dto.location !== undefined) {
       step.location = dto.location || null;

@@ -491,13 +491,17 @@ describe('JobPostingService', () => {
 
   // ── AI 안전 ──
 
-  it('FEATURE_MATRIX 등록 — light(openai gpt-4o-mini)·maxInput 8K·maxOutput 1K·temp 0.1', () => {
+  it('FEATURE_MATRIX 등록 — light(openai gpt-4o-mini)·maxInput 10K·maxOutput 1K·temp 0.1', () => {
     const cfg = getModelConfig('jobposting_parse', {
       get: () => undefined,
     } as unknown as ConfigService);
     expect(cfg.provider).toBe('openai');
     expect(cfg.model).toBe('gpt-4o-mini');
-    expect(cfg.maxInputTokens).toBe(8_000);
+    // 8,000 → 10,000 (2026-08-29). **동작 변화 0** — cap 검사가 `chars/3` 휴리스틱이라
+    // DTO 상한 10,000자를 ≈3,900 으로 추정해 애초에 이 값에 닿지 않는다. 실측은
+    // 0.79 토큰/자라 10,000자 ≈ 8,600 토큰이고, 8,000 이라 적어 두면 문서상 한도가
+    // 실효 한도와 다른 상태로 남는다.
+    expect(cfg.maxInputTokens).toBe(10_000);
     expect(cfg.maxOutputTokens).toBe(1_000);
     expect(cfg.temperature).toBe(0.1);
   });

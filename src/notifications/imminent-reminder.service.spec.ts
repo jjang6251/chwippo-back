@@ -5,6 +5,7 @@ import { mock } from 'jest-mock-extended';
 import { ImminentReminderService } from './imminent-reminder.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { DailyNote } from '../calendar/daily-note.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { Notification } from './notification.entity';
 import { User } from '../users/user.entity';
@@ -91,6 +92,7 @@ describe('ImminentReminderService — ② 2시간 전 리마인드', () => {
   let examRepo: jest.Mocked<Repository<ExamSchedule>>;
   let notificationRepo: jest.Mocked<Repository<Notification>>;
   let userRepo: jest.Mocked<Repository<User>>;
+  let noteRepo: jest.Mocked<Repository<DailyNote>>;
   let dispatch: jest.Mocked<NotificationDispatchService>;
   let stepQb: jest.Mocked<SelectQueryBuilder<ApplicationStep>>;
   let examQb: jest.Mocked<SelectQueryBuilder<ExamSchedule>>;
@@ -101,6 +103,8 @@ describe('ImminentReminderService — ② 2시간 전 리마인드', () => {
     examRepo = mock<Repository<ExamSchedule>>();
     notificationRepo = mock<Repository<Notification>>();
     userRepo = mock<Repository<User>>();
+    noteRepo = mock<Repository<DailyNote>>();
+    noteRepo.find.mockResolvedValue([]);
     dispatch = mock<NotificationDispatchService>();
 
     stepQb = mock<SelectQueryBuilder<ApplicationStep>>();
@@ -135,6 +139,7 @@ describe('ImminentReminderService — ② 2시간 전 리마인드', () => {
           useValue: notificationRepo,
         },
         { provide: getRepositoryToken(User), useValue: userRepo },
+        { provide: getRepositoryToken(DailyNote), useValue: noteRepo },
         { provide: NotificationDispatchService, useValue: dispatch },
       ],
     }).compile();
@@ -350,5 +355,133 @@ describe('ImminentReminderService — ② 2시간 전 리마인드', () => {
 
     const r = await service.sendImminentReminders(NOW);
     expect(r.sentImminent).toBe(0);
+  });
+  /**
+   * ── 시각 있는 캘린더 메모 (2026-08-29 · 대장 21 정정 12) ──────────────
+   *
+   * 🔴 **지금까지 어떤 임박 알림도 못 받던 갈래**다. 사용자가 「14:00 스터디」를 적어
+   * 둬도 당일 아침 브리핑에 한 줄 뜨는 게 전부였다. 공고 카드가 발표·검진일을 여기에
+   * 넣기 시작하면서 「캘린더에 넣었어요」가 실제 알림으로 이어져야 해서 붙였고,
+   * 손으로 적은 메모도 같이 혜택을 본다.
+   *
+   * NOW = 2026-07-04 12:00 KST · 윈도우 = 이벤트시각 ∈ [14:00, 14:15) KST
+   */
+  describe('캘린더 메모 갈래', () => {
+    const makeNote = (over: Partial<DailyNote> = {}): DailyNote => ({
+      id: 'n1',
+      userId: 'u1',
+      date: '2026-07-04',
+      hourSlot: 16, // (14-6)*2 = 16 → 14:00 KST = 정확히 2시간 뒤
+      content: '무신사 · 서류 합격 발표',
+      isDone: false,
+      createdAt: NOW,
+      ...over,
+    });
+
+    it('2시간 전 창에 든 메모를 발송한다 — 내용이 그대로 문구가 된다', async () => {
+      noteRepo.find.mockResolvedValue([makeNote()]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(1);
+      const [, , content] = dispatch.dispatch.mock.calls[0];
+      expect(content.title).toBe('⏰ 2시간 뒤');
+      expect(content.body).toBe('무신사 · 서류 합격 발표 14:00');
+      expect(content.deepLink).toBe('/calendar');
+    });
+
+    it('🔴 dedup 키에 접두어를 붙인다 — 스텝 id 와 섞이면 남의 알림을 삼킨다', async () => {
+      noteRepo.find.mockResolvedValue([makeNote()]);
+      await service.sendImminentReminders(NOW);
+      expect(payloadOf(dispatch.dispatch.mock.calls[0][2]).refId).toBe(
+        'note:n1',
+      );
+    });
+
+    it('같은 메모로 오늘 이미 보냈으면 다시 안 보낸다', async () => {
+      noteRepo.find.mockResolvedValue([makeNote()]);
+      notifQb.getMany.mockResolvedValue([makeSentRow('u1', 'note:n1')]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(0);
+    });
+
+    it('시각 없는 메모(hour_slot NULL)는 애초에 쿼리에서 빠진다', async () => {
+      await service.sendImminentReminders(NOW);
+      const where = noteRepo.find.mock.calls[0][0]?.where;
+      expect(where).toMatchObject({ isDone: false });
+      expect(JSON.stringify(where)).toContain('hourSlot');
+    });
+
+    it('완료한 메모는 안 보낸다 (쿼리 조건)', async () => {
+      await service.sendImminentReminders(NOW);
+      expect(noteRepo.find.mock.calls[0][0]?.where).toMatchObject({
+        isDone: false,
+      });
+    });
+
+    it('창 밖 메모는 걸러진다 (2시간 15분 뒤 = 다음 슬롯 몫)', async () => {
+      // 14:30 KST = NOW+150분 → lead 가 창(0~15분) 밖
+      noteRepo.find.mockResolvedValue([makeNote({ hourSlot: 17 })]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(0);
+    });
+
+    it('🔴 자정(슬롯 −12) 메모도 보낸다 — 스텝의 「자정 = 날짜만」 관례를 여기 적용하지 않는다', async () => {
+      // 2026-07-05 00:00 KST = NOW+12시간 → 창 밖이지만, **걸러지는 이유가 시각 판정이
+      // 아니라 창 판정**임을 확인한다. 창 안으로 옮기면 발송된다.
+      noteRepo.find.mockResolvedValue([
+        makeNote({ date: '2026-07-04', hourSlot: 16 }),
+        makeNote({ id: 'n2', date: '2026-07-05', hourSlot: -12 }),
+      ]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(1);
+      expect(payloadOf(dispatch.dispatch.mock.calls[0][2]).refId).toBe(
+        'note:n1',
+      );
+    });
+
+    it('임박 채널을 끄면 메모도 안 간다', async () => {
+      noteRepo.find.mockResolvedValue([makeNote()]);
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', { imminentEnabled: false }),
+      ]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(0);
+    });
+
+    it('🔴 유형 토글(할 일)을 껐다고 메모 임박이 막히지는 않는다 — 사용자가 하지 않은 말이다', async () => {
+      noteRepo.find.mockResolvedValue([makeNote()]);
+      userRepo.find.mockResolvedValue([
+        makeUser('u1', { eventToggles: { todo: false } }),
+      ]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(1);
+    });
+
+    it('창이 자정을 가로지르면 두 날짜를 조회한다 (KST 달력 날짜 기준)', async () => {
+      // 21:50 KST → 창 = [23:50, 00:05) → 7/4 와 7/5 둘 다 필요
+      const nearMidnight = new Date('2026-07-04T12:50:00Z'); // 21:50 KST
+      await service.sendImminentReminders(nearMidnight);
+      const where = noteRepo.find.mock.calls[0][0]?.where;
+      expect(JSON.stringify(where)).toContain('2026-07-04');
+      expect(JSON.stringify(where)).toContain('2026-07-05');
+    });
+
+    it('스텝·시험과 함께 있어도 각각 발송된다 (기존 갈래 회귀)', async () => {
+      stepQb.getMany.mockResolvedValue([makeStep({})]);
+      examQb.getMany.mockResolvedValue([makeExam()]);
+      noteRepo.find.mockResolvedValue([makeNote()]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(3);
+    });
+
+    it('본인 메모만 자기 알림으로 간다', async () => {
+      noteRepo.find.mockResolvedValue([
+        makeNote({ id: 'n1', userId: 'u1' }),
+        makeNote({ id: 'n2', userId: 'u2' }),
+      ]);
+      userRepo.find.mockResolvedValue([makeUser('u1', null)]);
+      const r = await service.sendImminentReminders(NOW);
+      expect(r.sentImminent).toBe(1);
+      expect(dispatch.dispatch.mock.calls[0][0].id).toBe('u1');
+    });
   });
 });

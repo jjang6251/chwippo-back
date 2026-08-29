@@ -93,6 +93,7 @@ describe('CompanyResearchService', () => {
     expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60일 남음
     optOut: false,
     isAlias: false,
+    canonicalName: null,
     hitCount: 5,
     createdAt: new Date(),
     updatedAt: new Date(),

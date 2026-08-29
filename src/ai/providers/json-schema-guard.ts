@@ -21,7 +21,8 @@
  */
 
 interface JsonSchemaNode {
-  type?: string;
+  /** JSON Schema 는 `type: ['object', 'null']` 같은 **배열**도 허용한다 (nullable 표현) */
+  type?: string | string[];
   required?: string[];
   properties?: Record<string, JsonSchemaNode>;
   items?: JsonSchemaNode;
@@ -37,8 +38,18 @@ function describeKind(value: unknown): string {
   return typeof value;
 }
 
-function typeMatches(value: unknown, type: string | undefined): boolean {
+/** `type` 을 항상 배열로 — 문자열 하나든 `['object','null']` 이든 같은 코드로 본다 */
+function typesOf(node: JsonSchemaNode): string[] {
+  if (Array.isArray(node.type)) return node.type;
+  return node.type ? [node.type] : [];
+}
+
+function typeMatches(
+  value: unknown,
+  type: string | string[] | undefined,
+): boolean {
   if (!type) return true; // type 미지정 노드는 통과
+  if (Array.isArray(type)) return type.some((t) => typeMatches(value, t));
   switch (type) {
     case 'array':
       return Array.isArray(value);
@@ -72,13 +83,22 @@ export function findSchemaViolation(
   path = '$',
 ): string | null {
   const node = schema as JsonSchemaNode;
+  const types = typesOf(node);
 
   if (!typeMatches(json, node.type)) {
-    return `${path}: expected ${node.type}, got ${describeKind(json)}`;
+    return `${path}: expected ${types.join('|')}, got ${describeKind(json)}`;
   }
 
+  /*
+   * 🔴 nullable 객체 (`type: ['object','null']` + properties) 가 null 로 오면 **여기서 끝**이다.
+   * 2026-08-30 실사고: 공고 카드의 날짜 객체가 이 모양인데, 아래 object 분기가 `properties` 만 보고
+   * 들어가 `expected object, got null` 을 던졌다 — 날짜 없는 단계가 하나라도 있으면 실서비스 호출이
+   * 전부 실패했다. E2E 는 mock provider 가 이 가드를 안 거쳐 원리적으로 못 잡았다.
+   */
+  if (json === null && types.includes('null')) return null;
+
   // object — required 존재 확인 후 각 property 재귀
-  if (node.type === 'object' || node.properties) {
+  if (types.includes('object') || node.properties) {
     if (typeof json !== 'object' || json === null || Array.isArray(json)) {
       return `${path}: expected object, got ${describeKind(json)}`;
     }
@@ -98,7 +118,7 @@ export function findSchemaViolation(
   }
 
   // array — 원소마다 재귀 (잘리면 마지막 원소가 불완전한 경우가 많다)
-  if (node.type === 'array' && node.items && Array.isArray(json)) {
+  if (types.includes('array') && node.items && Array.isArray(json)) {
     for (let i = 0; i < json.length; i++) {
       const violation = findSchemaViolation(
         json[i],
