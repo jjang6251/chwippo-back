@@ -8,6 +8,7 @@ import { MyinfoModule } from '../myinfo/myinfo.module';
 import { Application } from './application.entity';
 import { User } from '../users/user.entity';
 import { InterviewPrepSession } from '../interview-prep/entities/interview-prep-session.entity';
+import { CompanyResearchCache } from '../interview-prep/entities/company-research-cache.entity';
 import { ApplicationStep } from './application-step.entity';
 import { StepChecklistItem } from './step-checklist-item.entity';
 import { StepNoteSheet } from './step-note-sheet.entity';
@@ -32,6 +33,10 @@ import { CoverletterChatCleanupCron } from './coverletter-chat-cleanup.cron';
 import { CoverletterGenerationStuckCron } from './coverletter-generation-stuck.cron';
 import { JobPostingController } from './job-posting.controller';
 import { JobPostingService } from './job-posting.service';
+import { JobPostingCardController } from './job-posting-card.controller';
+import { JobPostingCardService } from './job-posting-card.service';
+import { PostingDraftStore } from './posting-draft.store';
+import { DailyNote } from '../calendar/daily-note.entity';
 import { StepAiActionController } from './step-ai-action.controller';
 import { StepNoteSheetsController } from './step-note-sheets.controller';
 import { StepNoteSheetsService } from './step-note-sheets.service';
@@ -55,6 +60,13 @@ import { StepNoteSheetsService } from './step-note-sheets.service';
       User,
       InterviewPrepSession,
       Award,
+      // 공고 붙여넣기 회사명 정규화 — 서비스가 아니라 **엔티티만** 등록해 레포를 직접 읽는다
+      // (InterviewPrepModule 과는 이미 forwardRef 로 얽혀 있어 표면을 더 늘리지 않는다)
+      CompanyResearchCache,
+      // 공고 → 카드: 발표·검진 일정을 캘린더 메모로 만든다 (카드와 같은 TX).
+      // CalendarModule 을 import 하지 않고 **엔티티만** 등록하는 이유는 위 User·
+      // InterviewPrepSession 과 같다 — 모듈을 끌어오면 전이 순환이 생긴다.
+      DailyNote,
     ]),
     // ActivityModule TypeOrmModule (ActivityLog/Reflection repo) — IDOR batch + ref source 조회
     forwardRef(() => ActivityModule),
@@ -68,6 +80,11 @@ import { StepNoteSheetsService } from './step-note-sheets.service';
     CompaniesModule,
   ],
   controllers: [
+    // 🔴 **`ApplicationsController` 보다 먼저**여야 한다. 저쪽의 `@Get(':id')` 가
+    //    `GET /applications/from-posting/pending` 을 먼저 잡으면 `ParseUUIDPipe` 가
+    //    400 을 던진다. Nest 는 이 배열 순서대로 라우트를 등록하므로 순서가 곧 계약이고,
+    //    `test/applications-from-posting.e2e-spec.ts` 가 실제 요청으로 이를 지킨다.
+    JobPostingCardController,
     ApplicationsController,
     ApplicationCoverlettersController,
     CoverletterSourceRefsController,
@@ -88,6 +105,8 @@ import { StepNoteSheetsService } from './step-note-sheets.service';
     CoverletterChatCleanupCron,
     CoverletterGenerationStuckCron,
     JobPostingService,
+    JobPostingCardService,
+    PostingDraftStore,
     StepNoteSheetsService,
   ],
   // F5 hard delete 가드가 ActivityLog/Reflection 서비스에서

@@ -28,6 +28,9 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     first_app_login_at: null,
     first_web_login_at: null,
     first_desktop_web_seen_at: null,
+    tour_seen_at: null,
+    tour_completed_at: null,
+    tour_last_step: null,
     cards: '0',
     sample_cards: '0',
     activity_logs: '0',
@@ -142,8 +145,111 @@ describe('OpsReachService', () => {
         },
         'activity',
       ],
+      // 앱 소개 투어 — 가입과 첫 카드 사이
+      [
+        '투어만 끝냄',
+        {
+          tourCompleted: true,
+          cards: 0,
+          activityLogs: 0,
+          coverletterQuestions: 0,
+          coverletterAnswers: 0,
+          aiSuccesses: 0,
+        },
+        'tour_completed',
+      ],
+      [
+        '투어 + 카드 → 카드가 이긴다',
+        {
+          tourCompleted: true,
+          cards: 1,
+          activityLogs: 0,
+          coverletterQuestions: 0,
+          coverletterAnswers: 0,
+          aiSuccesses: 0,
+        },
+        'card',
+      ],
     ])('%s → %s', (_label, input, expected) => {
       expect(resolveStage(input)).toBe(expected);
+    });
+  });
+
+  /**
+   * 🔴 투어 단계는 **소급 불가**다. 투어가 없던 시절 가입자는 `tour_completed_at` 이 NULL 이라
+   * 이 단계에서 빠지는 게 맞다 — 카드가 있다고 「투어 완료」로 세면 그 단계가 통째로 거짓이 된다.
+   */
+  describe('앱 소개 투어', () => {
+    it('완료자만 tour_completed 단계로 센다 (카드가 있어도 대신 세지 않는다)', async () => {
+      await setup([
+        rawRow({ id: 'a', tour_completed_at: new Date('2026-08-28') }),
+        rawRow({ id: 'b', cards: '3' }), // 투어 없이 카드만 (기존 사용자)
+      ]);
+      const res = await service.getReach();
+
+      expect(res.stageCounts.tour_completed).toBe(1);
+      expect(res.stageCounts.card).toBe(1);
+      expect(res.rows[0].tourCompleted).toBe(true);
+      expect(res.rows[1].tourCompleted).toBe(false);
+    });
+
+    it('이탈 장면 분포 — 만났지만 안 끝낸 사람만, 장면 오름차순', async () => {
+      await setup([
+        // 3장에서 이탈 2명
+        rawRow({ id: 'a', tour_seen_at: new Date(), tour_last_step: 3 }),
+        rawRow({ id: 'b', tour_seen_at: new Date(), tour_last_step: '3' }),
+        // 1장에서 이탈 1명
+        rawRow({ id: 'c', tour_seen_at: new Date(), tour_last_step: 1 }),
+        // 🔴 완료자는 lastStep 6 이 있어도 이탈이 아니다
+        rawRow({
+          id: 'd',
+          tour_seen_at: new Date(),
+          tour_completed_at: new Date(),
+          tour_last_step: 6,
+        }),
+        // 투어를 만난 적 없는 사람
+        rawRow({ id: 'e' }),
+      ]);
+      const res = await service.getReach();
+
+      expect(res.tourDropOff).toEqual([
+        { step: 1, count: 1 },
+        { step: 3, count: 2 },
+      ]);
+      // 이탈이 없는 장면은 행 자체를 만들지 않는다 (0 을 6칸 채우지 않는다)
+      expect(res.tourDropOff.map((d) => d.step)).not.toContain(6);
+    });
+
+    it('아무도 투어를 안 만났으면 빈 배열 (에러 아님)', async () => {
+      await setup([rawRow()]);
+      const res = await service.getReach();
+
+      expect(res.tourDropOff).toEqual([]);
+      expect(res.stageCounts.tour_completed).toBe(0);
+    });
+
+    it('SQL 이 투어 3컬럼을 실제로 가져온다', async () => {
+      await setup([rawRow()]);
+      await service.getReach();
+
+      const sql = query.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(sql).toContain('u.tour_seen_at');
+      expect(sql).toContain('u.tour_completed_at');
+      expect(sql).toContain('u.tour_last_step');
+    });
+
+    it('표가 잘려도 이탈 분포는 전체 기준이다', async () => {
+      await setup(
+        Array.from({ length: REACH_ROW_LIMIT + 5 }, (_, i) =>
+          rawRow({ id: `u${i}`, tour_seen_at: new Date(), tour_last_step: 2 }),
+        ),
+      );
+      const res = await service.getReach();
+
+      expect(res.rows).toHaveLength(REACH_ROW_LIMIT);
+      expect(res.tourDropOff).toEqual([
+        { step: 2, count: REACH_ROW_LIMIT + 5 },
+      ]);
     });
   });
 

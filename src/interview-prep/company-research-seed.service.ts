@@ -193,6 +193,8 @@ export class CompanyResearchSeedService implements OnApplicationBootstrap {
           existing.seedVersion = doc.version;
           // 기존 행에도 별칭 플래그를 갱신 (재적재 시 마킹 소급 적용).
           existing.isAlias = isAlias;
+          // 표시용 표기 — 별칭 행도 본명을 가리킨다 (공고 붙여넣기 회사명 정규화의 근거)
+          existing.canonicalName = entry.companyName;
           await this.cacheRepo.save(existing);
           result.updated += 1;
         } else {
@@ -207,6 +209,7 @@ export class CompanyResearchSeedService implements OnApplicationBootstrap {
               hitCount: 0,
               seedVersion: doc.version,
               isAlias,
+              canonicalName: entry.companyName,
             }),
           );
           result.inserted += 1;

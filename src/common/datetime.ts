@@ -233,6 +233,28 @@ export function startOfKstWeek(tz: Tz = APP_TIMEZONE): Date {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// 파싱 — 벽시각 문자열 → Date
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * `'YYYY-MM-DD'` 또는 `'YYYY-MM-DDTHH:mm'` (KST **벽시각**) → `Date`.
+ *
+ * 🔴 `new Date('2026-09-14T18:00')` 를 그냥 쓰면 안 된다 — 오프셋이 없는 datetime 문자열은
+ * **실행 환경의 로컬 TZ** 로 해석된다. 운영 컨테이너는 UTC 라 KST 18:00 이 UTC 18:00
+ * (= KST 다음날 03:00) 으로 저장되어 알림이 9시간 어긋난다. 로컬(KST) 에서는 멀쩡해서
+ * 안 들킨다 — 정확히 D-day 계산 인라인 사고와 같은 모양이다.
+ *
+ * 날짜만 오면 그날 자정(KST) 으로 본다 — date-only 저장 관례(`T00:00:00+09:00`)와 같고,
+ * 임박 알림의 `hasKstTime()` 이 그 값을 「시간 없는 이벤트」로 정확히 걸러 준다.
+ */
+export function kstWallClockToDate(value: string, tz: Tz = APP_TIMEZONE): Date {
+  const [ymd, hm] = value.split('T');
+  const offset = getTimezoneOffsetString(tz);
+  const time = /^\d{2}:\d{2}$/.test(hm ?? '') ? `${hm}:00` : '00:00:00';
+  return new Date(`${ymd}T${time}${offset}`);
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // 표시
 // ────────────────────────────────────────────────────────────────────────
 

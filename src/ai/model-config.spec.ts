@@ -89,7 +89,18 @@ describe('model-config FEATURE_MATRIX', () => {
     jobposting_parse: {
       provider: 'openai',
       model: 'gpt-4o-mini',
-      maxIn: 8_000,
+      // 8,000 → 10,000 (2026-08-29). 동작 변화 0 — cap 검사가 chars/3 휴리스틱이라
+      // DTO 상한 10,000자를 ≈3,900 으로 추정해 애초에 안 닿는다. 실측(0.79 토큰/자)에
+      // 맞춘 표기라 「문서상 한도 ≠ 실효 한도」 상태를 없앤다
+      maxIn: 10_000,
+      maxOut: 1_000,
+    },
+    // 공고 → 카드 (2026-08-29 · 대장 21). 파서와 같은 모델·온도지만 **키를 나눈다** —
+    // 기능별 비용·전환율을 따로 재야 하기 때문 (한 키면 두 기능 단가가 섞인다)
+    jobposting_card: {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      maxIn: 10_000,
       maxOut: 1_000,
     },
     note_ai_action: {
@@ -267,6 +278,7 @@ const EXPECTED_KEYS: Record<ActiveLlmFeature, true> = {
   interview_prep_followup: true,
   interview_prep_answer: true,
   jobposting_parse: true,
+  jobposting_card: true,
   note_ai_action: true,
 };
 
@@ -354,7 +366,7 @@ describe('ActiveLlmFeature 경계', () => {
    * 어긋나면 admin 화면에 **설정할 수 없는 행**이나 **화면에 없는 설정**이 생긴다.
    * (마이그레이션 1784600000000 이 DB 쪽 6행을 지웠다)
    */
-  it('매트릭스는 살아있는 10개뿐이다', () => {
+  it('매트릭스는 살아있는 11개뿐이다', () => {
     expect(Object.keys(EXPECTED_KEYS).sort()).toEqual(
       [
         'coverletter_chat',
@@ -364,6 +376,7 @@ describe('ActiveLlmFeature 경계', () => {
         'interview_prep_answer', // v2 (2026-08-06) 신설 — on-demand 답변 생성
         'interview_prep_followup',
         'interview_prep_session',
+        'jobposting_card', // 공고 → 카드 (2026-08-29) 신설
         'jobposting_parse',
         'note_ai_action', // 노트 AI 패널 (2026-08-19) 신설
         'note_summary',

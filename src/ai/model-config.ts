@@ -193,13 +193,40 @@ const FEATURE_MATRIX: Record<ActiveLlmFeature, ModelConfig> = {
     maxOutputTokens: 8_000,
     temperature: 0.5,
   },
-  // 공고 요건 파싱 — note_summary 와 같은 light 모델(gpt-4o-mini). 붙여넣은 공고(최대 10K자 ≈ input 8K cap)
-  // 를 6필드 구조화 JSON 으로. 추출 태스크라 temperature 최저(0.1), output 은 요건 배열이라 1K.
+  /**
+   * 공고 요건 파싱 — note_summary 와 같은 light 모델(gpt-4o-mini).
+   * 붙여넣은 공고를 6필드 구조화 JSON 으로. 추출 태스크라 temperature 최저(0.1), output 은 요건 배열이라 1K.
+   *
+   * 🔴 `maxInputTokens` 8,000 → **10,000** (2026-08-29). 값을 바꿔도 **동작은 1도 안 변한다** —
+   *    cap 검사(`estimateTokens`)가 `chars/3` 휴리스틱이라 DTO 상한 10,000자를 ≈3,900 토큰으로
+   *    추정해 애초에 이 cap 에 닿지 않는다. 실측은 **0.79 토큰/자**(6,238자 → 4,900 토큰)라
+   *    10,000자 ≈ 8,600 토큰이고, 8,000 이라고 적어 두면 **문서상 한도가 실효 한도와 다른**
+   *    상태로 남는다. 실값에 맞춰 적어 둔다 (모델 컨텍스트 128K 안이라 실패 위험 없음).
+   *    🔵 별건 백로그: `estimateTokens` 한국어 비율 보정 — 전 기능 cap 이 같은 착시를 겪는다.
+   */
   jobposting_parse: {
     provider: 'openai',
     modelEnvKey: 'OPENAI_MODEL_LIGHT',
     defaultModel: 'gpt-4o-mini',
-    maxInputTokens: 8_000,
+    maxInputTokens: 10_000,
+    maxOutputTokens: 1_000,
+    temperature: 0.1,
+  },
+  /**
+   * 공고 붙여넣기 → 카드 자동 채움 (2026-08-29 · 대장 21).
+   *
+   * `jobposting_parse` 와 **같은 모델·같은 온도**지만 feature 키를 나눈다 — 요건 6필드만
+   * 뽑는 저쪽과 달리 여기는 회사·직무·마감·전형 단계·날짜까지 한 번에 뽑고, 비용·전환율을
+   * **기능별로 따로** 재야 하기 때문이다(`/ops/ai-usage` 기능별 행). 한 키로 뭉치면
+   * 「카드 만들기가 비싼가」와 「요건 정리가 비싼가」가 같은 숫자가 된다.
+   *
+   * output 1K — 스텝 10개 + 요건 6필드 구조가 실측 최대 ≈700 토큰(v3 픽스처 18건).
+   */
+  jobposting_card: {
+    provider: 'openai',
+    modelEnvKey: 'OPENAI_MODEL_LIGHT',
+    defaultModel: 'gpt-4o-mini',
+    maxInputTokens: 10_000,
     maxOutputTokens: 1_000,
     temperature: 0.1,
   },

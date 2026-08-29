@@ -7,7 +7,10 @@ import {
   normalizeCompanyName,
 } from './utils/company-name-match';
 import { JOB_CATEGORIES } from '../users/signup-job-categories.const';
-import { APPLICATION_TEMPLATE_IDS } from '../applications/application-templates';
+import {
+  APPLICATION_TEMPLATES,
+  APPLICATION_TEMPLATE_IDS,
+} from '../applications/application-templates';
 
 /**
  * 카드 입력 실태 — **사용자가 카드에 무엇을 실제로 채우는가**.
@@ -57,6 +60,20 @@ export interface FieldFill {
   filled: number;
 }
 
+/**
+ * 분자·분모 한 쌍 — **% 를 만들지 않는다** (이 화면 전체 규칙).
+ *
+ * 🔴 분모가 작을 때 % 가 혼자 돌아다니면 과대해석을 부른다. 3장 중 1장을 고쳤는데
+ * 「수정률 33%」로 적히면 그게 표본 3개라는 사실이 사라진다. 표기(「N<30 은 % 금지」)는
+ * 분자·분모를 다 본 프론트가 정한다.
+ */
+export interface Ratio {
+  /** 분자 */
+  count: number;
+  /** 분모 — 0 이면 이 지표 자체가 `null` 로 나간다 */
+  total: number;
+}
+
 export interface CategoryVocabBucket {
   vocab: CategoryVocab;
   /** 이 갈래에 속한 **서로 다른 값**의 개수 */
@@ -103,6 +120,23 @@ export interface OpsCardFieldsResponse {
     groups: JobTitleVariantGroup[];
   };
 
+  /**
+   * 직무 원문 빈도 — **사전 어휘 작업의 재료**. 대표 표기는 최다 빈도의 원문 그대로.
+   *
+   * 위 `jobTitleVariance` 와 답하는 질문이 다르다. 저건 「한 사람이 흔들리나」라서
+   * 사용자별로 접고 포함 관계까지 본다. 여기는 **전체가 무슨 말을 쓰나** 이므로
+   * 표기 정규화가 같을 때만 접고 사용자는 안 본다.
+   *
+   * 이게 없으면 직군 「기타」를 고른 카드의 실체를 못 본다 — 채움 수만으로는
+   * 「적긴 적었다」까지고, 무엇을 적었는지는 목록으로만 보인다.
+   */
+  jobTitleTexts: {
+    /** 정규화(trim·lowercase·공백류 제거) 기준으로 접은 서로 다른 직무 수 */
+    distinct: number;
+    /** 빈도순 상위 (동률은 가나다). 상한 50 — 관측자가 훑는 목록 */
+    top: { value: string; cards: number }[];
+  };
+
   /** 카드를 만들고 **결과까지 기록하나** */
   status: Record<string, number>;
 
@@ -124,6 +158,47 @@ export interface OpsCardFieldsResponse {
   templateId: { recorded: number; distribution: Record<string, number> };
   createdVia: { recorded: number; distribution: Record<string, number> };
 
+  /**
+   * ① 파싱 → 카드 **전환율** — 분자: 만들어진 `paste_posting` 카드 ·
+   * 분모: 성공한 `jobposting_card` 호출.
+   *
+   * 공고를 붙였는데 카드가 안 만들어진 경우(보완 질문에서 닫음·`notPosting`·실패)가
+   * 여기서 드러난다. 분모가 0 이면 `null` — 「0%」와 「아직 아무도 안 썼다」는 다르다.
+   */
+  pasteConversion: Ratio | null;
+
+  /**
+   * ② **AI 값 수정률** — 분자: 사용자가 한 칸이라도 고친 카드 · 분모: 공고 카드 전체.
+   * 「잘 뽑는다」와 「매번 고친다」를 가르는 유일한 지표다.
+   */
+  aiEditRate: Ratio | null;
+
+  /**
+   * ③ **보완 질문 비율** — 분자: 회사명을 직접 적었거나 직무를 골라야 했던 카드 ·
+   * 분모: 공고 카드 전체. 파서가 회사·직무를 못 찾는 빈도.
+   */
+  needsRate: Ratio | null;
+
+  /**
+   * **추천 템플릿을 그대로 썼나** — 「맞는 템플릿이면 쓴다」 가설의 직접 근거.
+   *
+   * 🔴 `templateId.distribution` 만으로는 못 보는 것 — 그건 **무엇으로 시작했나**이고,
+   * 여기는 **그 뒤에 손댔나**다. 템플릿 신설(계열 14벌)이 값어치가 있으려면 「받은 대로
+   * 쓴다」가 성립해야 하는데, 스텝을 전부 갈아엎는다면 템플릿을 늘리는 건 헛수고다.
+   *
+   * 판정은 **스텝 이름 배열(orderIndex 순)이 템플릿과 정확히 같은가** 하나뿐이다.
+   * 이름을 한 글자만 고쳐도 「고쳤다」로 센다 — 느슨하게 접으면 이 지표가 답하려는
+   * 질문(손을 댔나)이 흐려진다.
+   */
+  templateUsage: {
+    /** 분모 — `template_id` 가 기록된 카드 (도입 이전 카드는 애초에 판정 불가) */
+    withTemplate: number;
+    /** 스텝이 템플릿 그대로인 카드 */
+    keptAsIs: number;
+    /** 템플릿별 — 어떤 템플릿이 잘 맞나 (count DESC) */
+    byTemplate: { templateId: string; count: number; kept: number }[];
+  };
+
   generatedAt: string;
 }
 
@@ -132,6 +207,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 /** 표시용 상한 — 관측자가 눈으로 훑는 목록이라 길어지면 못 읽는다 (집계는 전수 기준) */
 const TOP_LIMIT = 20;
 const VARIANT_GROUP_LIMIT = 30;
+/** 직무 원문은 사전 어휘를 뽑는 재료라 다른 목록(20)보다 넓게 본다 — 대신 `distinct` 가 전수를 지킨다 */
+const JOB_TITLE_TEXT_LIMIT = 50;
 
 interface AggRow {
   cards: string;
@@ -153,6 +230,13 @@ interface DetailRow {
   status: string;
   template_id: string | null;
   created_via: string | null;
+  /** `applications.posting_meta` — 공고 경로가 아닌 카드는 null */
+  posting_meta: unknown;
+  /**
+   * 스텝 이름 (orderIndex 순). 스텝이 없으면 드라이버가 `null` 을 준다
+   * (`ARRAY_AGG` 는 행이 0개일 때 NULL — 빈 배열이 아니다).
+   */
+  step_names: string[] | null;
 }
 
 /**
@@ -209,8 +293,9 @@ export class OpsCardFieldsService {
   }
 
   private async compute(): Promise<OpsCardFieldsResponse> {
-    const [aggRows, detailRows, excludedRows] = await Promise.all([
-      this.dataSource.query<AggRow[]>(`
+    const [aggRows, detailRows, excludedRows, postingCallRows] =
+      await Promise.all([
+        this.dataSource.query<AggRow[]>(`
         SELECT COUNT(*)::int                                        AS cards,
                COUNT(DISTINCT a.user_id)::int                       AS users,
                COUNT(*) FILTER (WHERE NULLIF(TRIM(a.job_title), '')    IS NOT NULL)::int AS job_title,
@@ -230,24 +315,40 @@ export class OpsCardFieldsService {
           ) s ON TRUE
          WHERE a.deleted_at IS NULL AND a.is_sample = false
       `),
-      // 어휘·표기·회사명 판정은 SQL 보다 코드가 정확하다 (포함 관계·사전 대조).
-      // admin 전용 + 5분 캐시라 전 행을 끌어와도 되지만, 카드가 수만 장이 되면
-      // 여기부터 손봐야 한다 (그때는 어휘 집계를 SQL GROUP BY 로 내린다).
-      this.dataSource.query<DetailRow[]>(`
+        // 어휘·표기·회사명 판정은 SQL 보다 코드가 정확하다 (포함 관계·사전 대조).
+        // admin 전용 + 5분 캐시라 전 행을 끌어와도 되지만, 카드가 수만 장이 되면
+        // 여기부터 손봐야 한다 (그때는 어휘 집계를 SQL GROUP BY 로 내린다).
+        this.dataSource.query<DetailRow[]>(`
         SELECT a.user_id, a.job_title, a.job_category, a.company_name,
-               a.status, a.template_id, a.created_via
+               a.status, a.template_id, a.created_via, a.posting_meta,
+               st.names AS step_names
           FROM applications a
           JOIN users u ON u.id = a.user_id AND u.role <> 'admin'
+          -- 스텝 이름을 orderIndex 순 배열로 접어 온다 — 「템플릿 그대로인가」 판정 재료.
+          -- 카드당 쿼리를 또 날리지 않기 위해 위 집계 쿼리와 같은 LATERAL 패턴을 쓴다.
+          LEFT JOIN LATERAL (
+            SELECT ARRAY_AGG(s.name ORDER BY s.order_index) AS names
+              FROM application_steps s WHERE s.application_id = a.id
+          ) st ON TRUE
          WHERE a.deleted_at IS NULL AND a.is_sample = false
       `),
-      this.dataSource.query<{ admin_cards: string; sample_cards: string }[]>(`
+        this.dataSource.query<{ admin_cards: string; sample_cards: string }[]>(`
         SELECT COUNT(*) FILTER (WHERE u.role = 'admin')::int    AS admin_cards,
                COUNT(*) FILTER (WHERE a.is_sample = true)::int  AS sample_cards
           FROM applications a
           JOIN users u ON u.id = a.user_id
          WHERE a.deleted_at IS NULL
       `),
-    ]);
+        // 「파싱→카드 전환율」의 **분모** — 성공한 공고 파싱 호출 수.
+        // 🔴 카드 쪽과 같은 제외 규칙(admin 제외)을 쓴다. 한쪽만 CEO 계정을 빼면
+        //    전환율이 100% 를 넘거나 바닥을 치는, 해석 불가능한 숫자가 나온다.
+        this.dataSource.query<{ n: string }[]>(`
+        SELECT COUNT(*)::int AS n
+          FROM llm_call_logs l
+          JOIN users u ON u.id = l.user_id AND u.role <> 'admin'
+         WHERE l.feature = 'jobposting_card' AND l.status = 'ok'
+      `),
+      ]);
 
     const agg = aggRows[0];
     const n = (v: string | number | undefined) => Number(v ?? 0);
@@ -267,6 +368,7 @@ export class OpsCardFieldsService {
       },
       categoryVocab: this.analyzeCategoryVocab(detailRows),
       jobTitleVariance: this.analyzeJobTitleVariance(detailRows),
+      jobTitleTexts: this.analyzeJobTitleTexts(detailRows),
       status: countBy(detailRows, (r) => r.status),
       stepProgress: {
         atFirstStep: n(agg?.at_first_step),
@@ -280,7 +382,58 @@ export class OpsCardFieldsService {
         APPLICATION_TEMPLATE_IDS,
       ),
       createdVia: this.analyzeRecorded(detailRows, (r) => r.created_via),
+      templateUsage: this.analyzeTemplateUsage(detailRows),
+      ...this.analyzePosting(detailRows, n(postingCallRows[0]?.n)),
       generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * 공고 붙여넣기 3행 — 전환율·수정률·보완 질문 비율.
+   *
+   * 🔴 `posting_meta` 는 JSONB 라 드라이버가 무엇을 줄지 타입이 보장하지 않는다
+   * (파싱된 객체일 수도, 문자열일 수도, null 일 수도). `as` 로 단정하면 옛 형태의
+   * 행 하나에 admin 화면이 통째로 500 이 된다 — 방어적으로 읽는다.
+   *
+   * 🔴 **분모가 0 이면 `null`** 이다. `{count: 0, total: 0}` 로 내보내면 화면이
+   * 0/0 을 그리게 되고, 「아무도 안 썼다」와 「썼는데 아무도 안 고쳤다」가 같아 보인다.
+   * 도입(2026-08-29) 이전에는 셋 다 `null` 인 것이 정상이다.
+   */
+  private analyzePosting(
+    rows: DetailRow[],
+    llmCallsOk: number,
+  ): Pick<
+    OpsCardFieldsResponse,
+    'pasteConversion' | 'aiEditRate' | 'needsRate'
+  > {
+    let cards = 0;
+    let edited = 0;
+    let askedFollowUp = 0;
+
+    for (const r of rows) {
+      if (r.created_via !== 'paste_posting') continue;
+      cards += 1;
+      const m = readPostingMeta(r.posting_meta);
+      if (!m) continue;
+      if (m.editedFields.length > 0) edited += 1;
+      // 보완 질문 = 회사명을 직접 적었거나(파서가 못 찾음) 직무를 골라야 했던 경우.
+      // `profile`·`single` 은 서버가 자동으로 정한 것이라 **물어본 적이 없다**
+      if (
+        m.companySource === 'typed' ||
+        m.jobPicked === 'chosen' ||
+        m.jobPicked === 'typed'
+      ) {
+        askedFollowUp += 1;
+      }
+    }
+
+    const ratio = (count: number, total: number): Ratio | null =>
+      total > 0 ? { count, total } : null;
+
+    return {
+      pasteConversion: ratio(cards, llmCallsOk),
+      aiEditRate: ratio(edited, cards),
+      needsRate: ratio(askedFollowUp, cards),
     };
   }
 
@@ -405,6 +558,57 @@ export class OpsCardFieldsService {
     return { usersWithJobTitle: byUser.size, usersWithVariants, groups };
   }
 
+  /**
+   * 사람들이 직무 칸에 **실제로 무슨 말을 적는가** — 사전 어휘 작업의 재료.
+   *
+   * 🔴 접는 기준은 `normalizeTitle` 뿐이다 — `isVariantOf`(포함 관계)를 여기서 쓰지 않는다.
+   * 흔들림 판정은 「한 사람이 같은 걸 다시 적었다」는 전제가 있어서 `백엔드` ⊂ `백엔드 개발자`
+   * 를 접어도 되지만, 전체를 훑는 이 목록에서 그렇게 접으면 **서로 다른 두 어휘가 한 줄로
+   * 사라진다.** 사전에 뭘 넣을지 정하려면 둘 다 보여야 한다.
+   *
+   * 대표 표기를 **최다 빈도의 원문 그대로** 두는 이유도 같다. 정규화된 키(`백엔드개발자`)를
+   * 보여주면 아무도 안 쓰는 표기가 사전 후보로 올라간다.
+   *
+   * `top` 은 잘라도 `distinct` 는 전수라, 목록이 상한에 닿았는지를 관측자가 알 수 있다.
+   */
+  private analyzeJobTitleTexts(
+    rows: DetailRow[],
+  ): OpsCardFieldsResponse['jobTitleTexts'] {
+    /** 정규화 키 → (원문 → 카드 수) */
+    const byKey = new Map<string, Map<string, number>>();
+
+    for (const r of rows) {
+      const raw = (r.job_title ?? '').trim();
+      if (!raw) continue;
+      const key = normalizeTitle(raw);
+      const texts = byKey.get(key) ?? new Map<string, number>();
+      texts.set(raw, (texts.get(raw) ?? 0) + 1);
+      byKey.set(key, texts);
+    }
+
+    const entries = [...byKey.values()].map((texts) => {
+      let cards = 0;
+      let value = '';
+      let best = 0;
+      for (const [raw, n] of texts) {
+        cards += n;
+        // 동률이면 가나다로 못 박는다 — 안 그러면 DB 가 준 행 순서에 따라 대표가 바뀐다
+        if (n > best || (n === best && raw.localeCompare(value) < 0)) {
+          best = n;
+          value = raw;
+        }
+      }
+      return { value, cards };
+    });
+
+    return {
+      distinct: entries.length,
+      top: entries
+        .sort((a, b) => b.cards - a.cards || a.value.localeCompare(b.value))
+        .slice(0, JOB_TITLE_TEXT_LIMIT),
+    };
+  }
+
   /** 회사명이 DART 사전에 있나 — `company-research-status` 와 같은 인덱스·정규화를 쓴다 */
   private analyzeCompanyMatch(
     rows: DetailRow[],
@@ -466,6 +670,92 @@ export class OpsCardFieldsService {
     }
     return { recorded, distribution };
   }
+
+  /**
+   * 템플릿을 **그대로 썼나** — 스텝 이름 배열이 템플릿과 정확히 같은지.
+   *
+   * 🔴 분모가 `template_id IS NOT NULL` 인 이유 — 컬럼 도입(2026-08-25) 이전 카드는
+   * 무엇으로 시작했는지 모른다. 그걸 분모에 넣으면 「안 쓴다」가 도입 이전 카드 수만큼
+   * 부풀어, 백필하지 않기로 한 결정이 통째로 무의미해진다.
+   *
+   * 🔴 **모르는 `template_id` 는 세지 않는다.** `stepsForTemplate` 은 모르는 id 에
+   * `general` 을 돌려주므로, 그대로 비교하면 옛 카드가 general 스텝을 갖고 있다는
+   * 이유만으로 「그대로 썼다」로 잡힌다 — 없는 사실을 만들어내는 셈이다.
+   */
+  private analyzeTemplateUsage(
+    rows: DetailRow[],
+  ): OpsCardFieldsResponse['templateUsage'] {
+    const per = new Map<string, { count: number; kept: number }>();
+    let withTemplate = 0;
+    let keptAsIs = 0;
+
+    for (const r of rows) {
+      const id = r.template_id;
+      if (!id) continue;
+      // Object.hasOwn 금지 대신 in 연산 — 프로토타입 키(constructor 등)를 막는다
+      const expected = Object.prototype.hasOwnProperty.call(
+        APPLICATION_TEMPLATES,
+        id,
+      )
+        ? APPLICATION_TEMPLATES[id]
+        : null;
+      if (!expected) continue;
+
+      withTemplate += 1;
+      const actual = r.step_names ?? [];
+      const kept =
+        actual.length === expected.length &&
+        actual.every((name, i) => name === expected[i]);
+      if (kept) keptAsIs += 1;
+
+      const bucket = per.get(id) ?? { count: 0, kept: 0 };
+      bucket.count += 1;
+      if (kept) bucket.kept += 1;
+      per.set(id, bucket);
+    }
+
+    return {
+      withTemplate,
+      keptAsIs,
+      byTemplate: [...per.entries()]
+        .map(([templateId, v]) => ({ templateId, ...v }))
+        // 동률은 id 가나다로 못 박는다 — DB 행 순서에 따라 순위가 흔들리지 않게
+        .sort(
+          (a, b) =>
+            b.count - a.count || a.templateId.localeCompare(b.templateId),
+        ),
+    };
+  }
+}
+
+/** 집계에 필요한 `posting_meta` 조각만 — 형태가 안 맞으면 null (행 하나로 화면이 죽지 않게) */
+interface PostingMetaView {
+  editedFields: string[];
+  companySource: string;
+  jobPicked: string | null;
+}
+
+/** JSONB 드라이버가 문자열을 줄 수도 있다 — 파싱 실패는 「모르는 행」으로 넘긴다 */
+function safeJsonParse(text: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function readPostingMeta(raw: unknown): PostingMetaView | null {
+  const v: unknown = typeof raw === 'string' ? safeJsonParse(raw) : raw;
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const o: Record<string, unknown> = { ...v };
+  return {
+    editedFields: Array.isArray(o.editedFields)
+      ? o.editedFields.filter((s): s is string => typeof s === 'string')
+      : [],
+    companySource: typeof o.companySource === 'string' ? o.companySource : '',
+    jobPicked: typeof o.jobPicked === 'string' ? o.jobPicked : null,
+  };
 }
 
 function countBy<T>(rows: T[], pick: (r: T) => string): Record<string, number> {

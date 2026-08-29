@@ -12,6 +12,7 @@ const FEATURE_LABEL: Partial<Record<LlmFeature, string>> = {
   interview_prep_followup: 'AI 꼬리질문',
   note_summary: 'AI 노트 요약',
   jobposting_parse: 'AI 공고 요건 정리',
+  jobposting_card: 'AI 공고로 카드 만들기',
   note_ai_action: '노트 AI',
 };
 

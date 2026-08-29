@@ -4,14 +4,21 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { User } from './user.entity';
 import { UserDeletionLog } from './user-deletion-log.entity';
 import { Application } from '../applications/application.entity';
 import { ApplicationStep } from '../applications/application-step.entity';
-import { stepsForTemplate } from '../applications/application-templates';
+import {
+  APPLICATION_TEMPLATE_IDS,
+  stepsForTemplate,
+  templateForSeries,
+} from '../applications/application-templates';
 import { UpdateDashboardConfigDto } from './dto/update-dashboard-config.dto';
 import { SignupAnswerDto } from './dto/signup-answer.dto';
+import { UpdateJobProfileDto } from './dto/update-job-profile.dto';
+import { TourProgressDto } from './dto/tour-progress.dto';
 import { pickSampleCompanies } from './signup-job-categories.const';
 import { StorageUsageService } from '../myinfo/storage-usage.service';
 import { FilesService } from '../files/files.service';
@@ -78,41 +85,75 @@ export class UsersService {
   }
 
   /**
-   * W1 — signup 1 질문 (관심 직군) 답변 저장 + 가상 회사 샘플 카드 자동 생성.
+   * signup 1 질문 답변 저장 — **두 경로가 한 메서드를 쓴다**.
    *
-   * - jobCategories=[] (건너뛰기) → 빈 array 저장 + 샘플 0개. onboardedAt = NOW
-   * - jobCategories=[…] + (otherText 옵션) → 첫 3 직군 매칭 샘플 카드 생성. onboardedAt = NOW
+   * | 경로 | 판별 | 만들어지는 카드 |
+   * |---|---|---|
+   * | 신 — 계열 1탭 | `seriesId` 있음 | 사용자가 **고른 진짜 회사**의 지원 예정(PLANNED) 카드 |
+   * | 구 — 21직군 칩 | `seriesId` 없음 | 가상 회사 샘플 카드 (`is_sample = true`) |
+   *
+   * 🔴 **`seriesId` 가 있으면 가상 샘플을 만들지 않는다.** 진짜 회사 카드와 `Sample Corp`
+   * 카드가 같이 깔리면 보드가 무엇이 진짜인지 알려주지 못한다 — 2단 보상이 샘플을 **대체**한다.
+   *
+   * 🔴 **새 경로도 `signup_job_categories` 에 `[]` 를 반드시 기록한다.** 「이미 답변했나」
+   * 판정이 그 컬럼의 NULL 여부 하나에 걸려 있어서, 안 쓰면 새 사용자가 온보딩을 몇 번이고
+   * 다시 보게 된다 (그리고 그때마다 카드가 또 생긴다).
+   *
+   * - 건너뛰기(`jobCategories` 미전송·`[]` · `seriesId` 없음) → 카드 0개. onboardedAt = NOW
    * - "기타" 미선택 + otherText 있음 → 400 (불일치)
+   * - `seriesId` 없이 `pickedCompanies` 만 → 400 (회사 목록은 계열에서 파생된다)
    * - 이미 답변한 user 재호출 → 400 (멱등 X, 명시적 에러)
    * - 트랜잭션 — users update + applications insert 둘 다 같은 TX
+   *
+   * 🔴 「이미 답변했나」는 **사전 조회가 아니라 UPDATE 한 방**으로 가른다 (`claimSignupAnswer`).
    */
   async signupAnswer(userId: string, dto: SignupAnswerDto): Promise<void> {
+    /* 존재 확인과 `onboardedAt` 을 읽으려고 한 번은 조회한다 — 「없는 사용자」는 400 이 아니라
+       404 여야 하고, 첫 온보딩 시각은 재기록하지 않기 때문이다.
+       🔴 다만 「이미 답변했나」 판정은 **여기서 하지 않는다** (아래 claim 이 원자적으로 한다). */
     const user = await this.repo.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
 
-    if (user.signupJobCategories !== null) {
-      throw new BadRequestException('이미 답변하셨어요.');
-    }
-
+    // 새 경로는 직군 칩을 안 보낸다 — 미전송을 「건너뛰기와 같은 []」로 읽는다
+    const jobCategories = dto.jobCategories ?? [];
     const otherText = dto.otherText?.trim() ?? '';
     const hasOther = otherText.length > 0;
-    const includesOther = dto.jobCategories.includes('기타');
+    const includesOther = jobCategories.includes('기타');
 
     if (hasOther && !includesOther) {
       throw new BadRequestException('기타 직군과 함께만 사용할 수 있습니다.');
     }
 
+    const seriesId = dto.seriesId ?? null;
+    const jobTitle = dto.jobTitle?.trim() || null;
+    const pickedCompanies = normalizePickedCompanies(dto.pickedCompanies);
+
+    if (!seriesId && pickedCompanies.length > 0) {
+      throw new BadRequestException('계열 없이 회사만 담을 수 없어요.');
+    }
+
+    if (seriesId) {
+      await this.saveSeriesAnswer(userId, user.onboardedAt, {
+        jobCategories,
+        seriesId,
+        jobTitle,
+        pickedCompanies,
+        templateId: dto.templateId ?? null,
+      });
+      return;
+    }
+
     await this.dataSource.transaction(async (em) => {
-      await em.update(User, userId, {
-        signupJobCategories: dto.jobCategories,
+      await this.claimSignupAnswer(em, userId, {
+        signupJobCategories: jobCategories,
         signupOtherText: hasOther ? otherText : null,
         onboardedAt: user.onboardedAt ?? new Date(),
       });
 
-      if (dto.jobCategories.length === 0) return;
+      if (jobCategories.length === 0) return;
 
       const picked = pickSampleCompanies(
-        dto.jobCategories,
+        jobCategories,
         hasOther ? otherText : undefined,
       );
 
@@ -157,6 +198,128 @@ export class UsersService {
   }
 
   /**
+   * 온보딩 답변 **선점** — 「이미 답변했나」를 UPDATE 한 방으로 가른다.
+   *
+   * ## 왜 사전 조회가 아니라 이것인가
+   *
+   * 예전엔 `findOneBy` 로 읽어 보고 `signup_job_categories` 가 null 이면 진행했다. 읽기와
+   * 쓰기 사이가 비어 있어서, 같은 사용자의 요청 두 개가 **둘 다 null 을 보고** 통과할 수
+   * 있었다 (더블 탭·재시도·모바일 웹뷰의 중복 전송). 그러면 답변은 한 번인데 **온보딩 카드가
+   * 두 벌** 생긴다 — 보드에 같은 회사가 두 장씩 깔린 채로 첫 화면을 만난다.
+   *
+   * ```sql
+   * UPDATE users SET … WHERE id = $1 AND signup_job_categories IS NULL
+   * ```
+   *
+   * 조건이 SQL 안에 있으므로 두 번째 요청은 첫 요청의 커밋을 기다렸다가 **0행**을 받는다
+   * (READ COMMITTED 에서 UPDATE 는 잠긴 행을 다시 평가한다). 0행 = 이미 답변 = 400 이고,
+   * 🔴 **카드를 만들기 전에** 던져야 같은 트랜잭션이 통째로 롤백된다.
+   *
+   * 「사용자 없음」은 여기서 400 이 되지 않는다 — 호출부가 먼저 404 로 걸러 낸다.
+   */
+  private async claimSignupAnswer(
+    em: EntityManager,
+    userId: string,
+    columns: QueryDeepPartialEntity<User>,
+  ): Promise<void> {
+    const result = await em.update(
+      User,
+      { id: userId, signupJobCategories: IsNull() },
+      columns,
+    );
+    if (!result.affected) {
+      throw new BadRequestException('이미 답변하셨어요.');
+    }
+  }
+
+  /**
+   * 신 경로 — 계열 1탭 + 2단 보상에서 고른 회사 → **지원 예정(PLANNED) 카드**.
+   *
+   * ## 왜 PLANNED 인가
+   *
+   * 사용자는 아직 지원하지 않았다. 「조사가 준비된 회사」를 담아둔 것뿐이라 `IN_PROGRESS`
+   * 로 만들면 가입 첫날 진행 중 카드 3장이 생겨 보드가 거짓말을 한다. PLANNED 는
+   * 「일단 적어두기」 자리이고, 지원을 시작할 때 `StartApplicationModal` 이 나머지를 받는다.
+   *
+   * ## 마감일이 없다
+   *
+   * 우리는 이 회사들의 공고 마감을 모른다. 샘플 카드처럼 +7/+14/+21 을 지어내면 D-day·
+   * 캘린더·알림이 전부 **없는 마감**을 기준으로 돈다. 스텝은 만들되 `scheduledDate` 는 전부 null.
+   *
+   * ## 🔴 `jobCategory` 를 채우지 않는다
+   *
+   * 계열 라벨(「의료·보건·복지」)을 직군 칸에 박으면 시스템 말이 저장으로 승격된다 —
+   * 화면에서 직무가 비었을 때 계열을 **표시**하는 fallback 이 그 역할을 맡는다(연필).
+   * 반대로 `jobTitle` 은 사람이 친 말이라 그대로 저장하고 출처를 `prefill` 로 남긴다.
+   *
+   * ## 템플릿은 프론트 판정을 **우선**한다
+   *
+   * 🔴 서버는 계열까지만 안다. 「승무원」처럼 **세밀 그룹 오버라이드**가 걸리는 직무는
+   * 프론트가 사전으로 판정해 보내 주지 않으면, 사용자가 방금 본 미리보기(항공 서비스)와
+   * 실제로 담긴 카드(영업·판매 계열)가 어긋난다. 그래서 아는 id 면 받고, 없거나 모르는
+   * id 면 계열 폴백으로 간다 — **검증은 두 겹**이다 (DTO `IsIn` + 여기 존재 확인).
+   */
+  private async saveSeriesAnswer(
+    userId: string,
+    existingOnboardedAt: Date | null,
+    answer: {
+      jobCategories: string[];
+      seriesId: string;
+      jobTitle: string | null;
+      pickedCompanies: string[];
+      /** 프론트가 직무 사전으로 확정한 템플릿 — 모르는 값이면 무시하고 계열로 간다 */
+      templateId: string | null;
+    },
+  ): Promise<void> {
+    const { jobCategories, seriesId, jobTitle, pickedCompanies } = answer;
+    const templateId =
+      answer.templateId && isKnownTemplate(answer.templateId)
+        ? answer.templateId
+        : templateForSeries(seriesId);
+    const steps = stepsForTemplate(templateId);
+
+    await this.dataSource.transaction(async (em) => {
+      await this.claimSignupAnswer(em, userId, {
+        // 🔴 새 경로도 반드시 기록한다 — 「이미 답변했나」 판정이 이 컬럼 하나에 걸려 있다
+        signupJobCategories: jobCategories,
+        signupOtherText: null,
+        signupSeriesId: seriesId,
+        signupJobTitle: jobTitle,
+        onboardedAt: existingOnboardedAt ?? new Date(),
+      });
+
+      for (const companyName of pickedCompanies) {
+        const app = em.create(Application, {
+          userId,
+          companyName,
+          jobTitle,
+          // 관측 전용 — 프리필로 나갈 값이라 「사람이 친 말」임을 남긴다
+          jobTitleSource: jobTitle ? 'prefill' : null,
+          jobCategory: null,
+          status: 'PLANNED',
+          isSample: false,
+          currentStepIndex: 0,
+          needsDetail: false,
+          templateId,
+          createdVia: 'onboarding_pick',
+        });
+        const saved = await em.save(Application, app);
+
+        for (let s = 0; s < steps.length; s++) {
+          const step = em.create(ApplicationStep, {
+            applicationId: saved.id,
+            orderIndex: s,
+            name: steps[s],
+            // 우리는 이 공고의 마감을 모른다 — 지어내지 않는다
+            scheduledDate: null,
+          });
+          await em.save(ApplicationStep, step);
+        }
+      }
+    });
+  }
+
+  /**
    * W1 — "전체 숨기기": 모든 sample 카드 soft delete + sample_cards_dismissed_at = NOW.
    * 멱등 (이미 dismiss 됨 → no-op 200).
    */
@@ -190,6 +353,35 @@ export class UsersService {
     if (user.calendarHomeIntroDismissedAt) return; // 멱등
     await this.repo.update(userId, {
       calendarHomeIntroDismissedAt: new Date(),
+    });
+  }
+
+  /**
+   * 앱 소개 투어 진행 기록 (`plans/app-tour.md`) — 투어가 **끝나는 순간 한 번**만 온다.
+   *
+   * | 컬럼 | 규칙 | 왜 |
+   * |---|---|---|
+   * | `tourSeenAt` | **첫 기록만 유지** (있으면 안 건드린다) | 「언제 처음 만났나」가 코호트 기준이다. 덮어쓰면 사라진다 |
+   * | `tourLastStep` | **최신값으로 갱신** | 알고 싶은 건 「마지막으로 어디까지 갔나」다 |
+   * | `tourCompletedAt` | 처음 완료한 시각만 | 두 번째 완료가 첫 완료를 지우면 깔때기가 뒤로 간다 |
+   *
+   * 멱등 — 다시 호출하면 `lastStep` 만 최신으로 바뀐다. 마지막 승(단일 UPDATE)이라
+   * 동시 요청도 안전하고, 값 3개가 한 행이라 트랜잭션이 필요 없다.
+   *
+   * 🔴 **다시 보기(`?replay=1`)는 프론트가 이걸 부르지 않는다** — 서버에 분기가 없는 이유다.
+   * 재생일 뿐인데 이탈 장면 분포를 오염시키면 관측이 거짓말을 한다.
+   */
+  async recordTour(userId: string, dto: TourProgressDto): Promise<void> {
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+    const now = new Date();
+    await this.repo.update(userId, {
+      tourSeenAt: user.tourSeenAt ?? now,
+      tourLastStep: dto.lastStep,
+      ...(dto.completed
+        ? { tourCompletedAt: user.tourCompletedAt ?? now }
+        : {}),
     });
   }
 
@@ -236,6 +428,48 @@ export class UsersService {
       .where('id = :userId', { userId })
       .andWhere('first_desktop_web_seen_at IS NULL')
       .execute();
+  }
+
+  /**
+   * 희망 직무·계열 변경 — 온보딩 이후 **바꾸는 유일한 경로**.
+   *
+   * ## 부분 갱신 — 🔴 `{...dto}` 로 merge 하면 안 된다
+   *
+   * `ValidationPipe(transform: true)` 가 만드는 건 plain object 가 아니라 **DTO 클래스
+   * 인스턴스**고, target 이 ES2022+ 라 `useDefineForClassFields` 가 켜져 있다. 즉
+   * 선언만 된 필드도 **own `undefined` 프로퍼티로 실재한다** — `'jobTitle' in dto` 는
+   * 안 보냈어도 `true` 고, spread 로 합치면 안 보낸 필드가 `undefined` 로 덮여
+   * 「직무만 고쳤는데 계열이 지워지는」 사고가 난다. 판정은 **값이 `undefined` 인가**로만 한다.
+   *
+   * - 미전송(`undefined`) → 그 컬럼은 손대지 않는다
+   * - `null` · 빈 문자열 · 공백만 → `null` 저장 (비우기)
+   * - 둘 다 미전송 → 400 (프론트의 no-op PATCH 를 조용히 삼키지 않는다)
+   * - 사용자 없음 → 404
+   *
+   * ## 온보딩 미완료 사용자도 허용한다
+   *
+   * `onboardedAt` 을 보지 않는다 — 온보딩을 **건너뛴 사람이 나중에 채우는 길**이 이
+   * 엔드포인트라, 여기서 온보딩 완료를 요구하면 그 사람은 영영 못 채운다.
+   * (온보딩 답변 자체를 기록하는 `signupAnswer` 와 역할이 다르다 — 이건 재작성 전용이라
+   * 「이미 답변했어요」 같은 1회성 제약도 없다.)
+   */
+  async updateJobProfile(
+    userId: string,
+    dto: UpdateJobProfileDto,
+  ): Promise<void> {
+    const hasTitle = dto.jobTitle !== undefined;
+    const hasSeries = dto.seriesId !== undefined;
+    if (!hasTitle && !hasSeries) {
+      throw new BadRequestException('바꿀 값이 없어요.');
+    }
+
+    const user = await this.repo.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('사용자를 찾을 수 없습니다.');
+
+    await this.repo.update(userId, {
+      ...(hasTitle ? { signupJobTitle: dto.jobTitle?.trim() || null } : {}),
+      ...(hasSeries ? { signupSeriesId: dto.seriesId ?? null } : {}),
+    });
   }
 
   async updateNickname(userId: string, nickname: string): Promise<User> {
@@ -405,4 +639,44 @@ export class UsersService {
     const saved = await this.repo.save(user);
     return saved.dashboardConfig!;
   }
+}
+
+/** 온보딩 2단 회사 상한 — DTO `@ArrayMaxSize` 와 같은 값 */
+const MAX_PICKED_COMPANIES = 6;
+
+/**
+ * 아는 템플릿 id 인가 — 🔴 `stepsForTemplate` 으로 대신할 수 없다.
+ * 그건 모르는 id 에 `general` 을 **조용히** 돌려줘서 「모르는 값을 받았다」를 못 가른다.
+ *
+ * 키 목록으로 보는 이유: `APPLICATION_TEMPLATES[id] !== undefined` 는 프로토타입 체인까지
+ * 타서 `constructor` 같은 값이 「아는 템플릿」이 된다. DTO 의 `@IsIn` 이 이미 같은 배열로
+ * 막고 있어 HTTP 로는 못 오지만, 검증 계층 하나에만 기대지 않는다.
+ */
+function isKnownTemplate(id: string): boolean {
+  return APPLICATION_TEMPLATE_IDS.indexOf(id) !== -1;
+}
+
+/**
+ * 온보딩 2단에서 고른 회사명 정리 — trim · 빈 값 제거 · 중복 제거 · 상한 6.
+ *
+ * DTO 는 **형태**(배열인가·문자열인가·길이)만 본다. 「같은 회사를 두 번 담았다」는
+ * 형태 위반이 아니라 의미 문제라 여기서 접는다 — 안 접으면 같은 회사 카드가 두 장 생기고,
+ * 사용자는 자기가 두 번 눌렀다는 걸 카드가 두 장 생긴 뒤에야 안다.
+ *
+ * 상한은 DTO 의 `@ArrayMaxSize(6)` 과 **같은 값이지만 여기도 자른다.** DTO 를 우회하는
+ * 호출부(서비스 직접 호출·미래 내부 경로)가 생겼을 때 카드 수십 장이 만들어지는 걸
+ * 검증 계층 하나에만 맡기지 않는다.
+ */
+function normalizePickedCompanies(raw?: string[] | null): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const name = item.trim();
+    if (!name) continue;
+    if (out.indexOf(name) !== -1) continue;
+    out.push(name);
+    if (out.length >= MAX_PICKED_COMPANIES) break;
+  }
+  return out;
 }

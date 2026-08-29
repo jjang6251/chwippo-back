@@ -5,21 +5,88 @@ import { Repository, UpdateResult } from 'typeorm';
 import { mock } from 'jest-mock-extended';
 import { AlarmConfigService } from './alarm-config.service';
 import { User } from '../users/user.entity';
+import { UserDevice } from '../devices/user-device.entity';
 import { DEFAULT_ALARM_CONFIG } from './notification.types';
 
 describe('AlarmConfigService', () => {
   let service: AlarmConfigService;
   let repo: jest.Mocked<Repository<User>>;
+  let deviceRepo: jest.Mocked<Repository<UserDevice>>;
 
   beforeEach(async () => {
     repo = mock<Repository<User>>();
+    // `GET /me/alarm-status` — 등록 기기 유무 (2026-08-29 · 대장 21)
+    deviceRepo = mock<Repository<UserDevice>>();
+    deviceRepo.count.mockResolvedValue(0);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AlarmConfigService,
         { provide: getRepositoryToken(User), useValue: repo },
+        { provide: getRepositoryToken(UserDevice), useValue: deviceRepo },
       ],
     }).compile();
     service = module.get(AlarmConfigService);
+  });
+
+  /**
+   * 🔴 **새 컬럼을 만들지 않고** 기존 값 셋에서 파생한다 —
+   * 기기 등록 · OS 권한 · 임박 채널 토글. 「캘린더에 일정을 넣었어요」라고 말해 놓고
+   * 알림이 안 가는 상태면 그건 거짓말이 되므로, 화면이 그 자리에서 사정을 말해야 한다.
+   */
+  describe('getStatus (GET /me/alarm-status)', () => {
+    const user = (over: Partial<User> = {}): User =>
+      ({
+        id: 'u1',
+        alarmConfig: null,
+        alarmPermissionGranted: true,
+        ...over,
+      }) as User;
+
+    it('기기 있음 + 권한 허용 + 임박 ON → 셋 다 true', async () => {
+      repo.findOne.mockResolvedValue(user());
+      deviceRepo.count.mockResolvedValue(2);
+      expect(await service.getStatus('u1')).toEqual({
+        hasDevice: true,
+        enabled: true,
+        imminentOn: true,
+      });
+    });
+
+    it('웹만 쓰는 사용자 → hasDevice false (「앱에서 알림을 켜면」 안내)', async () => {
+      repo.findOne.mockResolvedValue(user());
+      deviceRepo.count.mockResolvedValue(0);
+      expect(await service.getStatus('u1')).toMatchObject({ hasDevice: false });
+    });
+
+    it('OS 권한을 거부했으면 enabled false', async () => {
+      repo.findOne.mockResolvedValue(user({ alarmPermissionGranted: false }));
+      deviceRepo.count.mockResolvedValue(1);
+      expect(await service.getStatus('u1')).toMatchObject({ enabled: false });
+    });
+
+    it('soft-ask 에 아직 답하지 않은 사용자는 false (컬럼 기본값) — 「모른다」를 「켜져 있다」로 읽지 않는다', async () => {
+      repo.findOne.mockResolvedValue(user({ alarmPermissionGranted: false }));
+      expect(await service.getStatus('u1')).toMatchObject({ enabled: false });
+    });
+
+    it('앱 안에서 임박 채널을 끄면 imminentOn false (「설정 › 알림에서 켜기」 안내)', async () => {
+      repo.findOne.mockResolvedValue(
+        user({
+          alarmConfig: { imminentEnabled: false } as User['alarmConfig'],
+        }),
+      );
+      deviceRepo.count.mockResolvedValue(1);
+      expect(await service.getStatus('u1')).toMatchObject({
+        imminentOn: false,
+      });
+    });
+
+    it('없는 user → NotFoundException', async () => {
+      repo.findOne.mockResolvedValue(null);
+      await expect(service.getStatus('nope')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
   });
 
   describe('get', () => {

@@ -93,6 +93,83 @@ describe('Announcements starts/ends 논리 (e2e, PR X MED-T3-1)', () => {
       .expect(400);
   });
 
+  /**
+   * 창(starts/ends) 판정은 실 DB 질의라 mock 으로는 검증이 안 된다 — 여기서만 확인한다.
+   * 상대 시각으로 만들어 날짜가 지나도 썩지 않게 한다.
+   */
+  describe('GET /announcements/active 창 판정', () => {
+    const dayFromNow = (days: number) =>
+      new Date(Date.now() + days * 86_400_000).toISOString();
+
+    const activeList = async () => {
+      const res = await request(app.getHttpServer())
+        .get('/announcements/active')
+        .expect(200);
+      return res.body.data as { id: string }[];
+    };
+
+    it('ends_at 이 과거면 active=true 여도 제외', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({
+          ...baseBody,
+          starts_at: dayFromNow(-10),
+          ends_at: dayFromNow(-1),
+        })
+        .expect(201);
+
+      expect(await activeList()).toEqual([]);
+    });
+
+    it('starts_at 이 미래면 아직 제외', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({ ...baseBody, starts_at: dayFromNow(1) })
+        .expect(201);
+
+      expect(await activeList()).toEqual([]);
+    });
+
+    it('창 안(과거 시작·미래 종료)이면 포함', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      const created = await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({
+          ...baseBody,
+          starts_at: dayFromNow(-1),
+          ends_at: dayFromNow(1),
+        })
+        .expect(201);
+
+      const list = await activeList();
+      expect(list).toHaveLength(1);
+      expect(list[0].id).toBe(created.body.data.id);
+    });
+
+    it('창 밖 배너 + 창 안 모달 → 모달만', async () => {
+      const { accessToken } = await signInAsAdmin(app);
+      await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({ ...baseBody, ends_at: dayFromNow(-1) })
+        .expect(201);
+      const modal = await request(app.getHttpServer())
+        .post('/admin/announcements')
+        .set(bearer(accessToken))
+        .send({ ...baseBody, type: 'modal', starts_at: dayFromNow(-1) })
+        .expect(201);
+
+      const list = await activeList();
+      expect(list).toHaveLength(1);
+      expect(list[0].id).toBe(modal.body.data.id);
+    });
+  });
+
   it('PATCH: ends_at 만 미래로 정상 변경 → 200', async () => {
     const { accessToken } = await signInAsAdmin(app);
     const created = await request(app.getHttpServer())

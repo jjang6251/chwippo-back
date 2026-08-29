@@ -174,6 +174,75 @@ describe('findSchemaViolation', () => {
     });
   });
 
+  describe('nullable — `type` 이 배열인 노드 (2026-08-30 공고 카드 실사고)', () => {
+    // 공고 카드의 날짜 객체 모양 그대로 — `['object','null']` + properties
+    const DATE: Record<string, unknown> = {
+      type: ['object', 'null'],
+      required: ['month', 'day'],
+      properties: {
+        month: { type: ['integer', 'null'] },
+        day: { type: ['integer', 'null'] },
+      },
+    };
+    const CARD: Record<string, unknown> = {
+      type: 'object',
+      required: ['deadline', 'steps'],
+      properties: {
+        deadline: DATE,
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'date'],
+            properties: { name: { type: 'string' }, date: DATE },
+          },
+        },
+      },
+    };
+
+    it('🔴 nullable 객체가 null 이면 통과한다 — 이걸 위반으로 봐서 날짜 없는 단계가 있는 공고가 전부 실패했다', () => {
+      expect(
+        findSchemaViolation(
+          { deadline: null, steps: [{ name: '면접', date: null }] },
+          CARD,
+        ),
+      ).toBeNull();
+    });
+
+    it('nullable 객체가 객체로 오면 안쪽 required 를 그대로 검사한다', () => {
+      expect(
+        findSchemaViolation(
+          { deadline: { month: 9 }, steps: [] }, // day 누락
+          CARD,
+        ),
+      ).toContain('$.deadline.day');
+    });
+
+    it('nullable 객체에 문자열이 오면 위반이고, 메시지에 허용 타입이 전부 보인다', () => {
+      expect(
+        findSchemaViolation({ deadline: '9/15', steps: [] }, CARD),
+      ).toContain('expected object|null, got string');
+    });
+
+    it("`['integer','null']` 같은 nullable 원시값도 null 을 통과시킨다", () => {
+      expect(
+        findSchemaViolation(
+          { deadline: { month: null, day: null }, steps: [] },
+          CARD,
+        ),
+      ).toBeNull();
+    });
+
+    it('배열 노드가 nullable 이어도 원소 검사는 그대로 돈다', () => {
+      const schema: Record<string, unknown> = {
+        type: ['array', 'null'],
+        items: { type: 'string' },
+      };
+      expect(findSchemaViolation(null, schema)).toBeNull();
+      expect(findSchemaViolation(['a', 1], schema)).toContain('$[1]');
+    });
+  });
+
   describe('경계', () => {
     it('optional 필드는 없어도 통과한다', () => {
       const schema: Record<string, unknown> = {

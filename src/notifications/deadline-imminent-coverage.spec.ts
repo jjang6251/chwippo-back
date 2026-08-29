@@ -6,6 +6,7 @@ import { DeadlineUrgentService } from './deadline-urgent.service';
 import { ImminentReminderService } from './imminent-reminder.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { ApplicationStep } from '../applications/application-step.entity';
+import { DailyNote } from '../calendar/daily-note.entity';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { Notification } from './notification.entity';
 import { User } from '../users/user.entity';
@@ -67,6 +68,7 @@ describe('마감 당일 × 임박 교차 커버리지 (침묵 손실 0)', () => 
   let examQb: jest.Mocked<SelectQueryBuilder<ExamSchedule>>;
   let notifQb: jest.Mocked<SelectQueryBuilder<Notification>>;
   let userRepo: jest.Mocked<Repository<User>>;
+  let noteRepo: jest.Mocked<Repository<DailyNote>>;
   let dispatch: jest.Mocked<NotificationDispatchService>;
 
   beforeEach(async () => {
@@ -74,6 +76,8 @@ describe('마감 당일 × 임박 교차 커버리지 (침묵 손실 0)', () => 
     const examRepo = mock<Repository<ExamSchedule>>();
     const notificationRepo = mock<Repository<Notification>>();
     userRepo = mock<Repository<User>>();
+    noteRepo = mock<Repository<DailyNote>>();
+    noteRepo.find.mockResolvedValue([]);
     dispatch = mock<NotificationDispatchService>();
 
     stepQb = mock<SelectQueryBuilder<ApplicationStep>>();
@@ -108,6 +112,8 @@ describe('마감 당일 × 임박 교차 커버리지 (침묵 손실 0)', () => 
           useValue: notificationRepo,
         },
         { provide: getRepositoryToken(User), useValue: userRepo },
+        // 시각 있는 캘린더 메모 갈래 (2026-08-29) — 이 spec 은 스텝·마감 교차만 보므로 빈 mock
+        { provide: getRepositoryToken(DailyNote), useValue: noteRepo },
         { provide: NotificationDispatchService, useValue: dispatch },
       ],
     }).compile();
