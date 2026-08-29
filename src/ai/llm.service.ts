@@ -17,6 +17,7 @@ import { CoinService } from './coin.service';
 import { CostGuardService } from './cost-guard.service';
 import { calcCostUsd } from './llm-pricing';
 import { buildMockLlmResponse } from './mock-llm-responses';
+import { findSchemaViolation } from './providers/json-schema-guard';
 import { getFallbackConfig } from './model-config';
 import { ModelConfigService } from './model-config.service';
 import { getModelSpec } from './model-registry';
@@ -288,6 +289,24 @@ export class LlmService {
         `[MOCK MODE] ${cfg.provider}.${cfg.model} 호출 (feature=${input.feature}) — API key 미설정, 모든 gate 우회. 실제 호출 원하면 .env 에 ${cfg.provider.toUpperCase()}_API_KEY 추가 후 재시작.`,
       );
       const mock = buildMockLlmResponse(input.feature, !!input.jsonSchema);
+      /*
+       * 🔴 mock 도 실 provider 와 같은 스키마 가드를 통과시킨다 (2026-08-30). 실 provider 는
+       * `findSchemaViolation` 을 거치는데 mock 은 안 거쳐서, 가드가 nullable 객체를 거부하는
+       * 결함이 mock 기반 E2E 에서 **원리적으로 안 보였다** — 공고 카드 실호출은 전부 실패하는데
+       * E2E 는 초록이었다. 여기서 같이 검사하면 「mock 이 스키마와 어긋남」과 「가드가 정상 응답을
+       * 거부함」 둘 다 dev 에서 바로 드러난다.
+       */
+      if (input.jsonSchema) {
+        const violation = findSchemaViolation(
+          mock.json,
+          input.jsonSchema.schema,
+        );
+        if (violation) {
+          throw new Error(
+            `[MOCK MODE] mock 응답이 스키마와 어긋남 (feature=${input.feature}): ${violation}`,
+          );
+        }
+      }
       // audit row insert — provider='mock', costUsd=0 (실제 LLM 미호출이지만 감사 가시화 필수)
       const log = await this.saveAudit({
         input,

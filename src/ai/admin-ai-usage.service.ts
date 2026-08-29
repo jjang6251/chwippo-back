@@ -25,8 +25,39 @@ export interface AiUsageSummary {
     feature: string;
     calls: number;
     costUsd: number;
+    /**
+     * 호출 하나가 얼마인가. 총액만으로는 「많이 쓰여서 비싼 기능」과 「한 번이 비싼 기능」이
+     * 구분되지 않는다 — 전자는 성공 신호이고 후자는 손봐야 할 신호다. 호출 0 이면 null
+     * (0 으로 채우면 「공짜」로 보인다).
+     */
+    avgCostPerCall: number | null;
   }>;
   byStatus: Array<{ status: string; count: number }>;
+}
+
+/**
+ * 기능별 월 비용 — 「이 기능을 무료로 풀어도 되나」의 유일한 근거.
+ *
+ * 전체 월 추정(`monthEstimate`)은 이미 있지만 **기능별로는 못 나눈다.** 공고 카드처럼
+ * 한도를 사실상 없앤 기능은 「이번 달 얼마나 나갔고, 이 속도면 월말에 얼마인가」를
+ * 기능 단위로 봐야 조절 여부를 판단할 수 있다 (admin `feature_quota_configs` 로 즉시 하향 가능).
+ */
+export interface FeatureMonthCostRow {
+  feature: string;
+  calls: number;
+  /** 이번 달(KST) 누적 USD */
+  monthToDateCost: number;
+  /** 이 속도면 월말에 (누적 / 경과일 × 그달 총일수) */
+  monthProjectedCost: number;
+  avgCostPerCall: number | null;
+}
+
+export interface FeatureMonthCostResponse {
+  /** KST 월초 (ISO) — 화면이 「몇 월 기준인지」를 스스로 말할 수 있게 */
+  monthStart: string;
+  daysElapsed: number;
+  daysInMonth: number;
+  rows: FeatureMonthCostRow[];
 }
 
 /** F6 PR 2 Phase 5.3 — v2 메트릭 응답 타입 */
@@ -115,11 +146,16 @@ export class AdminAiUsageService {
     return {
       totalCalls: Number(total?.calls ?? 0),
       totalCostUsd: Number(total?.cost ?? 0),
-      byFeature: byFeature.map((r) => ({
-        feature: r.feature,
-        calls: Number(r.calls),
-        costUsd: Number(r.cost),
-      })),
+      byFeature: byFeature.map((r) => {
+        const calls = Number(r.calls);
+        const costUsd = Number(r.cost);
+        return {
+          feature: r.feature,
+          calls,
+          costUsd,
+          avgCostPerCall: calls > 0 ? costUsd / calls : null,
+        };
+      }),
       byStatus: byStatus.map((r) => ({
         status: r.status,
         count: Number(r.count),
@@ -330,6 +366,59 @@ export class AdminAiUsageService {
       daysInMonth,
       cumulativeCostUsd,
       estimatedMonthEndUsd,
+    };
+  }
+
+  /**
+   * 기능별 이번 달(KST) 누적·월말 추정.
+   *
+   * 🔴 월 경계는 반드시 `startOfMonthKst()` 다. 서버 로컬(UTC) `getMonth()` 로 자르면
+   * **매월 1일 KST 00~09시**에 전월로 잡혀 월초 숫자가 0 근처에서 튄다 (실사고).
+   *
+   * 추정은 전체 추정과 **같은 산식**(누적 / 경과일 × 그달 총일수)을 쓴다 — 기능별 합이
+   * 전체와 안 맞으면 어느 쪽이 맞는지 아무도 모른다.
+   */
+  async featureMonthCosts(): Promise<FeatureMonthCostResponse> {
+    const now = new Date();
+    const monthStart = startOfMonthKst();
+    const nextMonthStart = startOfNextMonthKst();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const daysInMonth = Math.round(
+      (nextMonthStart.getTime() - monthStart.getTime()) / dayMs,
+    );
+    const daysElapsed = Math.max(
+      1,
+      Math.ceil((now.getTime() - monthStart.getTime()) / dayMs),
+    );
+
+    const rows = await this.repo
+      .createQueryBuilder('l')
+      .select('l.feature', 'feature')
+      .addSelect('COUNT(*)', 'calls')
+      .addSelect('COALESCE(SUM(l.cost_usd), 0)', 'cost')
+      .where('l.created_at >= :start AND l.created_at < :end', {
+        start: monthStart,
+        end: nextMonthStart,
+      })
+      .groupBy('l.feature')
+      .orderBy('cost', 'DESC')
+      .getRawMany<{ feature: string; calls: string; cost: string }>();
+
+    return {
+      monthStart: monthStart.toISOString(),
+      daysElapsed,
+      daysInMonth,
+      rows: rows.map((r) => {
+        const calls = Number(r.calls);
+        const monthToDateCost = Number(r.cost);
+        return {
+          feature: r.feature,
+          calls,
+          monthToDateCost,
+          monthProjectedCost: (monthToDateCost / daysElapsed) * daysInMonth,
+          avgCostPerCall: calls > 0 ? monthToDateCost / calls : null,
+        };
+      }),
     };
   }
 }

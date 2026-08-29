@@ -41,12 +41,21 @@ export type ApplicationCreatedVia =
    * 진짜 카드다(`is_sample = false`). 한 값으로 뭉치면 「온보딩이 첫 카드를 만들어 줬나」와
    * 「샘플이 몇 장 깔렸나」가 같은 숫자가 되어 A안의 효과를 영영 못 잰다.
    */
-  | 'onboarding_pick';
+  | 'onboarding_pick'
+  /**
+   * 공고 텍스트를 붙여넣어 AI 가 채운 카드 (2026-08-29 · 대장 21).
+   *
+   * 🔴 `add_modal` 과 반드시 갈라 센다. 같은 모달에서 시작하지만 **손으로 적은 카드**와
+   * **공고에서 옮겨 담은 카드**는 완성도도, 이후 편집량도, 신뢰도도 다르다. 뭉치면
+   * 「공고로 만들기가 쓰이나」(판정 기준 20%/5%)를 영영 못 잰다.
+   */
+  | 'paste_posting';
 
 export const APPLICATION_CREATED_VIA: ApplicationCreatedVia[] = [
   'add_modal',
   'onboarding_sample',
   'onboarding_pick',
+  'paste_posting',
 ];
 
 /**
@@ -77,13 +86,27 @@ export type JobTitleSource =
    * 🔴 **F0(공고 붙여넣기) 예약값** — 도입 시점(2026-08-27) 기준 쓰는 코드가 없다.
    * 유니온에 미리 넣어두어 그 기능이 붙을 때 값 추가 없이 사용만으로 끝나게 한다.
    */
-  | 'parsed';
+  | 'parsed'
+  /**
+   * 공고 붙여넣기(대장 21)가 채운 직무 — **공고 표기 그대로**다.
+   *
+   * ⚠️ `parsed` 는 2026-08-27 에 「F0 예약값」으로 미리 넣어 둔 값이고, 이 기능이
+   * 실제로 붙으면서 쓰는 값은 `posting` 이다. 둘을 합치지 않는 이유 — `parsed` 는
+   * **한 번도 쓰인 적이 없어서** 그 값이 붙은 행이 있다면 그건 예약값이 새어 나온
+   * 버그다. 이름이 다르면 그 사실이 바로 보인다.
+   *
+   * 🔴 이 값은 「사람 말만 볼펜」의 **경계 사례**다. 원천은 사용자가 붙여넣은 공고
+   * 원문(=사람이 가져온 자료)이고, 고른 것도 사람이거나(직무 선택) 프로필과 글자가
+   * 정확히 맞았을 때뿐이다. 시스템이 계열로 추측한 값은 여기 오지 않는다.
+   */
+  | 'posting';
 
 export const JOB_TITLE_SOURCES: JobTitleSource[] = [
   'typed',
   'suggestion',
   'prefill',
   'parsed',
+  'posting',
 ];
 
 /**
@@ -108,6 +131,61 @@ export interface JobPosting {
   qualifications: string[];
   keywords: string[];
   parsedAt: string;
+}
+
+/** 마감일이 **어떤 종류**로 적혀 있었나 — 「상시」와 「언급 없음」은 다른 정보다 */
+export type PostingDeadlineKind = 'fixed' | 'rolling' | 'unknown';
+
+/** 카드의 직무가 **어떻게 정해졌나** (공고 경로 전용) */
+export type PostingJobPicked =
+  /** 프로필 희망 직무와 글자가 정확히 하나만 맞아 자동 확정 */
+  | 'profile'
+  /** 공고가 뽑은 직무가 하나뿐이라 확정 */
+  | 'single'
+  /** 후보 목록에서 사용자가 골랐다 (2차 파싱 동반) */
+  | 'chosen'
+  /** 사용자가 직접 적었다 */
+  | 'typed';
+
+/** 공고에서 뽑았지만 **스텝이 아니라 캘린더 일정**으로 간 날짜 (발표·검진·입사 등) */
+export interface PostingExtraDate {
+  /** 「서류 합격 발표」 — 스텝 이름 그대로 (회사명은 note content 에서만 붙는다) */
+  label: string;
+  /** 'YYYY-MM-DD' (daily_notes.date 와 같은 형태) */
+  date: string;
+  /** daily_notes.id — 되돌리기(카드 삭제) 시 이 메모들도 함께 지운다 */
+  noteId: string;
+}
+
+/**
+ * 공고 붙여넣기로 만든 카드의 **관측·복원 메타** (`applications.posting_meta` JSONB).
+ * NULL = 공고 경로로 만들어진 카드가 아님.
+ *
+ * 🔴 **관측을 위해 존재한다.** 저장된 카드만 보면 「AI 가 채운 칸」과 「사용자가 고친 칸」이
+ * 구분되지 않는다. 「AI 값 수정률」(품질 지표)은 이 컬럼 없이는 계산 자체가 불가능하다.
+ *
+ * 🔴 단, `noteIds` 만은 **동작에 쓰인다** — 되돌리기가 캘린더 메모까지 지우는 근거다.
+ */
+export interface PostingMeta {
+  /** AI 가 실제로 채운 칸 이름들 (`companyName`·`jobTitle`·`deadline`·`steps`·`jobPosting`) */
+  filled: string[];
+  deadlineKind: PostingDeadlineKind;
+  jobPicked: PostingJobPicked | null;
+  companySource: 'parsed' | 'typed';
+  /** 사용자가 고친 칸 — 결과 시트·카드 상세에서 인라인 수정할 때 누적 */
+  editedFields: string[];
+  /** 「좋아요」 또는 카드 상세 [확인] 을 누른 시각 (ISO). null = 아직 확인 안 함 */
+  reviewedAt: string | null;
+  /** LLM 호출 횟수 — 1(단발) · 2(직무 선택 후 2차 파싱) */
+  callCount: 1 | 2;
+  /** 같은 원문 재요청 판정용 sha256(rawText). 원문 자체는 저장하지 않는다 */
+  textHash: string;
+  /** 이 카드가 만든 daily_notes id — 되돌리기 시 함께 삭제 */
+  noteIds: string[];
+  /** 캘린더로 보낸 날짜들 (결과 시트 「캘린더에 넣은 일정 N」 표시용) */
+  extraDates: PostingExtraDate[];
+  /** 날짜 역전을 감지했다 — 결과 시트가 「순서를 확인해 주세요」를 띄운다 */
+  orderConflict: boolean;
 }
 
 @Entity('applications')
@@ -244,6 +322,13 @@ export class Application {
    */
   @Column({ name: 'job_posting', type: 'jsonb', nullable: true })
   jobPosting: JobPosting | null;
+
+  /**
+   * 공고 붙여넣기(대장 21) 관측·복원 메타. NULL = 공고 경로가 아닌 카드.
+   * 자세한 필드 의미는 `PostingMeta` 주석. 목록 응답에서는 제거된다(상세에서만 노출).
+   */
+  @Column({ name: 'posting_meta', type: 'jsonb', nullable: true })
+  postingMeta: PostingMeta | null;
 
   /**
    * jobposting-parse — 파싱 진행 lock. NULL = idle, 'parsing' 만 사용.

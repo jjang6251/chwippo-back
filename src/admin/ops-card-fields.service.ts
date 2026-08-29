@@ -60,6 +60,20 @@ export interface FieldFill {
   filled: number;
 }
 
+/**
+ * 분자·분모 한 쌍 — **% 를 만들지 않는다** (이 화면 전체 규칙).
+ *
+ * 🔴 분모가 작을 때 % 가 혼자 돌아다니면 과대해석을 부른다. 3장 중 1장을 고쳤는데
+ * 「수정률 33%」로 적히면 그게 표본 3개라는 사실이 사라진다. 표기(「N<30 은 % 금지」)는
+ * 분자·분모를 다 본 프론트가 정한다.
+ */
+export interface Ratio {
+  /** 분자 */
+  count: number;
+  /** 분모 — 0 이면 이 지표 자체가 `null` 로 나간다 */
+  total: number;
+}
+
 export interface CategoryVocabBucket {
   vocab: CategoryVocab;
   /** 이 갈래에 속한 **서로 다른 값**의 개수 */
@@ -145,6 +159,27 @@ export interface OpsCardFieldsResponse {
   createdVia: { recorded: number; distribution: Record<string, number> };
 
   /**
+   * ① 파싱 → 카드 **전환율** — 분자: 만들어진 `paste_posting` 카드 ·
+   * 분모: 성공한 `jobposting_card` 호출.
+   *
+   * 공고를 붙였는데 카드가 안 만들어진 경우(보완 질문에서 닫음·`notPosting`·실패)가
+   * 여기서 드러난다. 분모가 0 이면 `null` — 「0%」와 「아직 아무도 안 썼다」는 다르다.
+   */
+  pasteConversion: Ratio | null;
+
+  /**
+   * ② **AI 값 수정률** — 분자: 사용자가 한 칸이라도 고친 카드 · 분모: 공고 카드 전체.
+   * 「잘 뽑는다」와 「매번 고친다」를 가르는 유일한 지표다.
+   */
+  aiEditRate: Ratio | null;
+
+  /**
+   * ③ **보완 질문 비율** — 분자: 회사명을 직접 적었거나 직무를 골라야 했던 카드 ·
+   * 분모: 공고 카드 전체. 파서가 회사·직무를 못 찾는 빈도.
+   */
+  needsRate: Ratio | null;
+
+  /**
    * **추천 템플릿을 그대로 썼나** — 「맞는 템플릿이면 쓴다」 가설의 직접 근거.
    *
    * 🔴 `templateId.distribution` 만으로는 못 보는 것 — 그건 **무엇으로 시작했나**이고,
@@ -195,6 +230,8 @@ interface DetailRow {
   status: string;
   template_id: string | null;
   created_via: string | null;
+  /** `applications.posting_meta` — 공고 경로가 아닌 카드는 null */
+  posting_meta: unknown;
   /**
    * 스텝 이름 (orderIndex 순). 스텝이 없으면 드라이버가 `null` 을 준다
    * (`ARRAY_AGG` 는 행이 0개일 때 NULL — 빈 배열이 아니다).
@@ -256,8 +293,9 @@ export class OpsCardFieldsService {
   }
 
   private async compute(): Promise<OpsCardFieldsResponse> {
-    const [aggRows, detailRows, excludedRows] = await Promise.all([
-      this.dataSource.query<AggRow[]>(`
+    const [aggRows, detailRows, excludedRows, postingCallRows] =
+      await Promise.all([
+        this.dataSource.query<AggRow[]>(`
         SELECT COUNT(*)::int                                        AS cards,
                COUNT(DISTINCT a.user_id)::int                       AS users,
                COUNT(*) FILTER (WHERE NULLIF(TRIM(a.job_title), '')    IS NOT NULL)::int AS job_title,
@@ -277,12 +315,13 @@ export class OpsCardFieldsService {
           ) s ON TRUE
          WHERE a.deleted_at IS NULL AND a.is_sample = false
       `),
-      // 어휘·표기·회사명 판정은 SQL 보다 코드가 정확하다 (포함 관계·사전 대조).
-      // admin 전용 + 5분 캐시라 전 행을 끌어와도 되지만, 카드가 수만 장이 되면
-      // 여기부터 손봐야 한다 (그때는 어휘 집계를 SQL GROUP BY 로 내린다).
-      this.dataSource.query<DetailRow[]>(`
+        // 어휘·표기·회사명 판정은 SQL 보다 코드가 정확하다 (포함 관계·사전 대조).
+        // admin 전용 + 5분 캐시라 전 행을 끌어와도 되지만, 카드가 수만 장이 되면
+        // 여기부터 손봐야 한다 (그때는 어휘 집계를 SQL GROUP BY 로 내린다).
+        this.dataSource.query<DetailRow[]>(`
         SELECT a.user_id, a.job_title, a.job_category, a.company_name,
-               a.status, a.template_id, a.created_via, st.names AS step_names
+               a.status, a.template_id, a.created_via, a.posting_meta,
+               st.names AS step_names
           FROM applications a
           JOIN users u ON u.id = a.user_id AND u.role <> 'admin'
           -- 스텝 이름을 orderIndex 순 배열로 접어 온다 — 「템플릿 그대로인가」 판정 재료.
@@ -293,14 +332,23 @@ export class OpsCardFieldsService {
           ) st ON TRUE
          WHERE a.deleted_at IS NULL AND a.is_sample = false
       `),
-      this.dataSource.query<{ admin_cards: string; sample_cards: string }[]>(`
+        this.dataSource.query<{ admin_cards: string; sample_cards: string }[]>(`
         SELECT COUNT(*) FILTER (WHERE u.role = 'admin')::int    AS admin_cards,
                COUNT(*) FILTER (WHERE a.is_sample = true)::int  AS sample_cards
           FROM applications a
           JOIN users u ON u.id = a.user_id
          WHERE a.deleted_at IS NULL
       `),
-    ]);
+        // 「파싱→카드 전환율」의 **분모** — 성공한 공고 파싱 호출 수.
+        // 🔴 카드 쪽과 같은 제외 규칙(admin 제외)을 쓴다. 한쪽만 CEO 계정을 빼면
+        //    전환율이 100% 를 넘거나 바닥을 치는, 해석 불가능한 숫자가 나온다.
+        this.dataSource.query<{ n: string }[]>(`
+        SELECT COUNT(*)::int AS n
+          FROM llm_call_logs l
+          JOIN users u ON u.id = l.user_id AND u.role <> 'admin'
+         WHERE l.feature = 'jobposting_card' AND l.status = 'ok'
+      `),
+      ]);
 
     const agg = aggRows[0];
     const n = (v: string | number | undefined) => Number(v ?? 0);
@@ -335,7 +383,57 @@ export class OpsCardFieldsService {
       ),
       createdVia: this.analyzeRecorded(detailRows, (r) => r.created_via),
       templateUsage: this.analyzeTemplateUsage(detailRows),
+      ...this.analyzePosting(detailRows, n(postingCallRows[0]?.n)),
       generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * 공고 붙여넣기 3행 — 전환율·수정률·보완 질문 비율.
+   *
+   * 🔴 `posting_meta` 는 JSONB 라 드라이버가 무엇을 줄지 타입이 보장하지 않는다
+   * (파싱된 객체일 수도, 문자열일 수도, null 일 수도). `as` 로 단정하면 옛 형태의
+   * 행 하나에 admin 화면이 통째로 500 이 된다 — 방어적으로 읽는다.
+   *
+   * 🔴 **분모가 0 이면 `null`** 이다. `{count: 0, total: 0}` 로 내보내면 화면이
+   * 0/0 을 그리게 되고, 「아무도 안 썼다」와 「썼는데 아무도 안 고쳤다」가 같아 보인다.
+   * 도입(2026-08-29) 이전에는 셋 다 `null` 인 것이 정상이다.
+   */
+  private analyzePosting(
+    rows: DetailRow[],
+    llmCallsOk: number,
+  ): Pick<
+    OpsCardFieldsResponse,
+    'pasteConversion' | 'aiEditRate' | 'needsRate'
+  > {
+    let cards = 0;
+    let edited = 0;
+    let askedFollowUp = 0;
+
+    for (const r of rows) {
+      if (r.created_via !== 'paste_posting') continue;
+      cards += 1;
+      const m = readPostingMeta(r.posting_meta);
+      if (!m) continue;
+      if (m.editedFields.length > 0) edited += 1;
+      // 보완 질문 = 회사명을 직접 적었거나(파서가 못 찾음) 직무를 골라야 했던 경우.
+      // `profile`·`single` 은 서버가 자동으로 정한 것이라 **물어본 적이 없다**
+      if (
+        m.companySource === 'typed' ||
+        m.jobPicked === 'chosen' ||
+        m.jobPicked === 'typed'
+      ) {
+        askedFollowUp += 1;
+      }
+    }
+
+    const ratio = (count: number, total: number): Ratio | null =>
+      total > 0 ? { count, total } : null;
+
+    return {
+      pasteConversion: ratio(cards, llmCallsOk),
+      aiEditRate: ratio(edited, cards),
+      needsRate: ratio(askedFollowUp, cards),
     };
   }
 
@@ -628,6 +726,36 @@ export class OpsCardFieldsService {
         ),
     };
   }
+}
+
+/** 집계에 필요한 `posting_meta` 조각만 — 형태가 안 맞으면 null (행 하나로 화면이 죽지 않게) */
+interface PostingMetaView {
+  editedFields: string[];
+  companySource: string;
+  jobPicked: string | null;
+}
+
+/** JSONB 드라이버가 문자열을 줄 수도 있다 — 파싱 실패는 「모르는 행」으로 넘긴다 */
+function safeJsonParse(text: string): unknown {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function readPostingMeta(raw: unknown): PostingMetaView | null {
+  const v: unknown = typeof raw === 'string' ? safeJsonParse(raw) : raw;
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const o: Record<string, unknown> = { ...v };
+  return {
+    editedFields: Array.isArray(o.editedFields)
+      ? o.editedFields.filter((s): s is string => typeof s === 'string')
+      : [],
+    companySource: typeof o.companySource === 'string' ? o.companySource : '',
+    jobPicked: typeof o.jobPicked === 'string' ? o.jobPicked : null,
+  };
 }
 
 function countBy<T>(rows: T[], pick: (r: T) => string): Record<string, number> {

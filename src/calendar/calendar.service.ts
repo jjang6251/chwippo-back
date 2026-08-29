@@ -7,6 +7,9 @@ import { startOfTodayKst } from '../common/datetime';
 import { ExamSchedule } from '../myinfo/entities/exam-schedule.entity';
 import { DailyNote } from './daily-note.entity';
 import { CreateDailyNoteDto, UpdateDailyNoteDto } from './dto/daily-note.dto';
+// 슬롯 산술은 공고 카드 생성(시각 → 슬롯)과 **같은 소스**를 쓴다 — 한쪽만 고치면
+// 「09:00 에 넣었는데 15:00 에 뜬다」가 되고 그건 화면을 봐야만 드러난다
+import { hourSlotToTime } from './hour-slot.util';
 
 /** A3 — 체크리스트 "오늘 할 일" 합류 기준: 스텝 날짜가 오늘 ~ D-3 이내 */
 const URGENT_CHECKLIST_DAYS = 3;
@@ -45,14 +48,6 @@ export interface CalendarEvent {
    * step · exam 타입은 항상 undefined.
    */
   isDone?: boolean;
-}
-
-function hourSlotToTime(slot: number | null): string | null {
-  if (slot === null || slot === undefined) return null;
-  const minutes = 360 + slot * 30;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 @Injectable()

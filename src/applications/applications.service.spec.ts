@@ -947,14 +947,21 @@ describe('ApplicationsService', () => {
 
   // ── remove ─────────────────────────────────────────────
   describe('remove', () => {
-    it('appRepo.softRemove(app) 호출 (update로 deleted_at 직접 설정 아님)', async () => {
+    it('softRemove 호출 (update 로 deleted_at 직접 설정 아님)', async () => {
+      // 2026-08-29 — 공고 카드가 만든 캘린더 메모를 **같은 TX 에서** 지워야 해서
+      // 삭제가 트랜잭션 안으로 들어갔다. soft delete 라는 성질 자체는 그대로다.
       const app = makeApp();
       appRepo.findOne.mockResolvedValue(app);
-      appRepo.softRemove.mockResolvedValue(app);
+      const em = { softRemove: jest.fn(), delete: jest.fn() };
+      dataSource.transaction.mockImplementation(
+        (cb: (m: EntityManager) => Promise<unknown>) =>
+          cb(em as unknown as EntityManager),
+      );
 
       await service.remove('user-uuid-1', 'app-uuid-1');
 
-      expect(appRepo.softRemove).toHaveBeenCalledWith(app);
+      expect(em.softRemove).toHaveBeenCalledWith(app);
+      expect(em.delete).not.toHaveBeenCalled(); // 공고 카드가 아니면 메모 삭제 없음
       expect(appRepo.update).not.toHaveBeenCalled();
     });
 

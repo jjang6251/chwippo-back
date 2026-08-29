@@ -164,6 +164,8 @@ describe('CompanyResearchSeedService', () => {
     expect(saved.map((s) => s.companyName)).toEqual(['토스', '비바리퍼블리카']);
     // 본 행 = 별칭 아님, aliases 로 만들어진 복제 행 = 별칭.
     expect(saved.map((s) => s.isAlias)).toEqual([false, true]);
+    // 🔴 표시용 표기 — 별칭 행도 본명을 가리킨다 (공고 붙여넣기 「비바리퍼블리카」 → 「토스」)
+    expect(saved.map((s) => s.canonicalName)).toEqual(['토스', '토스']);
   });
 
   it('8) 동일 버전 전부 적재됨 → 조기 skip', async () => {
@@ -207,6 +209,11 @@ describe('CompanyResearchSeedService', () => {
     });
     const r = await service.applySeed(doc);
     expect(r.updated).toBe(2);
+    // 재적재 때 기존 행에도 표시용 표기가 채워진다 (구버전 행은 canonical_name NULL)
+    const updated = repo.save.mock.calls.map(
+      (c) => c[0] as CompanyResearchCache,
+    );
+    expect(updated.map((s) => s.canonicalName)).toEqual(['토스', '토스']);
     // 본 행 → false, 별칭 행 → true 로 갱신됐는지.
     const saved = repo.save.mock.calls.map((c) => c[0] as CompanyResearchCache);
     expect(saved.map((s) => s.isAlias)).toEqual([false, true]);

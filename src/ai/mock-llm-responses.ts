@@ -194,6 +194,101 @@ export function buildMockLlmResponse(
         ...baseTokens,
       };
 
+    /**
+     * 공고 → 카드 (2026-08-29). **실측 응답을 그대로 옮긴다** —
+     * `plans/jobposting-card-test/results-v3.json` 의 `S2-multi-job-with-context` out.
+     *
+     * 🔴 손으로 지어낸 mock 을 쓰지 않는 이유: 서버 규칙(연도 앵커·첫 접수=deadline·
+     * 최종 합격 정규화·요일 힌트 제거)이 **실제 모델이 내는 결함**을 전제로 짜여 있다.
+     * 「목요일」 힌트도, 「10월 30일 예정」을 hint 로만 둔 것도 실측 그대로다 —
+     * 깔끔한 mock 을 넣으면 그 가드들이 mock 에서만 통과한다.
+     *
+     * `postingYear`·`weekday`·`jobUrl` 은 v3 실행 뒤 스키마에 추가된 필드라 실측엔 없다
+     * (정정 13·14). null 로 둔다 — 지어내면 위와 같은 착시가 생긴다.
+     */
+    case 'jobposting_card':
+      return {
+        text: '[MOCK]',
+        json: {
+          notPosting: false,
+          companyName: '오르빗컴퍼니',
+          jobTitles: ['브랜드 마케터'],
+          postingYear: null,
+          jobUrl: null,
+          deadline: {
+            year: 2026,
+            month: 9,
+            day: 14,
+            time: '18:00',
+            weekday: null,
+          },
+          deadlineKind: 'fixed',
+          steps: [
+            {
+              name: '서류 접수',
+              date: {
+                year: 2026,
+                month: 9,
+                day: 14,
+                time: '18:00',
+                weekday: null,
+              },
+              dateHint: null,
+            },
+            {
+              name: '서류 전형',
+              date: null,
+              dateHint: '접수 마감 후 1주 내',
+            },
+            {
+              name: '인적성 검사(온라인)',
+              date: null,
+              dateHint: '9월 마지막 주 예정',
+            },
+            {
+              name: '1차 실무 면접',
+              date: {
+                year: 2026,
+                month: 10,
+                day: 8,
+                time: null,
+                weekday: '목요일',
+              },
+              // 서버가 지운다 (요일만 있는 힌트 = 날짜의 반복)
+              dateHint: '목요일',
+            },
+            { name: '2차 임원 면접', date: null, dateHint: '10월 중순' },
+            {
+              name: '최종 합격 발표',
+              date: null,
+              dateHint: '10월 30일 예정',
+            },
+          ],
+          responsibilities:
+            '브랜드 캠페인 기획, 인플루언서 협업, 콘텐츠 성과 분석',
+          requirements: [
+            '4년제 졸업(예정)자',
+            '마케팅·광고 관련 프로젝트 경험',
+          ],
+          preferred: [
+            '뷰티 산업 관심',
+            '영상 편집(Premiere)',
+            'GA4·앰플리튜드 활용',
+          ],
+          techStack: [],
+          qualifications: [],
+          keywords: [
+            '브랜드 마케터',
+            '오르빗컴퍼니',
+            'D2C',
+            '뷰티',
+            '마케팅',
+            '광고',
+          ],
+        },
+        ...baseTokens,
+      };
+
     // 노트 AI 패널 — 결과는 항상 `markdown` 한 덩어리. 표·리스트를 섞어 두어
     // 프론트의 md→doc 삽입(표 노드 정합)을 mock 만으로도 눈으로 확인할 수 있게 한다.
     case 'note_ai_action':

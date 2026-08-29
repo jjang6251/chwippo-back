@@ -5,6 +5,7 @@ import { AI_RECOMMEND_SCHEMA } from '../applications/ai-coverletter-draft.servic
 import { FEEDBACK_SCHEMA } from '../applications/ai-coverletter-feedback.service';
 import { CHAT_JSON_SCHEMA } from '../applications/coverletter-chat.service';
 import { JOB_POSTING_SCHEMA } from '../applications/job-posting.service';
+import { CARD_SCHEMA } from '../applications/job-posting-card.prompt';
 import {
   FOLLOWUP_JSON_SCHEMA,
   SESSION_JSON_SCHEMA,
@@ -120,6 +121,7 @@ describe('MODEL_REGISTRY', () => {
       'interview_prep_followup',
       'coverletter_chat',
       'jobposting_parse',
+      'jobposting_card',
     ];
 
     it.each(FEATURES)('%s 의 기본 모델이 레지스트리에 있다', (feature) => {
@@ -494,6 +496,7 @@ describe('cross-provider 스키마 호환', () => {
     ['coverletter_feedback', FEEDBACK_SCHEMA.schema],
     ['coverletter_recommend', AI_RECOMMEND_SCHEMA.schema],
     ['jobposting_parse', JOB_POSTING_SCHEMA.schema],
+    ['jobposting_card', CARD_SCHEMA.schema],
     ['interview_prep_session', SESSION_JSON_SCHEMA.schema],
     ['interview_prep_followup', FOLLOWUP_JSON_SCHEMA.schema],
   ])('%s 스키마가 OpenAI strict 규격을 만족한다', (_name, schema) => {
