@@ -119,6 +119,9 @@ export class AdminUsersService {
         // W1 — admin 직군 분포 가시화
         'u.signupJobCategories',
         'u.signupOtherText',
+        // 계열 1탭 온보딩 — 구(21칩)·신(계열) 답이 목록에서 나란히 보여야 전환을 관찰할 수 있다
+        'u.signupSeriesId',
+        'u.signupJobTitle',
       ])
       .orderBy('u.lastActiveAt', 'DESC', 'NULLS LAST')
       .addOrderBy('u.createdAt', 'DESC')

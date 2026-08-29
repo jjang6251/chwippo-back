@@ -462,6 +462,43 @@ describe('ApplicationsService', () => {
         expect.objectContaining({ relations: ['steps'] }),
       );
     });
+
+    /**
+     * jobTitleSource — 관측 전용. 저장된 job_title 만으로는 「타이핑해 확정」과
+     * 「프리필을 그대로 통과」가 구분되지 않으므로 입력 시점의 출처를 박제한다.
+     */
+    it('jobTitleSource 전달 → 그대로 저장 (관측 출처 박제)', async () => {
+      const app = makeApp();
+      const { em } = makeEntityManager(app);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.create('user-uuid-1', {
+        companyName: '대전성모병원',
+        jobTitle: '간호사',
+        jobTitleSource: 'suggestion',
+      });
+
+      expect(em.create).toHaveBeenCalledWith(
+        Application,
+        expect.objectContaining({ jobTitleSource: 'suggestion' }),
+      );
+    });
+
+    it('jobTitleSource 미전달 → null (백필·추측 금지)', async () => {
+      const app = makeApp();
+      const { em } = makeEntityManager(app);
+      dataSource.transaction.mockImplementation((cb: any) => cb(em));
+
+      await service.create('user-uuid-1', {
+        companyName: '카카오',
+        jobTitle: '백엔드',
+      });
+
+      expect(em.create).toHaveBeenCalledWith(
+        Application,
+        expect.objectContaining({ jobTitleSource: null }),
+      );
+    });
   });
 
   // ── update ─────────────────────────────────────────────
@@ -505,6 +542,47 @@ describe('ApplicationsService', () => {
       const saved = em.save.mock.calls[0][0];
       expect(saved.failedTakeaway).toBe('코테는 통과했다');
       expect(saved.failedTakeawayAt).toBeInstanceOf(Date);
+    });
+
+    /**
+     * 🔴 `jobCategory: null` — 「승무원」을 「백엔드」로 고쳤는데 태그가 「영업·판매·서비스」로
+     * 남던 결함(2026-08-28 실기)의 서버 쪽 계약. 프론트가 계열을 못 잡으면 필드를 빼는 게
+     * 아니라 `null` 을 보내 지운다 — 직무가 바뀐 마당에 옛 계열이 남는 게 더 틀리다.
+     */
+    it('jobCategory: null → 옛 계열 라벨이 지워진다', async () => {
+      const app = makeApp({ jobCategory: '영업·판매·서비스' });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        jobTitle: '백엔드',
+        jobCategory: null,
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.jobTitle).toBe('백엔드');
+      expect(saved.jobCategory).toBeNull();
+    });
+
+    it('jobCategory 미전송(undefined) → 기존 계열 보존 (부분 갱신 계약)', async () => {
+      const app = makeApp({ jobCategory: '영업·판매·서비스' });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', { memo: '메모만' });
+
+      expect(em.save.mock.calls[0][0].jobCategory).toBe('영업·판매·서비스');
+    });
+
+    it('jobTitleSource 수정 → Object.assign 경로로 반영 (직무를 고쳐 쓰면 출처도 바뀐다)', async () => {
+      const app = makeApp({ jobTitleSource: 'prefill' });
+      appRepo.findOne.mockResolvedValueOnce(app).mockResolvedValue(app);
+
+      await service.update('user-uuid-1', 'app-uuid-1', {
+        jobTitle: '간호사',
+        jobTitleSource: 'typed',
+      });
+
+      const saved = em.save.mock.calls[0][0];
+      expect(saved.jobTitleSource).toBe('typed');
     });
 
     it('A9-2) 빈 문자열 → null 삭제 + at null', async () => {

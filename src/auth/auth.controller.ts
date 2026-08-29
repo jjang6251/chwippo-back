@@ -52,6 +52,10 @@ interface AuthenticatedUser {
   signupJobCategories: string[] | null;
   /** W1 — "기타" 직군 자유 입력. NULL or "" → 미입력 */
   signupOtherText: string | null;
+  /** 온보딩 계열 1탭 답변 — 프론트 `JOB_SERIES` id. NULL → 미답변·건너뛰기·구 경로 */
+  signupSeriesId: string | null;
+  /** 온보딩에서 사람이 타이핑한 직무 원문. NULL → 계열만 골랐거나 미입력 (프리필 없음) */
+  signupJobTitle: string | null;
   /** W1 — 샘플 카드 전체 dismiss 시각. NULL → 샘플 살아있음 */
   sampleCardsDismissedAt: Date | null;
   /** 캘린더 UX 재구성 — "이제 캘린더가 홈이에요" 안내 배너 dismiss 시각. NULL → 첫 방문 배너 노출 */
@@ -60,6 +64,14 @@ interface AuthenticatedUser {
   interviewNudgeDismissedAt: Date | null;
   /** 알림 — soft-ask 모달 표시 시각. NULL → native 최초 1회 모달 */
   alarmPromptedAt: Date | null;
+  /**
+   * 앱 소개 투어 — 관측 전용 3필드.
+   * 🔴 `tourSeenAt` 이 NULL 이라고 투어를 띄우지 않는다 (진입은 온보딩 직후 경로·도움말 링크뿐).
+   * 배포 순서 무관하게 읽히도록 optional — refresh 응답에는 항상 실린다.
+   */
+  tourSeenAt?: Date | null;
+  tourCompletedAt?: Date | null;
+  tourLastStep?: number | null;
   /** 세션 지속성 — refresh 경로 전용: JWT sid claim (legacy 토큰은 null) */
   sid?: string | null;
   /** 세션 지속성 — refresh 경로 전용: cookie 평문 refresh JWT (원자적 rotation 용) */
@@ -623,10 +635,15 @@ export class AuthController {
         onboardedCoinAt: user.onboardedCoinAt ?? null,
         signupJobCategories: user.signupJobCategories ?? null,
         signupOtherText: user.signupOtherText ?? null,
+        signupSeriesId: user.signupSeriesId ?? null,
+        signupJobTitle: user.signupJobTitle ?? null,
         sampleCardsDismissedAt: user.sampleCardsDismissedAt ?? null,
         calendarHomeIntroDismissedAt: user.calendarHomeIntroDismissedAt ?? null,
         interviewNudgeDismissedAt: user.interviewNudgeDismissedAt ?? null,
         alarmPromptedAt: user.alarmPromptedAt ?? null,
+        tourSeenAt: user.tourSeenAt ?? null,
+        tourCompletedAt: user.tourCompletedAt ?? null,
+        tourLastStep: user.tourLastStep ?? null,
       },
     };
   }

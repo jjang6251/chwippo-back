@@ -1,89 +1,101 @@
 /**
- * W2 — CompaniesService 자동완성 spec (12 cases).
+ * W2 — CompaniesService 자동완성 spec.
  *
- * cover: 정상 / prefix vs contains / signup boost / 사용자 누적 / 공백 trim / 특수문자 escape /
- *        한글+영문 mixed / 대용량 q / limit cap / 비존재 user / DART JSON 없음 (fallback) /
- *        사용자 누적 + DART 중복 제거
+ * cover: prefix vs contains / 가나다 정렬 / 조사 시드 소스 / 소스 우선순위 dedupe (dart>research,
+ *        research>user_added) / 정규화 키 dedupe (대소문자 표기 차) / 조사 제외 조건
+ *        (별칭·opt-out·빈 조사) / 빈 q → [] / boost 제거 회귀 / limit cap / LIKE escape 2소스 /
+ *        한글+영문 mixed / source 필드 / 사용자 누적
  */
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { mock } from 'jest-mock-extended';
-import { Repository } from 'typeorm';
+import { ObjectLiteral, Repository, SelectQueryBuilder } from 'typeorm';
 import { Application } from '../applications/application.entity';
-import { User } from '../users/user.entity';
+import { CompanyResearchCache } from '../interview-prep/entities/company-research-cache.entity';
 import { CompaniesService } from './companies.service';
+
+/** 두 DB 소스가 쓰는 QueryBuilder 메서드를 전부 chainable 로 흉내낸 mock */
+function makeQb(rows: unknown[]) {
+  const qb = {
+    select: jest.fn(),
+    addSelect: jest.fn(),
+    where: jest.fn(),
+    andWhere: jest.fn(),
+    groupBy: jest.fn(),
+    orderBy: jest.fn(),
+    limit: jest.fn(),
+    getRawMany: jest.fn().mockResolvedValue(rows),
+  };
+  for (const chainable of [
+    qb.select,
+    qb.addSelect,
+    qb.where,
+    qb.andWhere,
+    qb.groupBy,
+    qb.orderBy,
+    qb.limit,
+  ]) {
+    chainable.mockReturnValue(qb);
+  }
+  return qb;
+}
+
+type QbMock = ReturnType<typeof makeQb>;
+
+/** 부분 구현 mock 을 QueryBuilder 자리에 꽂기 위한 **단일** 캐스트 지점 */
+function asQueryBuilder<T extends ObjectLiteral>(
+  qb: QbMock,
+): SelectQueryBuilder<T> {
+  return qb as unknown as SelectQueryBuilder<T>;
+}
+
+/** where·andWhere 로 넘어간 조건 문자열 전부 (조사 필터 검증용) */
+function conditionsOf(qb: QbMock): string[] {
+  return [...qb.where.mock.calls, ...qb.andWhere.mock.calls].map((c) =>
+    String(c[0]),
+  );
+}
 
 describe('CompaniesService', () => {
   let service: CompaniesService;
   let appRepo: jest.Mocked<Repository<Application>>;
-  let userRepo: jest.Mocked<Repository<User>>;
+  let researchRepo: jest.Mocked<Repository<CompanyResearchCache>>;
+  let researchQb: QbMock;
+  let appQb: QbMock;
 
-  // QueryBuilder chain mock
-  function makeQb(rows: { name: string; count: number }[]) {
-    return {
-      select: jest.fn().mockReturnThis(),
-      addSelect: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      groupBy: jest.fn().mockReturnThis(),
-      orderBy: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      getRawMany: jest.fn().mockResolvedValue(rows),
-    } as never;
+  /** 두 DB 소스의 반환 행을 한 번에 세팅 */
+  function setSources(opts: {
+    research?: { name: string }[];
+    userAdded?: { name: string; count: number }[];
+  }) {
+    researchQb = makeQb(opts.research ?? []);
+    appQb = makeQb(opts.userAdded ?? []);
+    researchRepo.createQueryBuilder.mockReturnValue(
+      asQueryBuilder<CompanyResearchCache>(researchQb),
+    );
+    appRepo.createQueryBuilder.mockReturnValue(
+      asQueryBuilder<Application>(appQb),
+    );
   }
-
-  const makeUser = (overrides: Partial<User> = {}): User => ({
-    id: 'u1',
-    kakaoId: 'k1',
-    appleSub: null,
-    appleEmail: null,
-    appleRefreshToken: null,
-    firstAppLoginAt: null,
-    firstWebLoginAt: null,
-    firstDesktopWebSeenAt: null,
-    nickname: 'tester',
-    email: null,
-    role: 'user',
-    lastActiveAt: null,
-    termsAgreedAt: null,
-    createdAt: new Date(),
-    dashboardConfig: null,
-    alarmConfig: null,
-    alarmPromptedAt: null,
-    alarmPermissionGranted: false,
-    onboardedAt: null,
-    suspendedAt: null,
-    aiConsentAt: null,
-    aiConsentVersion: null,
-    onboardedCoinAt: null,
-    suspendReason: null,
-    suspendExpiresAt: null,
-    pendingNotification: null,
-    signupJobCategories: null,
-    signupOtherText: null,
-    sampleCardsDismissedAt: null,
-    calendarHomeIntroDismissedAt: null,
-    interviewNudgeDismissedAt: null,
-    sessionExpiredNotifiedAt: null,
-    tier: 'free',
-    ...overrides,
-  });
 
   beforeEach(async () => {
     appRepo = mock<Repository<Application>>();
-    userRepo = mock<Repository<User>>();
+    researchRepo = mock<Repository<CompanyResearchCache>>();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CompaniesService,
         { provide: getRepositoryToken(Application), useValue: appRepo },
-        { provide: getRepositoryToken(User), useValue: userRepo },
+        {
+          provide: getRepositoryToken(CompanyResearchCache),
+          useValue: researchRepo,
+        },
       ],
     }).compile();
 
     service = module.get<CompaniesService>(CompaniesService);
 
-    // spec — companies.json 의 industry 없음 (베타 seed) → boost 검증 위해 직접 주입
+    // spec — 생성자가 실제 companies.json(수천 건)을 읽어버리므로 고정 목록으로 교체한다
     (service as unknown as { companies: unknown[] }).companies = [
       {
         name: '네이버',
@@ -102,6 +114,13 @@ describe('CompaniesService', () => {
         domain: 'kakao.com',
         industry: '인터넷',
         market: 'KOSPI',
+      },
+      // '카' 가 **가운데** 들어간 회사 — prefix > contains 정렬 검증용
+      {
+        name: '롯데카드',
+        domain: undefined,
+        industry: '금융',
+        market: undefined,
       },
       {
         name: 'LG에너지솔루션',
@@ -158,14 +177,13 @@ describe('CompaniesService', () => {
         market: 'KOSPI',
       },
     ];
+
+    setSources({});
   });
 
   describe('autocomplete', () => {
     it('정상 prefix match → "네이버" 가 "네이" 검색의 첫 결과 (prefix > contains)', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
-
-      const result = await service.autocomplete('u1', '네이');
+      const result = await service.autocomplete('네이');
 
       expect(result.length).toBeGreaterThan(0);
       expect(result[0].name).toBe('네이버');
@@ -174,147 +192,204 @@ describe('CompaniesService', () => {
     });
 
     it('contains match — q="카오" 가 "카카오" 매칭', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
-
-      const result = await service.autocomplete('u1', '카오');
+      const result = await service.autocomplete('카오');
 
       expect(result.some((r) => r.name === '카카오')).toBe(true);
     });
 
-    it('signup 직군 boost — q="네" + signup=[백엔드 개발] → IT 회사 (네이버) boost (top 결과에 포함)', async () => {
-      userRepo.findOne.mockResolvedValue(
-        makeUser({ signupJobCategories: ['백엔드 개발'] }),
-      );
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    it('prefix 가 contains 보다 위 — q="카" → 카카오(prefix) > 롯데카드(contains)', async () => {
+      const result = await service.autocomplete('카');
 
-      const result = await service.autocomplete('u1', '네');
-
-      // 네이버 (domain=naver.com) 가 결과에 있어야
-      const naver = result.find((r) => r.name === '네이버');
-      expect(naver).toBeDefined();
-      expect(naver?.boost).toBeGreaterThan(0);
+      const names = result.map((r) => r.name);
+      expect(names.indexOf('카카오')).toBeLessThan(names.indexOf('롯데카드'));
     });
 
-    it('빈 q → signup 직군 매칭 회사 추천 (boost 만)', async () => {
-      userRepo.findOne.mockResolvedValue(
-        makeUser({ signupJobCategories: ['백엔드 개발'] }),
+    it('같은 급이면 회사명 가나다 — q="한국" → 한국가스공사 가 먼저', async () => {
+      const result = await service.autocomplete('한국');
+
+      expect(result[0].name).toBe('한국가스공사');
+      expect(result.map((r) => r.name)).toEqual(
+        [...result.map((r) => r.name)].sort((a, b) => a.localeCompare(b, 'ko')),
       );
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
-
-      const result = await service.autocomplete('u1', '');
-
-      // boost > 0 인 결과만
-      expect(result.length).toBeGreaterThan(0);
-      expect(result.every((r) => (r.boost ?? 0) > 0)).toBe(true);
     });
 
-    it('빈 q + signup 없음 → 빈 결과', async () => {
-      userRepo.findOne.mockResolvedValue(
-        makeUser({ signupJobCategories: null }),
-      );
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    /**
+     * 🔴 조사 시드 소스 — 이 소스가 붙는 이유는 「조사가 준비된 회사」를 먼저 고르게 해서
+     * 타이핑을 줄이고 `로쏘(성심당` 류 오염 표기를 애초에 덜 만들게 하기 위함이다.
+     */
+    it('조사 시드 — DART 에 없는 회사가 검색에 잡힌다 (source=research)', async () => {
+      setSources({ research: [{ name: '대전성모병원' }] });
 
-      const result = await service.autocomplete('u1', '');
+      const result = await service.autocomplete('대전');
+
+      const found = result.find((r) => r.name === '대전성모병원');
+      expect(found).toBeDefined();
+      expect(found?.source).toBe('research');
+    });
+
+    it('조사 쿼리 — 별칭 행·opt-out·빈 조사는 제외한다 (골라도 보여줄 알맹이가 없다)', async () => {
+      await service.autocomplete('대전');
+
+      const conditions = conditionsOf(researchQb).join(' | ');
+      expect(conditions).toContain('c.is_alias = false');
+      expect(conditions).toContain('c.opt_out = false');
+      expect(conditions).toContain('c.ai_research IS NOT NULL');
+      expect(conditions).toContain("c.ai_research <> '{}'::jsonb");
+    });
+
+    it('dedupe 우선순위 — 같은 이름이 dart·research 둘 다면 dart 가 이긴다', async () => {
+      setSources({ research: [{ name: '네이버' }] });
+
+      const result = await service.autocomplete('네이버');
+
+      expect(result.filter((r) => r.name === '네이버')).toHaveLength(1);
+      expect(result.find((r) => r.name === '네이버')?.source).toBe('dart');
+    });
+
+    it('dedupe 우선순위 — 같은 이름이 research·user_added 둘 다면 research 가 이긴다', async () => {
+      setSources({
+        research: [{ name: '대전성모병원' }],
+        userAdded: [{ name: '대전성모병원', count: 7 }],
+      });
+
+      const result = await service.autocomplete('대전');
+
+      expect(result.filter((r) => r.name === '대전성모병원')).toHaveLength(1);
+      expect(result.find((r) => r.name === '대전성모병원')?.source).toBe(
+        'research',
+      );
+    });
+
+    /**
+     * 조사 캐시는 회사명을 정규화(lowercase)해 저장한다. 정규화 키 dedupe 가 없으면
+     * `LG에너지솔루션` 과 `lg에너지솔루션` 이 두 줄로 보이고, 사용자가 소문자 쪽을 고르면
+     * 카드 회사명이 소문자로 박힌다.
+     */
+    it('dedupe 는 정규화 키(trim+lowercase) — 표기만 다른 같은 회사는 한 줄, DART 표기가 남는다', async () => {
+      setSources({
+        research: [{ name: 'lg에너지솔루션' }],
+        userAdded: [{ name: '  LG에너지솔루션  ', count: 3 }],
+      });
+
+      const result = await service.autocomplete('lg');
+
+      const lg = result.filter((r) =>
+        r.name.toLowerCase().trim().includes('lg'),
+      );
+      expect(lg).toHaveLength(1);
+      expect(lg[0].name).toBe('LG에너지솔루션');
+      expect(lg[0].source).toBe('dart');
+    });
+
+    /**
+     * 🔴 빈 검색어는 `[]`. 예전 boost 경로는 `industry` 가 0% 라 항상 0개를 돌려주던
+     * 죽은 코드였고, boost 를 걷어낸 뒤엔 「아무 기준 없이 아무거나」밖에 남지 않는다.
+     */
+    it('빈 q → [] (DB 조회조차 안 한다)', async () => {
+      const result = await service.autocomplete('');
+
+      expect(result).toEqual([]);
+      expect(researchRepo.createQueryBuilder).not.toHaveBeenCalled();
+      expect(appRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('공백만 있는 q → [] (trim 후 빈 문자열)', async () => {
+      const result = await service.autocomplete('   ');
 
       expect(result).toEqual([]);
     });
 
-    it('사용자 누적 — DART 에 없는 회사 (q="스타트업X") 가 다른 user 가 추가한 경우 결과 포함', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(
-        makeQb([{ name: '스타트업X', count: 5 }]),
-      );
+    it('q 미전송(undefined) → []', async () => {
+      const result = await service.autocomplete(undefined);
 
-      const result = await service.autocomplete('u1', '스타트업');
+      expect(result).toEqual([]);
+    });
+
+    it('boost 회귀 — 세 소스 어디에도 boost 필드가 없다 (죽은 랭킹 신호 제거)', async () => {
+      setSources({
+        research: [{ name: '한국조사기관' }],
+        userAdded: [{ name: '한국커스텀스타트업', count: 2 }],
+      });
+
+      const result = await service.autocomplete('한국');
+
+      expect(new Set(result.map((r) => r.source))).toEqual(
+        new Set(['dart', 'research', 'user_added']),
+      );
+      expect(result.every((r) => !('boost' in r))).toBe(true);
+    });
+
+    it('사용자 누적 — DART·조사에 없는 회사가 결과 포함 (userCount 유지)', async () => {
+      setSources({ userAdded: [{ name: '스타트업X', count: 5 }] });
+
+      const result = await service.autocomplete('스타트업');
 
       const userAdded = result.find((r) => r.source === 'user_added');
-      expect(userAdded).toBeDefined();
       expect(userAdded?.name).toBe('스타트업X');
       expect(userAdded?.userCount).toBe(5);
     });
 
-    it('사용자 누적 + DART 중복 제거 — 같은 이름 (네이버) 가 user_added 에도 있으면 DART 우선', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(
-        makeQb([{ name: '네이버', count: 10 }]),
-      );
-
-      const result = await service.autocomplete('u1', '네이버');
-
-      const naverCount = result.filter((r) => r.name === '네이버').length;
-      expect(naverCount).toBe(1);
-      expect(result.find((r) => r.name === '네이버')?.source).toBe('dart');
-    });
-
     it('limit cap — limit=20 → 10 max', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
-
-      const result = await service.autocomplete('u1', '한', 20);
+      const result = await service.autocomplete('한', 20);
 
       expect(result.length).toBeLessThanOrEqual(10);
     });
 
-    it('한글+영문 mixed — q="LG" → "LG에너지솔루션" 매칭', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+    it('cap 은 세 소스 합계 기준 — 앞 소스가 자리를 채우면 뒤 소스가 잘린다', async () => {
+      setSources({
+        research: Array.from({ length: 5 }, (_, i) => ({
+          name: `조사회사${i}`,
+        })),
+        userAdded: Array.from({ length: 5 }, (_, i) => ({
+          name: `누적회사${i}`,
+          count: i,
+        })),
+      });
 
-      const result = await service.autocomplete('u1', 'LG');
+      // q="한" → dart 7건 + research 5건 + user_added 5건 = 17건 후보, cap 10
+      const result = await service.autocomplete('한', 10);
+
+      expect(result).toHaveLength(10);
+      expect(result.filter((r) => r.source === 'dart')).toHaveLength(7);
+      expect(result.filter((r) => r.source === 'research')).toHaveLength(3);
+      expect(result.some((r) => r.source === 'user_added')).toBe(false);
+    });
+
+    it('한글+영문 mixed — q="LG" → "LG에너지솔루션" 매칭', async () => {
+      const result = await service.autocomplete('LG');
 
       expect(result.some((r) => r.name === 'LG에너지솔루션')).toBe(true);
     });
 
-    it('LIKE wildcard escape — q="50%할인" → escape 후 SQL 안전 호출 (wildcard 의미 차단)', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      const qb = makeQb([]);
-      appRepo.createQueryBuilder.mockReturnValue(qb);
+    it('LIKE wildcard escape — q="50%할인" → 두 DB 소스 모두 escape 된 값 전달', async () => {
+      await service.autocomplete('50%할인');
 
-      await service.autocomplete('u1', '50%할인');
+      for (const qb of [researchQb, appQb]) {
+        const ilikeCall = qb.andWhere.mock.calls.find((c) =>
+          String(c[0]).includes('ILIKE'),
+        );
+        expect(ilikeCall).toBeDefined();
+        expect(ilikeCall?.[1]).toEqual({ q: String.raw`%50\%할인%` });
+      }
+    });
 
-      // andWhere 호출 시 escape 된 q 전달 검증
-      const qbAny = qb as unknown as { andWhere: jest.Mock };
-      const andWhereCall = qbAny.andWhere.mock.calls.find((c: unknown[]) =>
-        String(c[0]).includes('ILIKE'),
-      );
-      expect(andWhereCall).toBeDefined();
-      expect((andWhereCall as unknown[])[1]).toEqual({
-        q: String.raw`%50\%할인%`,
+    it('source 필드 3종 — dart / research / user_added 가 각각 정확히 표기된다', async () => {
+      setSources({
+        research: [{ name: '한국조사기관' }],
+        userAdded: [{ name: '한국커스텀스타트업', count: 3 }],
       });
-    });
 
-    it('비존재 user (signupJobCategories 조회 실패) → boost 0 으로 정상 동작', async () => {
-      userRepo.findOne.mockResolvedValue(null);
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
+      const result = await service.autocomplete('한국');
 
-      const result = await service.autocomplete('nonexistent', '네이');
-
-      expect(result.length).toBeGreaterThan(0);
-      expect(result.every((r) => (r.boost ?? 0) === 0)).toBe(true);
-    });
-
-    it('대용량 결과 매칭 — q="한" → cap=10 잘 적용 (211 회사 중 한* 다수)', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(makeQb([]));
-
-      const result = await service.autocomplete('u1', '한', 10);
-
-      expect(result.length).toBeLessThanOrEqual(10);
-      expect(result.every((r) => r.name.toLowerCase().includes('한'))).toBe(
-        true,
+      expect(result.find((r) => r.name === '한국가스공사')?.source).toBe(
+        'dart',
       );
-    });
-
-    it('source 필드 정확성 — DART = "dart", 사용자 누적 = "user_added"', async () => {
-      userRepo.findOne.mockResolvedValue(makeUser());
-      appRepo.createQueryBuilder.mockReturnValue(
-        makeQb([{ name: '커스텀스타트업', count: 3 }]),
+      expect(result.find((r) => r.name === '한국조사기관')?.source).toBe(
+        'research',
       );
-
-      const result = await service.autocomplete('u1', '커스텀');
-
-      const userAdded = result.find((r) => r.name === '커스텀스타트업');
-      expect(userAdded?.source).toBe('user_added');
+      expect(result.find((r) => r.name === '한국커스텀스타트업')?.source).toBe(
+        'user_added',
+      );
     });
   });
 

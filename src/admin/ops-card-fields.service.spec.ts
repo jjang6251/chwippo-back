@@ -29,6 +29,8 @@ interface DetailOver {
   status?: string;
   template_id?: string | null;
   created_via?: string | null;
+  /** ARRAY_AGG 결과 — 스텝이 없으면 드라이버가 null 을 준다 (빈 배열이 아니다) */
+  step_names?: string[] | null;
 }
 
 function detail(over: DetailOver = {}) {
@@ -40,6 +42,7 @@ function detail(over: DetailOver = {}) {
     status: 'IN_PROGRESS',
     template_id: null,
     created_via: null,
+    step_names: null,
     ...over,
   };
 }
@@ -253,6 +256,84 @@ describe('OpsCardFieldsService', () => {
     });
   });
 
+  describe('직무 원문 빈도 — 사전 어휘 작업의 재료', () => {
+    it('원문을 빈도순으로 세고 distinct 를 준다', async () => {
+      mockDb([
+        detail({ user_id: 'u1', job_title: '백엔드' }),
+        detail({ user_id: 'u2', job_title: '백엔드' }),
+        detail({ user_id: 'u3', job_title: '프론트엔드' }),
+        detail({ user_id: 'u4', job_title: '마케팅' }),
+      ]);
+      const r = await service.getCardFields();
+
+      expect(r.jobTitleTexts.distinct).toBe(3);
+      expect(r.jobTitleTexts.top).toEqual([
+        { value: '백엔드', cards: 2 },
+        { value: '마케팅', cards: 1 },
+        { value: '프론트엔드', cards: 1 },
+      ]);
+    });
+
+    it('🔴 표기만 다른 같은 직무는 한 줄로 접히고, 대표는 최다 빈도 원문이다', async () => {
+      // 안 접으면 같은 직무가 두 줄로 보여 사전 후보가 부풀고, 대표를 정규화 키
+      // (`백엔드개발자`)로 두면 **아무도 안 쓰는 표기**가 사전에 올라간다.
+      mockDb([
+        detail({ user_id: 'u1', job_title: '백엔드 개발자' }),
+        detail({ user_id: 'u2', job_title: '백엔드 개발자' }),
+        detail({ user_id: 'u3', job_title: '백엔드개발자' }),
+      ]);
+      const r = await service.getCardFields();
+
+      expect(r.jobTitleTexts.distinct).toBe(1);
+      expect(r.jobTitleTexts.top).toEqual([
+        { value: '백엔드 개발자', cards: 3 },
+      ]);
+    });
+
+    it('빈도가 같으면 가나다 순 — DB 가 준 행 순서에 흔들리지 않는다', async () => {
+      mockDb([
+        detail({ user_id: 'u1', job_title: '프론트엔드' }),
+        detail({ user_id: 'u2', job_title: '데이터 분석' }),
+        detail({ user_id: 'u3', job_title: '마케팅' }),
+      ]);
+      const r = await service.getCardFields();
+
+      expect(r.jobTitleTexts.top.map((t) => t.value)).toEqual([
+        '데이터 분석',
+        '마케팅',
+        '프론트엔드',
+      ]);
+    });
+
+    it('빈 값·공백만 적힌 카드는 어휘로 세지 않는다', async () => {
+      mockDb([
+        detail({ user_id: 'u1', job_title: null }),
+        detail({ user_id: 'u2', job_title: '' }),
+        detail({ user_id: 'u3', job_title: '   ' }),
+      ]);
+      const r = await service.getCardFields();
+
+      expect(r.jobTitleTexts).toEqual({ distinct: 0, top: [] });
+    });
+
+    it('🔴 목록은 50 에서 자르되 distinct 는 전수다 — 상한에 닿았는지 알 수 있어야 한다', async () => {
+      const rows = Array.from({ length: 51 }, (_, i) =>
+        detail({
+          user_id: `u${i}`,
+          job_title: `직무 ${String(i + 1).padStart(2, '0')}`,
+        }),
+      );
+      // 한 장을 더 얹어 빈도 1위를 만든다 (자르기가 빈도순으로 도는지까지 본다)
+      rows.push(detail({ user_id: 'u99', job_title: '직무 01' }));
+      mockDb(rows);
+      const r = await service.getCardFields();
+
+      expect(r.jobTitleTexts.distinct).toBe(51);
+      expect(r.jobTitleTexts.top).toHaveLength(50);
+      expect(r.jobTitleTexts.top[0]).toEqual({ value: '직무 01', cards: 2 });
+    });
+  });
+
   describe('회사명 — DART 사전이 현실을 덮나', () => {
     it('사전에 있는 이름은 matched', async () => {
       mockDb([detail({ company_name: '삼성전자' })]);
@@ -378,6 +459,9 @@ describe('OpsCardFieldsService', () => {
       expect(dump).not.toContain('secret-uuid-2');
       expect(dump).not.toContain('userId');
       expect(dump).not.toContain('user_id');
+      // 원문 목록이 실제로 채워진 응답에서 검사했다는 것까지 못 박는다 —
+      // 빈 응답이면 위 단언은 아무것도 지키지 못한 채 통과한다
+      expect(r.jobTitleTexts.top.length).toBeGreaterThan(0);
     });
 
     it('🔴 최상위 키를 못 박는다 — 필드가 조용히 늘면 실패한다', async () => {
@@ -392,12 +476,159 @@ describe('OpsCardFieldsService', () => {
         'excluded',
         'fields',
         'generatedAt',
+        'jobTitleTexts',
         'jobTitleVariance',
         'status',
         'stepProgress',
         'templateId',
+        'templateUsage',
         'users',
       ]);
+    });
+  });
+
+  /**
+   * 템플릿을 **그대로 썼나** — 「맞는 템플릿이면 쓴다」 가설의 직접 근거.
+   *
+   * ## 시나리오 (먼저 나열하고 코드를 짰다)
+   *  1. 스텝이 템플릿과 정확히 같다 → kept
+   *  2. 스텝을 추가했다 → 분모엔 들어가고 kept 는 아니다
+   *  3. 스텝 **이름만** 한 글자 고쳤다 → kept 아니다 (느슨하게 접으면 질문이 흐려진다)
+   *  4. 순서가 다르다 → kept 아니다
+   *  5. `template_id` 가 NULL → 분모에서 빠진다 (도입 이전 카드는 판정 불가)
+   *  6. 🔴 모르는 `template_id` → 분모에서 빠진다 (general 로 흘러 「그대로 썼다」가 되면 안 된다)
+   *  7. 스텝이 아예 없는 카드(step_names=null) → 분모엔 들어가고 kept 아니다
+   *  8. byTemplate 은 count DESC · 동률은 id 가나다
+   *  9. 카드 0장 → 빈 집계 (크래시 없음)
+   */
+  describe('템플릿을 그대로 썼나', () => {
+    const IT = [
+      '서류 제출',
+      '코딩테스트·과제',
+      '1차 기술면접',
+      '2차 컬처핏',
+      '최종 합격',
+    ];
+
+    it('1) 스텝이 템플릿과 같다 → kept', async () => {
+      mockDb([detail({ template_id: 'it_dev', step_names: IT })]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage.withTemplate).toBe(1);
+      expect(r.templateUsage.keptAsIs).toBe(1);
+      expect(r.templateUsage.byTemplate).toEqual([
+        { templateId: 'it_dev', count: 1, kept: 1 },
+      ]);
+    });
+
+    it('2) 스텝을 추가했다 → 분모엔 들어가고 kept 아니다', async () => {
+      mockDb([
+        detail({ template_id: 'it_dev', step_names: [...IT, '레퍼런스 체크'] }),
+      ]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage.withTemplate).toBe(1);
+      expect(r.templateUsage.keptAsIs).toBe(0);
+    });
+
+    it('3) 🔴 이름을 한 글자만 고쳐도 kept 아니다', async () => {
+      const renamed = [...IT];
+      renamed[2] = '1차 기술 면접'; // 공백 하나
+      mockDb([detail({ template_id: 'it_dev', step_names: renamed })]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage.withTemplate).toBe(1);
+      expect(r.templateUsage.keptAsIs).toBe(0);
+    });
+
+    it('4) 순서가 다르면 kept 아니다', async () => {
+      const swapped = [IT[0], IT[2], IT[1], IT[3], IT[4]];
+      mockDb([detail({ template_id: 'it_dev', step_names: swapped })]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage.keptAsIs).toBe(0);
+    });
+
+    it('5) template_id NULL → 분모에서 빠진다 (도입 이전 카드)', async () => {
+      mockDb([detail({ template_id: null, step_names: IT })]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage).toEqual({
+        withTemplate: 0,
+        keptAsIs: 0,
+        byTemplate: [],
+      });
+    });
+
+    it('6) 🔴 모르는 template_id 는 분모에서 뺀다 — general 로 흘러 kept 가 되면 없는 사실이 생긴다', async () => {
+      mockDb([
+        detail({
+          template_id: 'legacy_gone',
+          step_names: ['서류 제출', '1차 면접', '2차 면접', '최종 합격'],
+        }),
+      ]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage.withTemplate).toBe(0);
+      expect(r.templateUsage.keptAsIs).toBe(0);
+    });
+
+    it('7) 스텝이 없는 카드 → 분모엔 들어가고 kept 아니다', async () => {
+      mockDb([detail({ template_id: 'general', step_names: null })]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage.withTemplate).toBe(1);
+      expect(r.templateUsage.keptAsIs).toBe(0);
+    });
+
+    it('8) byTemplate 은 count DESC · 동률은 id 가나다', async () => {
+      const GENERAL = ['서류 제출', '1차 면접', '2차 면접', '최종 합격'];
+      mockDb([
+        detail({ template_id: 'general', step_names: GENERAL }),
+        detail({ template_id: 'general', step_names: GENERAL }),
+        detail({ template_id: 'public', step_names: [] }),
+        detail({ template_id: 'it_dev', step_names: IT }),
+      ]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage.byTemplate).toEqual([
+        { templateId: 'general', count: 2, kept: 2 },
+        { templateId: 'it_dev', count: 1, kept: 1 },
+        { templateId: 'public', count: 1, kept: 0 },
+      ]);
+      expect(r.templateUsage.withTemplate).toBe(4);
+      expect(r.templateUsage.keptAsIs).toBe(3);
+    });
+
+    it('9) 카드 0장 → 빈 집계', async () => {
+      mockDb([]);
+      const r = await service.getCardFields();
+
+      expect(r.templateUsage).toEqual({
+        withTemplate: 0,
+        keptAsIs: 0,
+        byTemplate: [],
+      });
+    });
+
+    /**
+     * 🔴 제외 3종은 **SQL 이 하는 일**이라 여기선 검증되지 않는다 (파일 상단 주석 참조).
+     * 대신 「제외된 행이 오면 어떻게 되나」가 아니라 **「오지 않는다」는 전제를 명시**해 둔다 —
+     * 샘플·admin·삭제 카드는 detail 쿼리에 애초에 실리지 않으므로 이 집계에도 없다.
+     */
+    it('샘플·admin·삭제 카드는 detail 행 자체가 오지 않는다 (분모는 실사용자 카드뿐)', async () => {
+      mockDb(
+        [detail({ template_id: 'it_dev', step_names: IT })],
+        {},
+        {
+          admin_cards: '9',
+          sample_cards: '5',
+        },
+      );
+      const r = await service.getCardFields();
+
+      expect(r.excluded).toEqual({ adminCards: 9, sampleCards: 5 });
+      expect(r.templateUsage.withTemplate).toBe(1);
     });
   });
 

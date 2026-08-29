@@ -13,7 +13,7 @@ import {
  *
  * GET /companies/autocomplete?q=string&limit=10
  *
- * - q 빈 string OR 미전송 → signup 직군 기반 추천 (signupJobCategories boost)
+ * - q 빈 string OR 미전송 → 빈 배열 (타이핑 전엔 추천 근거가 없다)
  * - q 100자 초과 → 400
  * - limit 11+ → 10 cap
  */

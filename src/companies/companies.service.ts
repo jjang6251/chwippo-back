@@ -9,8 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Repository } from 'typeorm';
 import { Application } from '../applications/application.entity';
-import { User } from '../users/user.entity';
-import { calculateIndustryBoost } from './industry-job-category-map';
+import { CompanyResearchCache } from '../interview-prep/entities/company-research-cache.entity';
 
 export interface Company {
   name: string;
@@ -58,25 +57,22 @@ export interface AutocompleteResult {
   domain?: string;
   industry?: string;
   market?: string;
-  source: 'dart' | 'user_added';
+  source: 'dart' | 'research' | 'user_added';
   /** 해당 회사를 추가한 다른 사용자 수 (user_added 만) */
   userCount?: number;
-  /** signup 직군 매칭 점수 — frontend 가 시각화 가능 (현재는 정렬에만 사용) */
-  boost?: number;
 }
 
 /**
  * W2 — 회사명 자동완성.
  *
- * data source:
- *   1. DART JSON (`src/data/companies.json`) — 메모리 in-memory (앱 시작 시 1회 load, ~211개)
- *   2. applications.company_name DISTINCT — 다른 사용자가 직접 추가한 회사 (count DESC)
+ * data source (노출·dedupe 우선순위 순):
+ *   1. DART JSON (`src/data/companies.json`) — 메모리 in-memory (앱 시작 시 1회 load)
+ *   2. `company_research_cache` — 회사 조사가 실제로 준비된 회사 (별칭·opt-out·빈 조사 제외)
+ *   3. applications.company_name DISTINCT — 다른 사용자가 직접 추가한 회사 (count DESC 로 선별)
  *
- * 검색 우선순위 (DESC):
- *   1. signup 직군 매칭 boost (industry-job-category-map)
- *   2. prefix match (회사명 시작이 q 와 일치) > contains match
- *   3. 사용자 누적 count
- *   4. 회사명 ko-locale alphabetical
+ * 검색 우선순위 (소스 블록 안에서):
+ *   1. prefix match (회사명 시작이 q 와 일치) > contains match
+ *   2. 회사명 ko-locale alphabetical
  *
  * 보안:
  *   - q 는 DTO 에서 trim + MaxLength(100). SQL 직접 노출 X (TypeORM parameterized)
@@ -115,8 +111,9 @@ export class CompaniesService {
   constructor(
     @InjectRepository(Application)
     private readonly appRepo: Repository<Application>,
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    // 🔴 엔티티만 주입한다 — InterviewPrepModule 을 import 하면 모듈 순환에 걸린다
+    @InjectRepository(CompanyResearchCache)
+    private readonly researchRepo: Repository<CompanyResearchCache>,
   ) {
     this.loadCompanies();
   }
@@ -182,40 +179,54 @@ export class CompaniesService {
     return input.replace(/[\\%_]/g, (m) => `\\${m}`);
   }
 
+  /**
+   * prefix match 를 contains 보다 위로, 같은 급이면 회사명 가나다순.
+   * 소스 블록마다 각자 정렬한 뒤 소스 순서대로 이어붙는다 (소스 간 재정렬 없음).
+   */
+  private sortByPrefixThenName<T extends { name: string }>(
+    entries: T[],
+    lowerQ: string,
+  ): T[] {
+    return entries.sort((a, b) => {
+      const aPrefix = a.name.toLowerCase().startsWith(lowerQ);
+      const bPrefix = b.name.toLowerCase().startsWith(lowerQ);
+      if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+      return a.name.localeCompare(b.name, 'ko');
+    });
+  }
+
+  /**
+   * 회사명 자동완성 — 세 소스를 합쳐 최대 `cap` 개.
+   *
+   * 소스 우선순위 `dart > research > user_added` 는 **두 가지를 동시에 뜻한다**:
+   *   - **dedupe** — 같은 회사가 여러 소스에 걸리면 앞 소스가 이기고 뒤는 버린다.
+   *     키는 `trim().toLowerCase()`. 조사 캐시는 회사명을 정규화(소문자)해서 저장하므로
+   *     `LG에너지솔루션` 과 `lg에너지솔루션` 이 두 줄로 보이던 문제가 이 키로 막힌다
+   *     (그리고 DART 가 이겨서 **표기가 온전한 쪽**이 남는다)
+   *   - **노출 순서** — 큐레이션된 목록(DART·조사 시드)이 사용자 누적보다 위에 온다.
+   *     사용자 누적은 `로쏘(성심당` 같은 오염된 표기가 섞이는 소스라 위로 올리지 않는다
+   *
+   * 🔴 **빈 검색어는 `[]` 를 돌려준다.** 예전엔 signup 직군 boost 로 회사를 추천했지만
+   * 그 boost 는 `companies.json` 의 `industry` 가 0% 라 **한 번도 값이 나온 적이 없었고**,
+   * 빈 검색어 경로가 `.filter(boost > 0)` 이라 결과는 **항상 0개**였다. boost 를 걷어낸 지금
+   * 남는 선택지는 「아무 기준 없이 회사를 아무거나 보여주기」뿐이라 차라리 안 보여준다 —
+   * 프론트도 타이핑 전엔 드롭다운을 열지 않으므로 체감 동작은 종전과 같다.
+   */
   async autocomplete(
-    userId: string,
     q: string | undefined,
     limit = 10,
   ): Promise<AutocompleteResult[]> {
     const cap = Math.min(Math.max(limit, 1), 10);
     const trimmedQ = (q ?? '').trim();
+    if (trimmedQ.length === 0) return [];
+
     const lowerQ = trimmedQ.toLowerCase();
+    // PostgreSQL ILIKE + LIKE escape — wildcard 의미 차단 (DB 두 소스가 공유)
+    const likeQ = `%${this.escapeLike(trimmedQ)}%`;
 
-    // user 의 signup 직군 (boost 용)
-    const user = await this.userRepo.findOne({
-      where: { id: userId },
-      select: ['id', 'signupJobCategories'],
-    });
-    const userCategories = user?.signupJobCategories ?? null;
-
-    // 1. DART JSON 에서 매칭 — prefix > contains, boost 계산
-    let dartMatched: AutocompleteResult[] = [];
-    if (trimmedQ.length === 0) {
-      // 빈 q — signup 직군 매칭 회사 boost 위주
-      dartMatched = this.companies
-        .map((c) => ({
-          name: c.name,
-          domain: c.domain,
-          industry: c.industry,
-          market: c.market,
-          source: 'dart' as const,
-          boost: calculateIndustryBoost(c.industry, userCategories),
-        }))
-        .filter((c) => c.boost > 0)
-        .sort((a, b) => b.boost - a.boost)
-        .slice(0, cap);
-    } else {
-      dartMatched = this.companies
+    // 1. DART JSON (메모리) — prefix > contains
+    const dartMatched = this.sortByPrefixThenName(
+      this.companies
         .filter((c) => c.name.toLowerCase().includes(lowerQ))
         .map((c) => ({
           name: c.name,
@@ -223,51 +234,65 @@ export class CompaniesService {
           industry: c.industry,
           market: c.market,
           source: 'dart' as const,
-          boost: calculateIndustryBoost(c.industry, userCategories),
-          _prefix: c.name.toLowerCase().startsWith(lowerQ),
-        }))
-        .sort((a, b) => {
-          if (a._prefix !== b._prefix) return a._prefix ? -1 : 1;
-          if (b.boost !== a.boost) return b.boost - a.boost;
-          return a.name.localeCompare(b.name, 'ko');
-        })
-        .map((entry) => {
-          const { _prefix, ...rest } = entry;
-          void _prefix;
-          return rest;
-        });
-    }
+        })),
+      lowerQ,
+    );
 
-    // 2. 사용자 누적 (applications.company_name DISTINCT) — DART 에 없는 회사
-    const dartNameSet = new Set(this.companies.map((c) => c.name));
-    let userAdded: AutocompleteResult[] = [];
-    if (trimmedQ.length > 0) {
-      // PostgreSQL ILIKE + LIKE escape — wildcard 의미 차단
-      const escaped = this.escapeLike(trimmedQ);
-      const rows = await this.appRepo
+    // 2·3. DB 두 소스는 서로 독립이라 **동시에** 친다. 타이핑 한 글자마다 도는 경로라
+    //      순차로 두면 왕복이 그대로 두 배가 된다.
+    const [researchRows, userRows] = await Promise.all([
+      // 회사 조사 시드 — **조사가 실제로 준비된 회사만.** 별칭 행(is_alias)·opt-out 회사·
+      // 빈 조사(`{}`)를 거르는 이유는 같다: 골라도 보여줄 알맹이가 없으면 헛걸음이다.
+      this.researchRepo
+        .createQueryBuilder('c')
+        .select('c.company_name', 'name')
+        .where('c.is_alias = false')
+        .andWhere('c.opt_out = false')
+        .andWhere("c.ai_research IS NOT NULL AND c.ai_research <> '{}'::jsonb")
+        .andWhere("c.company_name ILIKE :q ESCAPE '\\'", { q: likeQ })
+        // 같은 회사가 직군별로 여러 행이라 회사명 단위로 접는다
+        .groupBy('c.company_name')
+        .limit(cap)
+        .getRawMany<{ name: string }>(),
+      // 사용자 누적 (applications.company_name DISTINCT). count DESC + limit 은
+      // **어느 후보가 cap 안에 드느냐**(인기순 선별)를 정하고, 그 안에서의 노출 순서는
+      // 다른 소스와 똑같이 prefix → 가나다로 통일한다.
+      this.appRepo
         .createQueryBuilder('a')
         .select('a.company_name', 'name')
         .addSelect('COUNT(*)::int', 'count')
         .where('a.deleted_at IS NULL')
-        .andWhere("a.company_name ILIKE :q ESCAPE '\\'", {
-          q: `%${escaped}%`,
-        })
+        .andWhere("a.company_name ILIKE :q ESCAPE '\\'", { q: likeQ })
         .groupBy('a.company_name')
         .orderBy('count', 'DESC')
         .limit(cap)
-        .getRawMany<{ name: string; count: number }>();
-      userAdded = rows
-        .filter((r) => !dartNameSet.has(r.name))
-        .map((r) => ({
-          name: r.name,
-          source: 'user_added' as const,
-          userCount: r.count,
-        }));
-    }
+        .getRawMany<{ name: string; count: number }>(),
+    ]);
 
-    // 3. 합치고 cap. DART 우선, user_added 뒤
-    const combined = [...dartMatched, ...userAdded].slice(0, cap);
-    return combined;
+    const researchMatched = this.sortByPrefixThenName(
+      researchRows.map((r) => ({ name: r.name, source: 'research' as const })),
+      lowerQ,
+    );
+    const userAdded = this.sortByPrefixThenName(
+      userRows.map((r) => ({
+        name: r.name,
+        source: 'user_added' as const,
+        userCount: r.count,
+      })),
+      lowerQ,
+    );
+
+    // 4. 정규화 키로 dedupe 하면서 cap 까지만 채운다
+    const seen = new Set<string>();
+    const merged: AutocompleteResult[] = [];
+    for (const entry of [...dartMatched, ...researchMatched, ...userAdded]) {
+      const key = entry.name.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(entry);
+      if (merged.length >= cap) break;
+    }
+    return merged;
   }
 
   /** 회사명 → corp_code. 비상장사·도메인-only entry 는 undefined */

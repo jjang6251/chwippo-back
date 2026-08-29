@@ -32,11 +32,58 @@ export type ApplicationCreatedVia =
   /** 보드의 「카드 추가」 모달 (`AddCardModal`) — 현재 유일한 사용자 생성 경로 */
   | 'add_modal'
   /** 가입 온보딩이 직군 답변으로 자동 생성한 샘플 카드 (`is_sample = true`) */
-  | 'onboarding_sample';
+  | 'onboarding_sample'
+  /**
+   * 가입 온보딩 2단 보상에서 **사용자가 직접 고른 회사** → 지원 예정 카드.
+   *
+   * 🔴 `onboarding_sample` 과 반드시 갈라 센다. 저쪽은 서버가 만들어 준 **가상 회사**라
+   * `is_sample = true` 로 집계에서 통째로 빠지지만, 이건 사람이 고른 **진짜 회사**의
+   * 진짜 카드다(`is_sample = false`). 한 값으로 뭉치면 「온보딩이 첫 카드를 만들어 줬나」와
+   * 「샘플이 몇 장 깔렸나」가 같은 숫자가 되어 A안의 효과를 영영 못 잰다.
+   */
+  | 'onboarding_pick';
 
 export const APPLICATION_CREATED_VIA: ApplicationCreatedVia[] = [
   'add_modal',
   'onboarding_sample',
+  'onboarding_pick',
+];
+
+/**
+ * 직무(`job_title`)가 **어떻게 입력됐는가**. 관측 전용이며 동작에 쓰지 않는다.
+ *
+ * 🔴 **저장된 결과만 보면 셋이 구분되지 않는다.** 타이핑·추천 탭·프리필 수용 모두
+ * `job_title = '간호사'` 한 줄로 같아서, 이 값이 없으면 「사용자가 확정한 직무」와
+ * 「미리 채워진 걸 그냥 통과시킨 직무」를 통계에서 영영 가를 수 없다.
+ *
+ * **「사람 말만 볼펜」 저장 정책** — 여기 남는 값은 전부 *사용자 본인이 낸 말*이다.
+ * 시스템이 추측한 값(직무가 비었을 때 직군 라벨을 대신 보여주는 표시 계층 fallback 등)은
+ * 아예 저장하지 않으므로 이 컬럼에도 나타나지 않는다. 모르는 답을 볼펜으로 적지 않는다.
+ *
+ * 기존 카드는 `null`(=미기록)로 남는다 — 백필하지 않는다. 추측한 값은 관측을 오염시킨다.
+ */
+export type JobTitleSource =
+  /** 사용자가 직무 칸에 **직접 타이핑**해 확정 — 신뢰도 가장 높음 */
+  | 'typed'
+  /** 타이핑 중 뜬 **사전 추천 드롭다운을 탭** — 고르는 행위 자체가 확신의 근거 */
+  | 'suggestion'
+  /**
+   * 온보딩에서 **사용자가 타이핑한** 직무가 미리 채워진 것을 **그대로 두고** 저장.
+   * 출처는 사람 말이지만 「맞다고 확인」인지 「폼을 통과시킴」인지 알 수 없어 신뢰도가 낮다.
+   * 계열 라벨만 고른 사용자는 프리필 자체가 없다 — 시스템 말은 직무로 승격하지 않는다.
+   */
+  | 'prefill'
+  /**
+   * 🔴 **F0(공고 붙여넣기) 예약값** — 도입 시점(2026-08-27) 기준 쓰는 코드가 없다.
+   * 유니온에 미리 넣어두어 그 기능이 붙을 때 값 추가 없이 사용만으로 끝나게 한다.
+   */
+  | 'parsed';
+
+export const JOB_TITLE_SOURCES: JobTitleSource[] = [
+  'typed',
+  'suggestion',
+  'prefill',
+  'parsed',
 ];
 
 /**
@@ -144,6 +191,15 @@ export class Application {
   /** 어느 화면에서 만들어졌나 — 관측 전용. 자세한 이유는 `ApplicationCreatedVia` 주석 */
   @Column({ name: 'created_via', type: 'varchar', length: 32, nullable: true })
   createdVia: ApplicationCreatedVia | null;
+
+  /** 직무를 어떻게 입력했나 — 관측 전용. 자세한 이유는 `JobTitleSource` 주석 */
+  @Column({
+    name: 'job_title_source',
+    type: 'varchar',
+    length: 16,
+    nullable: true,
+  })
+  jobTitleSource: JobTitleSource | null;
 
   /**
    * PR_B1c — 자소서 생성 (회사조사 trigger) 상태.

@@ -134,6 +134,8 @@ export class ApplicationsService {
           //    넘기는 값과 **같은 값**을 박제해야 「무엇으로 시작했나」가 사후에 성립한다.
           templateId: dto.templateId ?? null,
           createdVia: dto.createdVia ?? null,
+          // 직무 출처 — 저장된 job_title 만 보면 「확정」과 「프리필 수용」이 구분되지 않는다.
+          jobTitleSource: dto.jobTitleSource ?? null,
         });
         const saved = await em.save(Application, app);
 

@@ -60,10 +60,15 @@ function makeUser(overrides: Partial<User> = {}): User {
     pendingNotification: null,
     signupJobCategories: null,
     signupOtherText: null,
+    signupSeriesId: null,
+    signupJobTitle: null,
     sampleCardsDismissedAt: null,
     calendarHomeIntroDismissedAt: null,
     interviewNudgeDismissedAt: null,
     sessionExpiredNotifiedAt: null,
+    tourSeenAt: null,
+    tourCompletedAt: null,
+    tourLastStep: null,
     tier: 'free',
     ...overrides,
   };
@@ -450,6 +455,8 @@ describe('AuthController', () => {
       pendingNotification: null,
       signupJobCategories: null,
       signupOtherText: null,
+      signupSeriesId: null,
+      signupJobTitle: null,
       sampleCardsDismissedAt: null,
       calendarHomeIntroDismissedAt: null,
       interviewNudgeDismissedAt: null,
@@ -510,10 +517,16 @@ describe('AuthController', () => {
           // W1 — signup 답변 + sample dismiss 추적
           signupJobCategories: null,
           signupOtherText: null,
+          signupSeriesId: null,
+          signupJobTitle: null,
           sampleCardsDismissedAt: null,
           calendarHomeIntroDismissedAt: null,
           interviewNudgeDismissedAt: null,
           alarmPromptedAt: null,
+          // 앱 소개 투어 — 관측 3필드. NULL 이라고 투어를 띄우지는 않는다
+          tourSeenAt: null,
+          tourCompletedAt: null,
+          tourLastStep: null,
         },
       });
     });
