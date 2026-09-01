@@ -42,9 +42,17 @@ async function bootstrap() {
   );
   app.disable('x-powered-by');
 
-  // 요청 body 크기 제한 (DoS 방어 — 일반 API 호출은 충분히 작음)
-  app.use(json({ limit: '256kb' }));
-  app.use(urlencoded({ extended: true, limit: '256kb' }));
+  /*
+    요청 body 크기 제한 (DoS 방어 — 일반 API 호출은 충분히 작음).
+
+    🔴 256kb 로는 **광고한 한도에 도달할 수 없었다** (2026-09-02). 노트 본문은
+    `JSON.stringify(tiptap doc)` 로 오고 한글은 UTF-8 3바이트다 — 100,000자 노트는
+    텍스트만 300KB, 구조(헤딩·표·인용) JSON 까지 더하면 그 위다. DTO 가 100,000자를
+    허용해도 그 요청은 검증에 닿기도 전에 413 이 됐다. 1mb 는 그 노트가 통과하고,
+    JSON 폭탄은 DTO 의 원문 상한(400,000자)이 마저 막는 선이다.
+  */
+  app.use(json({ limit: '1mb' }));
+  app.use(urlencoded({ extended: true, limit: '1mb' }));
 
   app.use(cookieParser());
 
