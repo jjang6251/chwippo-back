@@ -7,6 +7,8 @@ import { OpsReachService } from './ops-reach.service';
 import { OpsReachController } from './ops-reach.controller';
 import { OpsCardFieldsService } from './ops-card-fields.service';
 import { OpsCardFieldsController } from './ops-card-fields.controller';
+import { OpsFeatureUsageService } from './ops-feature-usage.service';
+import { OpsFeatureUsageController } from './ops-feature-usage.controller';
 import { ActivationController } from './activation.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { UserPlatformService } from './user-platform.service';
@@ -109,12 +111,16 @@ import { UnsuspendCron } from '../users/unsuspend.cron';
     ActivationController, // A8 Activation 측정
     OpsReachController, // 도달 현황 — 관측계획 0단계 자동화
     OpsCardFieldsController, // 카드 입력 실태 — 채움률·어휘·표기 흔들림
+    OpsFeatureUsageController, // 기능 사용 실태 — 기능군 통계·유저×기능 매트릭스·잔존
   ],
   providers: [
     AdminService,
     ActivationService, // A8 Activation 측정
     OpsReachService, // 도달 현황 — 관측계획 0단계 자동화
     OpsCardFieldsService, // 카드 입력 실태 — 채움률·어휘·표기 흔들림
+    // 기능 사용 실태 — DataSource 만 쓴다(`getRepository`). forFeature 에 26개 엔티티를
+    // 더 등록하면 이 모듈이 사실상 전 도메인을 import 하게 되어 경계가 무너진다.
+    OpsFeatureUsageService,
     AdminUsersService,
     UserPlatformService, // 사용 환경(웹/앱) 배치 조회 — N+1 방지
     AdminAuditService,
